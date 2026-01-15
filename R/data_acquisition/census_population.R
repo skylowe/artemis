@@ -5,6 +5,69 @@
 #' @name census_population
 NULL
 
+#' Fetch population estimates from Census Bureau (unified function)
+#'
+#' @description
+#' Retrieves population estimates by single year of age and sex from
+#' the Census Bureau. Automatically handles different data sources:
+#' - 1980-1989: Downloaded intercensal estimate files
+#' - 1990-2023: Population Estimates Program API
+#'
+#' @param years Integer vector of years to query (e.g., 1980:2023)
+#' @param ages Integer vector of ages (default: 0:85)
+#' @param sex Character: "both", "male", or "female" (default: "female")
+#' @param cache_dir Character: directory for caching downloaded files
+#'
+#' @return data.table with columns: year, age, sex, population
+#'
+#' @export
+fetch_census_population_all <- function(years,
+                                        ages = 0:85,
+                                        sex = "female",
+                                        cache_dir = here::here("data/raw/census")) {
+  results <- list()
+
+  # 1980-1989: File downloads
+  years_1980s <- years[years >= 1980 & years <= 1989]
+  if (length(years_1980s) > 0) {
+    pop_1980s <- fetch_census_population_files(
+      years = years_1980s,
+      ages = ages,
+      sex = sex,
+      cache_dir = cache_dir
+    )
+    if (!is.null(pop_1980s)) {
+      results[["1980s"]] <- pop_1980s
+    }
+  }
+
+  # 1990+: API
+  years_api <- years[years >= 1990]
+  if (length(years_api) > 0) {
+    pop_api <- fetch_census_population(
+      years = years_api,
+      ages = ages,
+      sex = sex
+    )
+    if (!is.null(pop_api)) {
+      results[["api"]] <- pop_api
+    }
+  }
+
+  if (length(results) == 0) {
+    cli::cli_abort("No population data retrieved")
+  }
+
+  combined <- data.table::rbindlist(results, use.names = TRUE, fill = TRUE)
+  data.table::setorder(combined, year, age)
+
+  cli::cli_alert_success(
+    "Retrieved population data for {length(unique(combined$year))} years ({min(combined$year)}-{max(combined$year)})"
+  )
+
+  combined
+}
+
 #' Fetch population estimates from Census Bureau API
 #'
 #' @description
@@ -462,93 +525,229 @@ fetch_pep_int_natrespop_1990 <- function(base_url, years, ages, sex, api_key, da
 #'
 #' @description
 #' Downloads historical population estimate files from Census Bureau
-#' for years not available via API (pre-1990).
+#' for years not available via API (1980-1989).
 #'
-#' @param years Integer vector of years
+#' @param years Integer vector of years (1980-1989)
+#' @param ages Integer vector of ages (default: 0:85)
+#' @param sex Character: "both", "male", or "female" (default: "female")
 #' @param cache_dir Character: directory to cache downloaded files
+#' @param month Integer: reference month for estimates (default: 7 for July 1)
 #'
-#' @return data.table with population data
+#' @return data.table with columns: year, age, sex, population
+#'
+#' @details
+#' Downloads Census intercensal estimates (1980-1990) which are provided
+#' as fixed-width files in ZIP format. Uses July 1 (mid-year) estimates
+#' by default for consistency with API-based data.
 #'
 #' @export
 fetch_census_population_files <- function(years,
-                                          cache_dir = here::here("data/raw/census")) {
-  # Census publishes historical estimates as downloadable files
-  # This function handles years not available via API (pre-1990)
+                                          ages = 0:85,
+                                          sex = "female",
+                                          cache_dir = here::here("data/raw/census"),
+                                          month = 7) {
+  # Filter to 1980-1989 only
+  years <- years[years >= 1980 & years <= 1989]
 
-  cli::cli_alert_info("Downloading Census population files for {min(years)}-{max(years)}")
+  if (length(years) == 0) {
+    cli::cli_alert_warning("No years in 1980-1989 range provided")
+    return(NULL)
+  }
+
+  cli::cli_alert_info("Downloading Census population files for 1980s: {paste(years, collapse=', ')}")
 
   # Create cache directory
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
 
+  # Get URLs for required files
+  urls <- get_census_1980s_urls(years)
+
   results <- list()
 
-  for (yr in years) {
-    file_url <- get_census_file_url(yr)
-
-    if (is.null(file_url)) {
-      cli::cli_alert_warning("No file URL configured for year {yr}")
-      next
-    }
-
-    # Download and parse file
-    local_file <- file.path(cache_dir, basename(file_url))
+  for (url in urls) {
+    local_zip <- file.path(cache_dir, basename(url))
 
     tryCatch({
-      download_with_cache(file_url, local_file, quiet = TRUE)
-      result <- parse_census_population_file(local_file, yr)
-      if (!is.null(result)) {
-        results[[as.character(yr)]] <- result
+      # Download if not cached
+      if (!file.exists(local_zip)) {
+        cli::cli_alert("Downloading {basename(url)}...")
+        download.file(url, local_zip, mode = "wb", quiet = TRUE)
+      }
+
+      # Extract and parse
+      result <- parse_census_1980s_file(local_zip, years, ages, sex, ref_month = month)
+
+      if (!is.null(result) && nrow(result) > 0) {
+        results[[basename(url)]] <- result
       }
     }, error = function(e) {
-      cli::cli_alert_warning("Failed to process {yr}: {conditionMessage(e)}")
+      cli::cli_alert_warning("Failed to process {basename(url)}: {conditionMessage(e)}")
     })
   }
 
   if (length(results) > 0) {
-    data.table::rbindlist(results, use.names = TRUE)
+    combined <- data.table::rbindlist(results, use.names = TRUE)
+    combined <- unique(combined)  # Remove duplicates from overlapping files
+    data.table::setorder(combined, year, age)
+    cli::cli_alert_success("Retrieved {nrow(combined)} population records for 1980s")
+    combined
   } else {
     NULL
   }
 }
 
-#' Get Census file URL for a specific year
+#' Get Census file URLs for 1980s population data
 #'
-#' @param year Integer: year
+#' @description
+#' Returns URLs for Census intercensal population files (1980-1990).
+#' These are quarterly estimates in fixed-width format.
 #'
-#' @return Character: URL or NULL if not available
+#' @param years Integer vector of years (1980-1989)
+#'
+#' @return Character vector of URLs to ZIP files
+#'
+#' @details
+#' File naming convention: e[YY][YY]rqi.zip
+#' - r = resident population
+#' - q = quarterly
+#' - i = intercensal
 #'
 #' @keywords internal
-get_census_file_url <- function(year) {
-  # Historical population files from Census
-  # For years before 1990, we need to use downloadable files
+get_census_1980s_urls <- function(years) {
+  base_url <- "https://www2.census.gov/programs-surveys/popest/datasets/1980-1990/national/asrh/"
 
-  if (year >= 1980 && year <= 1989) {
-    return(paste0(
-      "https://www2.census.gov/programs-surveys/popest/tables/1980-1990/",
-      "national/asrh/pe-11-", year, ".csv"
-    ))
+  # Files are quarterly intercensal estimates
+  # File e{YY}{YY+1}rqi.zip contains July data for year 19YY
+  # e.g., e8081 has July 1980, e8182 has July 1981, etc.
+  urls <- character(0)
+
+  for (yr in years) {
+    if (yr < 1980 || yr > 1989) next
+
+    # For July of year YYYY, the file is e{YY}{YY+1}rqi.zip
+    yr_2digit <- yr %% 100
+    next_yr_2digit <- (yr_2digit + 1) %% 100
+    file_name <- sprintf("e%02d%02drqi.zip", yr_2digit, next_yr_2digit)
+
+    url <- paste0(base_url, file_name)
+    if (!url %in% urls) {
+      urls <- c(urls, url)
+    }
   }
 
-  NULL
+  urls
 }
 
-#' Parse Census population file
+#' Parse Census 1980s intercensal population file
 #'
-#' @param file_path Character: path to downloaded file
-#' @param year Integer: year of data
+#' @description
+#' Parses fixed-width format Census intercensal estimate files (1980-1990).
 #'
-#' @return data.table with population data
+#' @param zip_path Character: path to ZIP file
+#' @param years Integer vector of years to extract
+#' @param ages Integer vector of ages to include
+#' @param sex Character: "both", "male", or "female"
+#' @param month Integer: reference month (default: 7)
+#'
+#' @return data.table with columns: year, age, sex, population
+#'
+#' @details
+#' File format (fixed-width, 222 chars per record):
+#' - Cols 1-2: Series designation
+#' - Cols 3-4: Month
+#' - Cols 5-8: Year
+#' - Cols 9-11: Age (0-99 = single year, 100 = 100+, 999 = all ages)
+#' - Cols 13-22: Total population
+#' - Cols 23-32: Male population
+#' - Cols 33-42: Female population
 #'
 #' @keywords internal
-parse_census_population_file <- function(file_path, year) {
-  # This is a stub - actual implementation depends on file format
-  # which varies by decade
+parse_census_1980s_file <- function(zip_path, years, ages, sex, ref_month = 7) {
+  # Create temp directory for extraction
+  temp_dir <- tempfile()
+  dir.create(temp_dir)
+  on.exit(unlink(temp_dir, recursive = TRUE), add = TRUE)
 
-  tryCatch({
-    raw <- data.table::fread(file_path, header = TRUE)
-    raw
-  }, error = function(e) {
-    cli::cli_alert_warning("Could not parse {file_path}: {conditionMessage(e)}")
-    NULL
-  })
+  # Extract ZIP
+  utils::unzip(zip_path, exdir = temp_dir)
+
+  # Find the data file (single file in ZIP, usually .TXT extension)
+  files <- list.files(temp_dir, full.names = TRUE)
+  data_file <- files[1]
+
+  if (length(files) == 0 || !file.exists(data_file)) {
+    cli::cli_alert_warning("No data file found in {basename(zip_path)}")
+    return(NULL)
+  }
+
+  # Read as whitespace-separated values
+  # File format: series month+year age pop_total pop_male pop_female ...
+  # Example: "2I 484  0    3591415   1837851   1753564"
+  # The first field (e.g., "484" or "484999") contains month (1 digit) + year (2 digits)
+  # followed by optional age if it's the total row (999)
+
+  raw <- data.table::fread(
+    data_file,
+    header = FALSE,
+    sep = " ",
+    fill = TRUE,
+    select = c(1:6),  # series, month+year(+age?), age?, pop_total, pop_male, pop_female
+    col.names = c("series", "month_year", "V3", "V4", "V5", "V6")
+  )
+
+  # Parse the month_year field which is tricky:
+  # For regular rows: "484" (month=4, year=84) and age is in V3
+  # For total rows: "484999" (month=4, year=84, age=999) and pop_total starts at V3
+  raw[, month_year_str := as.character(month_year)]
+  raw[, nchar_my := nchar(month_year_str)]
+
+  # If month_year has 3 chars: month(1) + year(2), age in V3
+  # If month_year has 6+ chars: month(1) + year(2) + age(3), pop starts at V3
+  raw[nchar_my == 3, `:=`(
+    month = as.integer(substr(month_year_str, 1, 1)),
+    year = as.integer(substr(month_year_str, 2, 3)),
+    age = as.integer(V3),
+    pop_total = as.numeric(V4),
+    pop_male = as.numeric(V5),
+    pop_female = as.numeric(V6)
+  )]
+
+  raw[nchar_my >= 6, `:=`(
+    month = as.integer(substr(month_year_str, 1, 1)),
+    year = as.integer(substr(month_year_str, 2, 3)),
+    age = as.integer(substr(month_year_str, 4, 6)),
+    pop_total = as.numeric(V3),
+    pop_male = as.numeric(V4),
+    pop_female = as.numeric(V5)
+  )]
+
+  dt <- raw[, .(month, year, age, pop_total, pop_male, pop_female)]
+
+  # Convert 2-digit year to 4-digit (80-99 -> 1980-1999)
+  dt[year < 100, year := year + 1900L]
+
+  # Filter to requested month, years, and single-year ages (exclude 999 total)
+  dt <- dt[month == ref_month & year %in% years & age <= 100 & !is.na(age)]
+
+  # Filter to requested ages (cap at 85+ if needed)
+  max_age <- max(ages)
+  dt <- dt[age <= max_age]
+  dt[age > max_age, age := max_age]
+
+  # Select population column based on sex
+  if (sex == "female") {
+    dt[, population := pop_female]
+  } else if (sex == "male") {
+    dt[, population := pop_male]
+  } else {
+    dt[, population := pop_total]
+  }
+
+  dt[, sex := sex]
+
+  # Filter to requested ages and aggregate if needed (for 85+ grouping)
+  dt <- dt[age %in% ages]
+  dt <- dt[, .(population = sum(population)), by = .(year, age, sex)]
+
+  dt[, .(year, age, sex, population)]
 }

@@ -21,7 +21,10 @@
       "Bash(for page in natality-current natality-expanded-current natality-v2006 natality-v2002)",
       "Bash(do echo \"$page:\" curl -s \"https://wonder.cdc.gov/$page.html\")",
       "WebFetch(domain:data.nber.org)",
-      "WebFetch(domain:ftp.cdc.gov)"
+      "WebFetch(domain:ftp.cdc.gov)",
+      "WebFetch(domain:www.census.gov)",
+      "WebFetch(domain:www2.census.gov)",
+      "Bash(while read line)"
     ]
   }
 }
