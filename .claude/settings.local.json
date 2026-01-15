@@ -4,7 +4,24 @@
       "Bash(R:*)",
       "Bash(Rscript -e:*)",
       "Bash(Rscript:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(curl:*)",
+      "WebFetch(domain:wonder.cdc.gov)",
+      "WebSearch",
+      "WebFetch(domain:socdatar.github.io)",
+      "WebFetch(domain:github.com)",
+      "Bash(XML_REQUEST='<?xml version=\"\"\"\"1.0\"\"\"\" encoding=\"\"\"\"utf-8\"\"\"\"?><request-parameters><parameter><name>accept_datause_restrictions</name><value>true</value></parameter><parameter><name>B_1</name><value>D66.V1</value></parameter><parameter><name>B_2</name><value>D66.V6</value></parameter><parameter><name>M_1</name><value>D66.M1</value></parameter><parameter><name>action-Send</name><value>Send</value></parameter></request-parameters>' __NEW_LINE_ea614c622a0e4e1e__ curl -s \"https://wonder.cdc.gov/controller/datarequest/D66\" -X POST -d \"request_xml=$XML_REQUEST\")",
+      "Bash(XML_REQUEST='<?xml version=\"\"\"\"1.0\"\"\"\" encoding=\"\"\"\"utf-8\"\"\"\"?><request-parameters><parameter><name>accept_datause_restrictions</name><value>true</value></parameter><parameter><name>B_1</name><value>D66.V1</value></parameter><parameter><name>M_1</name><value>D66.M1</value></parameter><parameter><name>action-Send</name><value>Send</value></parameter></request-parameters>' __NEW_LINE_98a330396837eb18__ curl -s \"https://wonder.cdc.gov/controller/datarequest/D66\" -X POST --data-urlencode \"request_xml=$XML_REQUEST\")",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:www.nber.org)",
+      "WebFetch(domain:www.cdc.gov)",
+      "Bash(unzip:*)",
+      "Bash(/bin/ls:*)",
+      "Bash(/bin/bash -c \"ls /mnt/c/Users/skylo/git/artemis\")",
+      "Bash(for page in natality-current natality-expanded-current natality-v2006 natality-v2002)",
+      "Bash(do echo \"$page:\" curl -s \"https://wonder.cdc.gov/$page.html\")",
+      "WebFetch(domain:data.nber.org)",
+      "WebFetch(domain:ftp.cdc.gov)"
     ]
   }
 }

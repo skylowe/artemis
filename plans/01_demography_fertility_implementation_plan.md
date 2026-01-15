@@ -1350,13 +1350,19 @@ artemis/
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 2.1 | Create Census API wrapper | config | census_population.R |
-| [ ] | 2.2 | Create CDC WONDER wrapper (API-first approach, fallback to files if needed) | config | cdc_wonder.R |
-| [ ] | 2.3 | Create NCHS file downloader | None | nchs_vitals.R |
-| [ ] | 2.4 | Create historical rate loader (compile from NCHS publications 1917-1979) | None | historical_fertility.R |
+| [x] | 2.1 | Create Census API wrapper | config | census_population.R |
+| [x] | 2.2 | Create NCHS births downloader (via NBER Stata files) | None | nchs_births.R |
+| [~] | 2.3 | Download full historical NCHS data (1968-2024) | 2.2 | Cached .rds files |
+| [ ] | 2.4 | Create historical rate loader (1917-1967 from publications) | None | historical_fertility.R |
 | [ ] | 2.5 | Create provisional data fetcher | None | provisional_births.R |
-| [ ] | 2.6 | Create API helper utilities | config | api_helpers.R |
+| [x] | 2.6 | Create API helper utilities | config | api_helpers.R |
 | [ ] | 2.7 | Test data acquisition with real data | All above | Data files |
+
+**Notes on Phase 1B:**
+- Step 2.2: Using NBER Stata files instead of CDC WONDER API. Files contain single-year-of-age data (variable `mager` for 2003+, `dmage` for 1968-2002). Raw files are 500-900 MB each but cached aggregated results are ~500 bytes.
+- Step 2.3: Test years downloaded (1980, 2000, 2023, 2024). Full download of 1968-2024 should be run as batch job.
+- Step 2.4: **DEFERRED.** Historical rates (1917-1979) are only needed for historical output series (years 1941-1979) and CTFR for old cohorts. The projection methodology only uses 1980-2024 data. Will implement later when needed for full historical output.
+- Step 2.5: **DEFERRED.** Provisional data was used by SSA to estimate 2024 rates before final data existed. We now have final 2024 data from NBER, which is more complete. However, provisional data fetcher may be needed in the future when running projections before NBER publishes the latest year's final data (NBER typically lags several months behind NCHS releases).
 
 ### Phase 1C: Fertility Subprocess Functions
 
