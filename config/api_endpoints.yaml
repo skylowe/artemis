@@ -1,0 +1,82 @@
+# API Endpoint Configuration for ARTEMIS
+# Contains URLs, parameters, and rate limits for external data sources
+
+census:
+  base_url: "https://api.census.gov/data"
+  population_estimates:
+    # Vintage 2023 estimates (2020-2023)
+    pep_2023:
+      endpoint: "/2023/pep/charagegroups"
+      rate_limit_per_minute: 500
+    # 2010-2019 estimates
+    pep_2019:
+      endpoint: "/2019/pep/charagegroups"
+      rate_limit_per_minute: 500
+    # 2000-2009 intercensal estimates
+    intercensal_2000s:
+      endpoint: "/2000/pep/int_charagegroups"
+      rate_limit_per_minute: 500
+  variables:
+    sex:
+      both: 0
+      male: 1
+      female: 2
+    geography:
+      us_total: "us:*"
+
+cdc_wonder:
+  base_url: "https://wonder.cdc.gov"
+  natality:
+    # Natality 2016-2023 (expanded)
+    endpoint: "/controller/datarequest/D66"
+    database_id: "D66"
+    rate_limit_per_minute: 60
+    max_rows: 75000
+  # Older natality database
+  natality_historic:
+    endpoint: "/controller/datarequest/D27"
+    database_id: "D27"
+    rate_limit_per_minute: 60
+
+nchs:
+  vital_stats:
+    base_url: "https://www.cdc.gov/nchs/data"
+    # Provisional vital statistics reports
+    provisional_url: "/vsrr/vsrr-quarterly.xlsx"
+    # Historical natality data files
+    natality_data_url: "/nvss/natality"
+  nvss:
+    base_url: "https://www.cdc.gov/nchs/nvss"
+    births_url: "/births.htm"
+
+bea:
+  base_url: "https://apps.bea.gov/api/data"
+  rate_limit_per_minute: 100
+  datasets:
+    nipa: "NIPA"
+    gdp: "GDP"
+
+bls:
+  base_url: "https://api.bls.gov/publicAPI/v2"
+  rate_limit_per_minute: 500
+  series:
+    # Labor force statistics
+    lfs_prefix: "LN"
+    # Employment
+    ces_prefix: "CE"
+
+fred:
+  base_url: "https://api.stlouisfed.org/fred"
+  rate_limit_per_minute: 120
+  series:
+    # GDP
+    gdp: "GDP"
+    # Population
+    population: "POPTHM"
+
+# Request configuration
+request_defaults:
+  timeout_seconds: 30
+  max_retries: 3
+  backoff_factor: 2
+  user_agent: "ARTEMIS OASDI Projection Model (R)"

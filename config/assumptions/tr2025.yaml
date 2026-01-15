@@ -1,0 +1,57 @@
+# ARTEMIS Configuration: TR2025 Intermediate Assumptions
+# Source: SSA Office of the Chief Actuary, 2025 Trustees Report
+
+metadata:
+  trustees_report_year: 2025
+  alternative: "Intermediate"
+  alternative_number: 2
+  projection_period:
+    start_year: 2025
+    end_year: 2099
+  valuation_date: "2025-01-01"
+
+fertility:
+  # Ultimate cohort TFR assumption
+  ultimate_ctfr: 1.90
+  # Cohort that first achieves ultimate CTFR
+  ultimate_cohort_year: 2020
+  # Age range for fertility calculations
+  min_fertility_age: 14
+  max_fertility_age: 49
+  # Reference age for ratio calculations
+  reference_age: 30
+  # Ultimate attainment years
+  projection_start_year: 2025
+  ultimate_year: 2050
+  age30_ultimate_year: 2036
+  # Interpolation weight exponent
+  weight_exponent: 1.5
+  # Estimated TFR for 2024 (base year)
+  tfr_estimate_2024: 1.62
+  # Base year for projections
+  rate_base_year: 2024
+  # Years to exclude from trend calculations
+  exclude_years:
+    - 1997  # NCHS age imputation method change
+
+mortality:
+  # Placeholder - to be populated when mortality subprocess is implemented
+  ultimate_male_life_expectancy_at_65: null
+  ultimate_female_life_expectancy_at_65: null
+
+immigration:
+  # Placeholder - to be populated when immigration subprocesses are implemented
+  ultimate_net_lpr_immigration: null
+  ultimate_net_other_immigration: null
+
+# Data source configuration
+data_sources:
+  historical_birth_data:
+    start_year: 1980
+    end_year: 2023
+  historical_rate_data:
+    start_year: 1917
+    end_year: 1979
+  population_estimates:
+    start_year: 1980
+    end_year: 2024

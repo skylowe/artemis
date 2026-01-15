@@ -4,9 +4,9 @@
 R-based replication of the SSA Office of the Chief Actuary's long-range OASDI projection model. Uses `{targets}` for pipeline orchestration and `{renv}` for dependency management.
 
 ## Current Status
-**Phase:** 1 - Demography Process (Fertility Subprocess)
-**Most Recent Completion:** Implementation plan created
-**Next Step:** Project setup (directory structure, renv initialization)
+**Phase:** 1B - Data Acquisition Functions
+**Most Recent Completion:** Phase 1A - Project Setup (directory structure, renv, packages, config files, _targets.R)
+**Next Step:** Phase 1B - Create data acquisition functions (Census API, CDC WONDER, NCHS)
 
 ## Plan Documents
 For detailed implementation status and task tracking, see:

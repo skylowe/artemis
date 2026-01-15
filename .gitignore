@@ -1,2 +1,42 @@
+# Data and credentials
 /data/raw
 .Renviron
+
+# R artifacts
+.Rhistory
+.Rdata
+.RData
+.Ruserdata
+*.Rproj.user
+
+# renv
+renv/library/
+renv/staging/
+renv/python/
+renv/sandbox/
+renv/.gitignore
+
+# targets
+_targets/
+_targets_packages/
+
+# Byte-compiled files
+*.pyc
+__pycache__/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.Rproj.user/
+.vscode/
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Logs
+*.log

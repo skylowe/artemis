@@ -1,0 +1,65 @@
+# ARTEMIS Configuration: Custom Scenario Template
+# Copy this file and modify values to create custom scenarios
+
+metadata:
+  trustees_report_year: 2025  # Base TR for comparison
+  alternative: "Custom"
+  alternative_number: null     # Not an official alternative
+  projection_period:
+    start_year: 2025
+    end_year: 2099
+  valuation_date: "2025-01-01"
+  description: "User-defined custom scenario"
+
+fertility:
+  # Ultimate cohort TFR assumption
+  # TR2025 Intermediate: 1.90, Low-Cost: 2.20, High-Cost: 1.60
+  ultimate_ctfr: 1.90
+
+  # Cohort that first achieves ultimate CTFR
+  ultimate_cohort_year: 2020
+
+  # Age range for fertility calculations (typically fixed)
+  min_fertility_age: 14
+  max_fertility_age: 49
+
+  # Reference age for ratio calculations (typically fixed)
+  reference_age: 30
+
+  # Ultimate attainment years
+  projection_start_year: 2025
+  ultimate_year: 2050
+  age30_ultimate_year: 2036
+
+  # Interpolation weight exponent (controls transition speed)
+  weight_exponent: 1.5
+
+  # Estimated TFR for base year
+  tfr_estimate_2024: 1.62
+  rate_base_year: 2024
+
+  # Years to exclude from trend calculations
+  exclude_years:
+    - 1997
+
+mortality:
+  # Set these when implementing custom mortality scenarios
+  ultimate_male_life_expectancy_at_65: null
+  ultimate_female_life_expectancy_at_65: null
+
+immigration:
+  # Set these when implementing custom immigration scenarios
+  ultimate_net_lpr_immigration: null
+  ultimate_net_other_immigration: null
+
+# Data source configuration (typically unchanged)
+data_sources:
+  historical_birth_data:
+    start_year: 1980
+    end_year: 2023
+  historical_rate_data:
+    start_year: 1917
+    end_year: 1979
+  population_estimates:
+    start_year: 1980
+    end_year: 2024
