@@ -49,7 +49,8 @@
       "WebFetch(domain:api.census.gov)",
       "Bash(python scripts/download_mortality_docs.py:*)",
       "Bash(tee:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(du:*)"
     ]
   }
 }

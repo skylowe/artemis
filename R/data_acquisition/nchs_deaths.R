@@ -336,16 +336,15 @@ fetch_nchs_deaths_by_age <- function(year, cache_dir = "data/cache/nchs_deaths",
 #'
 #' @keywords internal
 get_mortality_file_layout <- function(year) {
-  # Layouts determined empirically from actual CDC NCHS mortality files
-  # Note: Positions differ from official documentation - verified against actual data files
+  # Layouts from official CDC NCHS mortality file documentation
+  # See data/raw/nchs/mortality_documentation/ for source documents
   #
-  # 2019 file layout (empirically verified):
-  #   Sex: position 50 (1 char: M/F)
-  #   Detail Age: positions 51-54 (4 chars)
-  #     - Position 51: age unit (1=years, 2=months, 4=days, 5=hours, 6=minutes, 9=not stated)
+  # Key format changes:
+  # - 1968-1978 (ICD-8): Sex=35, Age=39-41 (3 char), UCOD=60-63
 
-  #     - Positions 52-54: number of units (e.g., "036" = 36)
-  #   Underlying Cause ICD-10: positions 127-130 (4 chars)
+  # - 1979-2002 (ICD-9 and early ICD-10): Sex=59, Age=64-66 (3 char), UCOD=142-145
+  # - 2003-2019 (ICD-10): Sex=69, Age=70-73 (4 char), UCOD=146-149
+  # - 2020+ (ICD-10): Same as 2003-2019
 
   if (year >= 2020) {
     # 2020+ layout (similar to 2003-2004)
@@ -357,18 +356,9 @@ get_mortality_file_layout <- function(year) {
       ucod = c(start = 146, end = 149),       # Underlying cause ICD-10
       record_type = c(start = 1, end = 1)
     )
-  } else if (year >= 2005) {
-    # 2005-2019 layout
-    # Empirically verified from 2019 data file (mort2019us.zip)
-    list(
-      detail_age = c(start = 51, end = 54),   # Detail age (4 chars: unit + 3-digit value)
-      sex = c(start = 50, end = 50),          # Sex (1 char: M/F)
-      ucod = c(start = 127, end = 130),       # Underlying cause ICD-10 (4 chars)
-      record_type = c(start = 1, end = 1)     # Record indicator
-    )
   } else if (year >= 2003) {
-    # 2003-2004 layout
-    # From Record_Layout_2003.md documentation:
+    # 2003-2019 layout (ICD-10, 4-char detail_age format)
+    # Verified from Record_Layout_2003.md, Record_Layout_2005.md documentation:
     #   Sex: position 69 (M/F)
     #   Detail Age: positions 70-73 (4 chars: unit + 3-digit value)
     #   Underlying Cause: positions 146-149
@@ -378,25 +368,11 @@ get_mortality_file_layout <- function(year) {
       ucod = c(start = 146, end = 149),       # Underlying cause ICD-10
       record_type = c(start = 1, end = 1)
     )
-  } else if (year >= 1999 && year <= 2001) {
-    # 1999-2001 layout (ICD-10 transition)
-    # Empirically verified from 2000 data file:
-    #   Sex: position 57 (1=Male, 2=Female)
-    #   Detail Age: positions 62-64 (3 chars)
-    #   Underlying Cause ICD-10: positions 140-143 (4 chars)
-    # Note: Documentation says sex=59, age=64-66, ucod=142-145
-    # but actual file has a 2-position offset from documentation!
-    # Using empirical positions that produce valid distributions.
-    list(
-      detail_age = c(start = 62, end = 64),  # Doc says 64-66, file is 62-64
-      sex = c(start = 57, end = 57),         # Doc says 59, file is 57
-      ucod = c(start = 140, end = 143),      # Doc says 142-145, file is 140-143
-      record_type = c(start = 20, end = 20)
-    )
-  } else if (year >= 1979 || year == 2002) {
-    # 1979-1998 layout (ICD-9) AND 2002 (ICD-10 but same field positions!)
-    # 2002 uses same field positions as ICD-9 era per Mort2002_Interim.md
-    # From 1995/2002 documentation:
+  } else if (year >= 1979) {
+    # 1979-2002 layout (ICD-9 era and ICD-10 transition years 1999-2002)
+    # All years 1979-2002 use same field positions per documentation:
+    # - Mort1995_ICD9.md, Mort2000_Interim.md, Mort2001_Interim.md, Mort2002_Interim.md
+    # From documentation:
     #   Sex: position 59 (1=Male, 2=Female)
     #   Detail Age: positions 64-66 (3 chars)
     #     - Position 64: unit (0=years<100, 1=years 100+, 2=months, 3=weeks, 4=days, 5=hours, 6=minutes, 9=not stated)
@@ -702,4 +678,335 @@ adjust_for_sampling <- function(deaths, method = c("weight", "interpolate")) {
   }
 
   result
+}
+
+#' Fetch infant deaths with age detail
+#'
+#' @description
+#' Downloads and processes NCHS mortality data to extract infant deaths
+#' (age < 1 year) with detailed age information (days, weeks, months).
+#' This is needed for accurate q0 (infant mortality) calculation per SSA methodology.
+#'
+#' @param year Integer: year to fetch (1968-2023)
+#' @param cache_dir Character: directory for cached files
+#' @param force_download Logical: if TRUE, re-process even if cached
+#'
+#' @return data.table with columns: year, sex, age_unit, age_value, cause, deaths
+#'   where age_unit is one of: "days", "weeks", "months", "hours", "minutes"
+#'   and age_value is the numeric value (e.g., 1-364 for days, 1-51 for weeks, 1-11 for months)
+#'
+#' @details
+#' The SSA methodology uses detailed infant death timing for q0 calculation.
+#' Deaths are categorized by:
+#' - Days (0-27 days, neonatal)
+#' - Weeks (not commonly used but available)
+#' - Months (1-11 months, post-neonatal)
+#'
+#' Age unit codes in NCHS files:
+#' - ICD-10 era (1999+): 2xxx=months, 4xxx=days, 5xxx=hours, 6xxx=minutes
+#' - ICD-8/9 era (1968-1998): 2=months, 3=weeks, 4=days, 5=hours, 6=minutes
+#'
+#' @export
+fetch_nchs_infant_deaths_detail <- function(year, cache_dir = "data/cache/nchs_deaths",
+                                             force_download = FALSE) {
+  # Validate year
+  if (year < 1968 || year > 2023) {
+    cli::cli_abort("Year must be between 1968 and 2023")
+  }
+
+  # Check for cached data
+  cache_file <- file.path(cache_dir, sprintf("infant_deaths_detail_%d.rds", year))
+  if (file.exists(cache_file) && !force_download) {
+    cli::cli_alert_success("Loading cached infant death detail for {year}")
+    return(readRDS(cache_file))
+  }
+
+  # Need to read raw mortality file and process differently
+  # First, get the file (may already be cached from regular deaths fetch)
+  mort_file <- get_cached_mortality_file(year, cache_dir)
+
+  if (is.null(mort_file)) {
+    # Need to download
+    cli::cli_alert_info("Downloading NCHS mortality data for {year}...")
+    mort_file <- download_mortality_file(year, cache_dir)
+  }
+
+  # Read the fixed-width data
+  cli::cli_alert("Reading mortality file for infant death detail...")
+  layout <- get_mortality_file_layout(year)
+  raw <- read_mortality_fixed_width(mort_file, layout, year)
+
+  # Process infant deaths with detail
+  result <- process_infant_deaths_detail(raw, year)
+
+  # Cache and return
+  if (!dir.exists(cache_dir)) {
+    dir.create(cache_dir, recursive = TRUE)
+  }
+  saveRDS(result, cache_file)
+  cli::cli_alert_success("Cached infant death detail to {cache_file}")
+  cli::cli_alert_success("Retrieved {sum(result$deaths)} infant deaths for {year}")
+
+  result
+}
+
+#' Process infant deaths with age detail
+#'
+#' @param dt data.table from read_mortality_fixed_width
+#' @param year Data year
+#'
+#' @return data.table with year, sex, age_unit, age_value, cause, deaths
+#'
+#' @keywords internal
+process_infant_deaths_detail <- function(dt, year) {
+  cli::cli_alert("Processing infant death detail...")
+
+  # Extract age unit and value, keeping only infant deaths
+  if (year >= 2003) {
+    # ICD-10 era: 4-char detail_age format
+    # 1xxx = years, 2xxx = months, 4xxx = days, 5xxx = hours, 6xxx = minutes
+    dt[, detail_age_num := suppressWarnings(as.integer(detail_age))]
+
+    # Filter to infants only (not years)
+    infants <- dt[detail_age_num >= 2000 & detail_age_num < 7000]
+
+    # Extract unit and value
+    infants[detail_age_num >= 2000 & detail_age_num < 3000, `:=`(
+      age_unit = "months",
+      age_value = detail_age_num - 2000L
+    )]
+    infants[detail_age_num >= 4000 & detail_age_num < 5000, `:=`(
+      age_unit = "days",
+      age_value = detail_age_num - 4000L
+    )]
+    infants[detail_age_num >= 5000 & detail_age_num < 6000, `:=`(
+      age_unit = "hours",
+      age_value = detail_age_num - 5000L
+    )]
+    infants[detail_age_num >= 6000 & detail_age_num < 7000, `:=`(
+      age_unit = "minutes",
+      age_value = detail_age_num - 6000L
+    )]
+
+  } else {
+    # ICD-8/9 era: 3-char format
+    # Unit: 2=months, 3=weeks, 4=days, 5=hours, 6=minutes
+    dt[, age_unit_code := substr(detail_age, 1, 1)]
+    dt[, age_value := suppressWarnings(as.integer(substr(detail_age, 2, 3)))]
+
+    # Filter to infants only
+    infants <- dt[age_unit_code %in% c("2", "3", "4", "5", "6")]
+
+    # Map unit codes to labels
+    infants[age_unit_code == "2", age_unit := "months"]
+    infants[age_unit_code == "3", age_unit := "weeks"]
+    infants[age_unit_code == "4", age_unit := "days"]
+    infants[age_unit_code == "5", age_unit := "hours"]
+    infants[age_unit_code == "6", age_unit := "minutes"]
+  }
+
+  # Process sex
+  infants[, sex := data.table::fifelse(sex %in% c("M", "1"), "male",
+                         data.table::fifelse(sex %in% c("F", "2"), "female", NA_character_))]
+
+  # Map cause of death
+  if (year >= 1999) {
+    infants[, cause := map_icd10_to_cause(ucod)]
+  } else if (year >= 1979) {
+    infants[, cause := map_icd9_to_cause(ucod)]
+  } else {
+    infants[, cause := map_icd8_to_cause(ucod)]
+  }
+
+  # Filter valid data and aggregate
+  infants <- infants[!is.na(sex) & !is.na(age_unit) & !is.na(age_value)]
+
+  result <- infants[, .(deaths = .N), by = .(sex, age_unit, age_value, cause)]
+  result[, year := year]
+  data.table::setcolorder(result, c("year", "sex", "age_unit", "age_value", "cause", "deaths"))
+  data.table::setorder(result, sex, age_unit, age_value, cause)
+
+  result
+}
+
+#' Get cached mortality file path
+#'
+#' @param year Year
+#' @param cache_dir Cache directory
+#'
+#' @return File path if cached, NULL otherwise
+#'
+#' @keywords internal
+get_cached_mortality_file <- function(year, cache_dir) {
+  # Check for extracted mortality file in extract subdirectory
+  extract_dir <- file.path(cache_dir, sprintf("mort%d_extract", year))
+
+  if (dir.exists(extract_dir)) {
+    # Find the data file in extract directory
+    data_files <- list.files(extract_dir, full.names = TRUE, recursive = TRUE)
+    data_files <- data_files[!grepl("\\.(pdf|docx?|rds)$", data_files, ignore.case = TRUE)]
+
+    # Filter to large files (actual data files)
+    file_sizes <- file.size(data_files)
+    large_files <- data_files[file_sizes > 50 * 1024^2]
+    if (length(large_files) > 0) {
+      return(large_files[1])
+    }
+    if (length(data_files) > 0) {
+      return(data_files[1])
+    }
+  }
+
+  NULL
+}
+
+#' Download mortality file
+#'
+#' @param year Year to download
+#' @param cache_dir Cache directory
+#'
+#' @return Path to downloaded/extracted file
+#'
+#' @keywords internal
+download_mortality_file <- function(year, cache_dir) {
+  # Mirror the extraction logic from fetch_nchs_deaths_by_age
+
+  if (!dir.exists(cache_dir)) {
+    dir.create(cache_dir, recursive = TRUE)
+  }
+
+  # Build URL based on year
+  if (year >= 1968 && year <= 2023) {
+    url <- sprintf("https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Datasets/DVS/mortality/mort%dus.zip", year)
+  } else {
+    cli::cli_abort("Year {year} not supported")
+  }
+
+  # Download ZIP file
+  temp_zip <- tempfile(fileext = ".zip")
+
+  old_timeout <- getOption("timeout")
+  options(timeout = 1800)  # 30 minutes
+  on.exit(options(timeout = old_timeout), add = TRUE)
+
+  tryCatch({
+    download.file(url, temp_zip, mode = "wb", quiet = FALSE)
+  }, error = function(e) {
+    cli::cli_abort(c(
+      "Failed to download NCHS mortality data for {year}",
+      "x" = conditionMessage(e)
+    ))
+  })
+
+  # Extract to persistent directory (not temp)
+  extract_dir <- file.path(cache_dir, sprintf("mort%d_extract", year))
+  if (!dir.exists(extract_dir)) {
+    dir.create(extract_dir, recursive = TRUE)
+  }
+
+  cli::cli_alert("Extracting ZIP file...")
+
+  # Try R's unzip first, fall back to system unzip for large files
+  unzip_result <- tryCatch({
+    utils::unzip(temp_zip, exdir = extract_dir)
+    TRUE
+  }, warning = function(w) {
+    FALSE
+  }, error = function(e) {
+    FALSE
+  })
+
+  # If R's unzip failed, try system unzip
+  if (!unzip_result || length(list.files(extract_dir)) == 0) {
+    cli::cli_alert("Using system unzip for large file...")
+    system2("unzip", args = c("-o", "-q", temp_zip, "-d", extract_dir),
+            stdout = FALSE, stderr = FALSE)
+  }
+
+  # Clean up ZIP file
+  unlink(temp_zip)
+
+  # Find the data file
+  data_files <- list.files(extract_dir, full.names = TRUE, recursive = TRUE)
+  # Exclude documentation files
+  data_files <- data_files[!grepl("\\.(pdf|docx?)$", data_files, ignore.case = TRUE)]
+
+  # Filter to large files (actual data files are > 50MB)
+  file_sizes <- file.size(data_files)
+  large_files <- data_files[file_sizes > 50 * 1024^2]
+  if (length(large_files) > 0) {
+    data_files <- large_files
+  }
+
+  if (length(data_files) == 0) {
+    cli::cli_abort("No data file found in ZIP for year {year}")
+  }
+
+  data_files[1]
+}
+
+#' Fetch infant deaths detail for multiple years
+#'
+#' @param years Integer vector of years
+#' @param cache_dir Cache directory
+#' @param force_download Force re-processing
+#'
+#' @return data.table with infant death detail for all years
+#'
+#' @export
+fetch_nchs_infant_deaths_detail_multi <- function(years, cache_dir = "data/cache/nchs_deaths",
+                                                   force_download = FALSE) {
+  results <- list()
+
+  for (yr in years) {
+    cli::cli_alert("Processing infant deaths for {yr}...")
+    tryCatch({
+      results[[as.character(yr)]] <- fetch_nchs_infant_deaths_detail(
+        year = yr,
+        cache_dir = cache_dir,
+        force_download = force_download
+      )
+    }, error = function(e) {
+      cli::cli_alert_warning("Failed for {yr}: {conditionMessage(e)}")
+    })
+  }
+
+  if (length(results) == 0) {
+    cli::cli_abort("No infant death data retrieved")
+  }
+
+  data.table::rbindlist(results, use.names = TRUE)
+}
+
+#' Aggregate infant deaths to standard age groups
+#'
+#' @description
+#' Aggregates detailed infant deaths to standard age groups used in mortality calculations:
+#' - Neonatal (0-27 days)
+#' - Post-neonatal (28-364 days, or 1-11 months)
+#'
+#' @param infant_detail data.table from fetch_nchs_infant_deaths_detail
+#'
+#' @return data.table with columns: year, sex, age_group, cause, deaths
+#'
+#' @export
+aggregate_infant_deaths_to_groups <- function(infant_detail) {
+  result <- data.table::copy(infant_detail)
+
+  # Convert all to days for grouping
+  result[age_unit == "minutes", age_days := 0L]
+  result[age_unit == "hours", age_days := 0L]
+  result[age_unit == "days", age_days := age_value]
+  result[age_unit == "weeks", age_days := age_value * 7L]
+  result[age_unit == "months", age_days := age_value * 30L]  # Approximate
+
+  # Classify into neonatal/post-neonatal
+  result[age_days <= 27, age_group := "neonatal"]
+  result[age_days > 27, age_group := "post_neonatal"]
+
+  # Aggregate
+  agg <- result[, .(deaths = sum(deaths)), by = .(year, sex, age_group, cause)]
+  data.table::setorder(agg, year, sex, age_group, cause)
+
+  agg
 }

@@ -19,7 +19,7 @@
 
 ### Current Status
 **Last Updated:** January 16, 2026
-**Current Phase:** Phase 2A - Data Acquisition (COMPLETE)
+**Current Phase:** Phase 2A - Data Acquisition (COMPLETE), Ready for Phase 2B
 **Prior Completion:** Phase 1 - Fertility subprocess validated and complete
 
 ### Phase 2A Progress Notes - COMPLETED
@@ -43,6 +43,31 @@
 
 ### Known Data Limitations
 - **1972**: CDC only processed 50% sample (983,001 records vs ~1.9M expected). This is documented in the official NCHS ICD-8 documentation. For analyses requiring complete 1972 data, apply weight of 2.0 or use interpolation from 1971/1973. Note: 1972 is outside the 2008-2019 regression period used for projections, so this limitation does not affect core mortality projections.
+
+### Data Strategy Decision (January 2026)
+
+**Decision:** Use NCHS vital statistics data for all ages (Option 1) and validate against TR2025 outputs.
+
+**Background:** The SSA model uses CMS Medicare enrollment and deaths data for ages 65+ because it provides more accurate counts than NCHS vital statistics at older ages. However, CMS Medicare data in the form SSA uses is not publicly available.
+
+**Approach:**
+1. Use NCHS mortality data for all ages (0-119)
+2. Validate calculated death probabilities (qx) against TR2025 official outputs
+3. If systematic differences exist at older ages, develop calibration factors based on TR2025 comparison
+4. Accept that our calculated intermediate values (mx, AAx) may differ slightly from SSA's internal calculations, as long as final outputs (qx, life expectancy) validate correctly
+
+### Additional Data Needed (Future Implementation)
+
+The following data items are needed for complete SSA methodology replication and will be implemented after core mortality projections are validated:
+
+| Item | Data | Purpose | Source | Priority |
+|------|------|---------|--------|----------|
+| 3 | Monthly births (1935-present) | Infant mortality calculation (age-in-months adjustments) | NCHS vital statistics | Medium |
+| 4 | Infant deaths by age detail | q0 calculation using deaths by age in days/weeks/months | NCHS mortality detail files | Medium |
+| 7 | Starting qx from 1939-41 life tables | Historical mortality baseline for very long projections | SSA Actuarial Study 120 | Low |
+| 19 | ACS PUMS by marital status | Marital status mortality differentials | Census ACS microdata | Medium |
+
+**Note:** Items 3 and 4 are needed for accurate infant mortality (q0) calculation using the SSA methodology. Item 7 is for historical calibration. Item 19 is needed for Phase 2D.4 (marital status differentials). Core projections can proceed without these items using simplified approaches.
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
@@ -792,14 +817,15 @@ load_tr2025_life_tables <- function(alternative = "Alt2") {
 | [x] | 2A.1 | Create NCHS death data downloader | None | nchs_deaths.R |
 | [x] | 2A.2 | Implement ICD-10/ICD-9/ICD-8 to cause mapping | 2A.1 | Cause categorization |
 | [x] | 2A.3 | Download/process 1968-2023 death data | 2A.1, 2A.2 | Cached death counts (56 years) |
-| [ ] | 2A.4 | Extend population fetch to both sexes | Existing census code | Population by sex |
-| [ ] | 2A.5 | Fetch NCHS WONDER provisional data | None | 2023+ provisional deaths |
-| [~] | 2A.6 | Load 2010 standard population | None | Standard pop file |
+| [x] | 2A.4 | Extend population fetch to both sexes | Existing census code | census_population.R |
+| [x] | 2A.5 | 2023 final death data available | 2A.3 | Included in cached data |
+| [x] | 2A.6 | Load 2010 standard population | None | Cached standard_population_2010.rds |
 
 **Notes:**
 - 2A.3: All years 1968-2023 downloaded and cached. 1972 is 50% sample (known CDC limitation, see above).
-- 2A.5: 2023 final data is now available in the downloaded files; WONDER API only needed for future provisional data
-- 2A.6: Function exists (`get_standard_population_2010()`), needs validation
+- 2A.4: `fetch_census_population_both_sexes()` tested and working (returns male/female population by age)
+- 2A.5: 2023 final data is included in downloaded NCHS files; WONDER API only needed for future provisional data
+- 2A.6: `get_standard_population_2010()` tested and working (303 rows: 101 ages × 3 sex categories)
 
 ### Phase 2B: Historical Mortality Calculations
 

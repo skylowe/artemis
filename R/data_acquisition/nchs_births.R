@@ -232,3 +232,181 @@ fetch_nchs_births_by_age_multi <- function(years, cache_dir = "data/raw/nchs", f
 get_nchs_natality_years <- function() {
   1968:2024
 }
+
+#' Fetch births by month from NCHS
+#'
+#' @description
+#' Downloads NCHS natality microdata from NBER and aggregates to birth counts
+#' by month. Results are cached locally. This is used for infant mortality
+#' calculations which require monthly birth data.
+#'
+#' @param year Integer: year to fetch (1968-2024 available)
+#' @param cache_dir Character: directory to cache downloaded/processed data
+#' @param force_download Logical: if TRUE, re-download even if cached
+#'
+#' @return data.table with columns: year, month, births
+#'
+#' @details
+#' Data source: NBER mirror of NCHS natality microdata
+#'
+#' Variable names for birth month differ by year:
+#' - 2004+: `dob_mm` (date of birth month)
+#' - Pre-2004: `birmon` (birth month)
+#'
+#' Sampling weights are applied as in fetch_nchs_births_by_age:
+#' - Pre-1972: 50% sample (multiply by 2)
+#' - 1972-2005: Use `recwt` weight variable
+#' - 2006+: 100% sample (no weighting needed)
+#'
+#' @export
+fetch_nchs_births_by_month <- function(year, cache_dir = "data/raw/nchs", force_download = FALSE) {
+  # Validate year
+  if (year < 1968 || year > 2024) {
+    cli::cli_abort("Year must be between 1968 and 2024")
+  }
+
+  # Ensure cache directory exists
+  if (!dir.exists(cache_dir)) {
+    dir.create(cache_dir, recursive = TRUE)
+  }
+
+  # Check for cached aggregated results
+  cache_file <- file.path(cache_dir, sprintf("births_by_month_%d.rds", year))
+  if (file.exists(cache_file) && !force_download) {
+    cli::cli_alert_success("Loading cached monthly births for {year}")
+    return(readRDS(cache_file))
+  }
+
+  # Download and process
+  cli::cli_alert_info("Downloading NCHS natality data for monthly births {year}...")
+  cli::cli_alert_warning("This may take several minutes (files are 500-900 MB)")
+
+  # Get file URL - same logic as fetch_nchs_births_by_age
+  if (year == 2005) {
+    filename <- "natality2005us.csv"
+    url <- sprintf("https://data.nber.org/nvss/natality/csv/2005/%s", filename)
+    file_format <- "csv"
+  } else if (year <= 1969) {
+    filename <- sprintf("natl%d.dta", year)
+    url <- sprintf("https://data.nber.org/nvss/natality/dta/%d/%s", year, filename)
+    file_format <- "dta"
+  } else if (year <= 1993) {
+    filename <- sprintf("natalityus%d.dta", year)
+    url <- sprintf("https://data.nber.org/nvss/natality/dta/%d/%s", year, filename)
+    file_format <- "dta"
+  } else {
+    filename <- sprintf("natality%dus.dta", year)
+    url <- sprintf("https://data.nber.org/nvss/natality/dta/%d/%s", year, filename)
+    file_format <- "dta"
+  }
+
+  # Download to temp file
+  temp_ext <- if (file_format == "csv") ".csv" else ".dta"
+  temp_file <- tempfile(fileext = temp_ext)
+  on.exit(unlink(temp_file), add = TRUE)
+
+  old_timeout <- getOption("timeout")
+  timeout_seconds <- if (year == 2005) 1800 else 600
+  options(timeout = timeout_seconds)
+  on.exit(options(timeout = old_timeout), add = TRUE)
+
+  tryCatch({
+    download.file(url, temp_file, mode = "wb", quiet = FALSE)
+  }, error = function(e) {
+    cli::cli_abort(c(
+      "Failed to download NCHS data for {year}",
+      "x" = conditionMessage(e),
+      "i" = "URL: {url}"
+    ))
+  })
+
+  cli::cli_alert("Reading and processing monthly birth data...")
+
+  # Determine month variable name based on year
+  if (year >= 2004) {
+    month_var <- "dob_mm"
+  } else {
+    month_var <- "birmon"
+  }
+
+  # Determine weighting strategy
+  if (year < 1972) {
+    cols_to_read <- month_var
+    weight_method <- "multiply_by_2"
+  } else if (year <= 2005) {
+    cols_to_read <- c(month_var, "recwt")
+    weight_method <- "use_recwt"
+  } else {
+    cols_to_read <- month_var
+    weight_method <- "count_records"
+  }
+
+  # Read the data file
+  if (file_format == "csv") {
+    raw_data <- data.table::fread(temp_file, select = cols_to_read)
+  } else {
+    raw_data <- haven::read_dta(temp_file, col_select = dplyr::all_of(cols_to_read))
+  }
+
+  # Aggregate to counts by month
+  dt <- data.table::as.data.table(raw_data)
+  data.table::setnames(dt, month_var, "month")
+
+  if (weight_method == "use_recwt") {
+    result <- dt[, .(births = sum(recwt)), by = month]
+  } else if (weight_method == "multiply_by_2") {
+    result <- dt[, .(births = .N * 2L), by = month]
+  } else {
+    result <- dt[, .(births = .N), by = month]
+  }
+
+  result[, year := year]
+  data.table::setcolorder(result, c("year", "month", "births"))
+  data.table::setorder(result, month)
+
+  # Remove invalid months
+  result <- result[month >= 1 & month <= 12]
+
+  # Cache the result
+  saveRDS(result, cache_file)
+  cli::cli_alert_success("Cached monthly births to {cache_file}")
+  cli::cli_alert_success("Retrieved {sum(result$births)} total births for {year}")
+
+  result
+}
+
+#' Fetch monthly births for multiple years
+#'
+#' @description
+#' Downloads and aggregates monthly birth data for multiple years.
+#'
+#' @param years Integer vector: years to fetch
+#' @param cache_dir Character: directory to cache data
+#' @param force_download Logical: if TRUE, re-download even if cached
+#'
+#' @return data.table with columns: year, month, births
+#'
+#' @export
+fetch_nchs_births_by_month_multi <- function(years, cache_dir = "data/raw/nchs",
+                                              force_download = FALSE) {
+  results <- list()
+
+  for (yr in years) {
+    cli::cli_alert("Processing monthly births for {yr}...")
+    tryCatch({
+      results[[as.character(yr)]] <- fetch_nchs_births_by_month(
+        year = yr,
+        cache_dir = cache_dir,
+        force_download = force_download
+      )
+    }, error = function(e) {
+      cli::cli_alert_warning("Failed for {yr}: {conditionMessage(e)}")
+    })
+  }
+
+  if (length(results) == 0) {
+    cli::cli_abort("No monthly birth data retrieved")
+  }
+
+  data.table::rbindlist(results, use.names = TRUE)
+}
