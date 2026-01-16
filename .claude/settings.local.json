@@ -46,7 +46,10 @@
       "Bash(source .venv/bin/activate)",
       "Bash(python scripts/download_nchs_docs.py:*)",
       "Bash(pkill:*)",
-      "WebFetch(domain:api.census.gov)"
+      "WebFetch(domain:api.census.gov)",
+      "Bash(python scripts/download_mortality_docs.py:*)",
+      "Bash(tee:*)",
+      "Bash(find:*)"
     ]
   }
 }

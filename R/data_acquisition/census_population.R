@@ -5,6 +5,183 @@
 #' @name census_population
 NULL
 
+#' Fetch population estimates for both sexes
+#'
+#' @description
+#' Retrieves population estimates by single year of age for both males and
+#' females separately. This is needed for mortality calculations.
+#'
+#' @param years Integer vector of years to query
+#' @param ages Integer vector of ages (default: 0:100)
+#' @param cache_dir Character: directory for caching downloaded files
+#'
+#' @return data.table with columns: year, age, sex, population
+#'   where sex is "male" or "female"
+#'
+#' @export
+fetch_census_population_both_sexes <- function(years,
+                                                ages = 0:100,
+                                                cache_dir = here::here("data/raw/census")) {
+  cli::cli_alert_info("Fetching population data for both sexes...")
+
+  # Fetch males
+  cli::cli_alert("Fetching male population...")
+  pop_male <- fetch_census_population_all(
+    years = years,
+    ages = ages,
+    sex = "male",
+    cache_dir = cache_dir
+  )
+
+  # Fetch females
+  cli::cli_alert("Fetching female population...")
+  pop_female <- fetch_census_population_all(
+    years = years,
+    ages = ages,
+    sex = "female",
+    cache_dir = cache_dir
+  )
+
+  # Combine
+  combined <- data.table::rbindlist(list(pop_male, pop_female), use.names = TRUE)
+  data.table::setorder(combined, year, sex, age)
+
+  cli::cli_alert_success(
+    "Retrieved population data for {length(unique(combined$year))} years, both sexes"
+  )
+
+  combined
+}
+
+#' Get 2010 Census standard population
+#'
+#' @description
+#' Returns the 2010 U.S. Census resident population by single year of age and sex.
+#' Used as weights for calculating age-adjusted death rates (ADR, ASDR).
+#'
+#' @param cache_dir Character: directory for caching downloaded files
+#'
+#' @return data.table with columns: age, sex, population
+#'
+#' @details
+#' The standard population is the 2010 Census resident population by age and sex.
+#' This is used to calculate age-adjusted death rates that are comparable across
+#' different years.
+#'
+#' @export
+get_standard_population_2010 <- function(cache_dir = here::here("data/raw/census")) {
+  # Check for cached file
+  cache_file <- file.path(cache_dir, "standard_population_2010.rds")
+
+  if (file.exists(cache_file)) {
+    cli::cli_alert_success("Loading cached 2010 standard population")
+    return(readRDS(cache_file))
+  }
+
+  cli::cli_alert_info("Fetching 2010 Census standard population...")
+
+  # Use the 2010 decennial census data
+
+  # We can approximate using the PEP 2010 estimates
+  # Or download the actual 2010 census file
+
+  # Fetch 2010 population for both sexes using existing infrastructure
+  pop_2010 <- tryCatch({
+    # Try API first (2010 is in vintage_2019)
+    male_pop <- fetch_pep_charage_2019(
+      base_url = "https://api.census.gov/data/2019/pep/charage",
+      years = 2010,
+      ages = 0:100,
+      sex = "male",
+      api_key = get_api_key("CENSUS_KEY"),
+      date_map = c("2010" = "3")
+    )
+
+    female_pop <- fetch_pep_charage_2019(
+      base_url = "https://api.census.gov/data/2019/pep/charage",
+      years = 2010,
+      ages = 0:100,
+      sex = "female",
+      api_key = get_api_key("CENSUS_KEY"),
+      date_map = c("2010" = "3")
+    )
+
+    data.table::rbindlist(list(male_pop, female_pop), use.names = TRUE)
+  }, error = function(e) {
+    cli::cli_alert_warning("API fetch failed, using hardcoded 2010 standard population")
+    # Return hardcoded values if API fails
+    get_hardcoded_standard_population_2010()
+  })
+
+  # Keep only needed columns
+  standard_pop <- pop_2010[, .(age, sex, population)]
+  data.table::setorder(standard_pop, sex, age)
+
+  # Also calculate combined (both sexes) totals
+  combined <- standard_pop[, .(population = sum(population)), by = age]
+  combined[, sex := "both"]
+
+  standard_pop <- data.table::rbindlist(
+    list(standard_pop, combined),
+    use.names = TRUE
+  )
+
+  # Cache the result
+  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+  saveRDS(standard_pop, cache_file)
+  cli::cli_alert_success("Cached 2010 standard population")
+
+  standard_pop
+}
+
+#' Hardcoded 2010 standard population (fallback)
+#'
+#' @description
+#' Returns hardcoded 2010 Census population totals by 5-year age groups.
+#' Used as fallback if API is unavailable.
+#'
+#' @return data.table with age, sex, population
+#'
+#' @keywords internal
+get_hardcoded_standard_population_2010 <- function() {
+  # 2010 Census population by sex and 5-year age groups (approximate)
+  # Source: Census Bureau 2010 Summary File 1
+  # For simplicity, we distribute evenly within age groups
+
+  age_groups <- data.table::data.table(
+    age_start = c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85),
+    age_end = c(4, 9, 14, 19, 24, 29, 34, 39, 44, 49, 54, 59, 64, 69, 74, 79, 84, 100),
+    pop_male = c(10319427, 10389638, 10579862, 11303666, 11014176, 10635591,
+                  9996500, 10042022, 10393977, 11209085, 10933274, 9523648,
+                  7483818, 5765502, 4243972, 3182388, 2294374, 1273867),
+    pop_female = c(9881935, 9959019, 10097332, 10736677, 10571823, 10466258,
+                   10137620, 10154272, 10562525, 11468206, 11217456, 9970062,
+                   8077500, 6582716, 5094129, 4135407, 3393811, 2723668)
+  )
+
+  # Expand to single year of age
+  results <- list()
+  for (i in seq_len(nrow(age_groups))) {
+    ages_in_group <- age_groups$age_start[i]:age_groups$age_end[i]
+    n_ages <- length(ages_in_group)
+
+    for (age in ages_in_group) {
+      results[[length(results) + 1]] <- data.table::data.table(
+        age = age,
+        sex = "male",
+        population = round(age_groups$pop_male[i] / n_ages)
+      )
+      results[[length(results) + 1]] <- data.table::data.table(
+        age = age,
+        sex = "female",
+        population = round(age_groups$pop_female[i] / n_ages)
+      )
+    }
+  }
+
+  data.table::rbindlist(results)
+}
+
 #' Fetch population estimates from Census Bureau (unified function)
 #'
 #' @description
