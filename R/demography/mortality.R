@@ -1053,3 +1053,591 @@ convert_mx_to_qx <- function(mx, max_age = 119) {
 
   dt
 }
+
+# =============================================================================
+# Phase 2D: Life Tables and Summary Statistics
+# =============================================================================
+
+#' Calculate complete period life table
+#'
+#' @description
+#' Calculates a complete period life table from death probabilities (qx).
+#' Returns all standard life table columns.
+#'
+#' @param qx data.table with death probabilities (must have age, sex, qx columns;
+#'   optionally year for multiple years)
+#' @param radix Integer: starting population for life table (default: 100,000)
+#' @param max_age Integer: maximum age in life table (default: 119)
+#'
+#' @return data.table with life table columns:
+#'   - age: exact age x
+#'   - sex: male or female
+#'   - year: calendar year (if present in input)
+#'   - qx: probability of death between ages x and x+1
+#'   - px: probability of survival (1 - qx)
+#'   - lx: number surviving to exact age x
+#'   - dx: number dying between ages x and x+1
+#'   - Lx: person-years lived between ages x and x+1
+#'   - Tx: total person-years lived above age x
+#'   - ex: life expectancy at age x
+#'
+#' @details
+#' Life table formulas:
+#' - px = 1 - qx
+#' - lx+1 = lx * px
+#' - dx = lx * qx = lx - lx+1
+#' - Lx = (lx + lx+1) / 2 for ages 1+; special formula for age 0
+#' - Tx = sum of Lx from age x to omega
+#' - ex = Tx / lx
+#'
+#' For age 0 (infant), Lx uses separation factor:
+#' L0 = f0 * l0 + (1 - f0) * l1
+#' where f0 ≈ 0.1 for developed countries (most infant deaths occur early)
+#'
+#' @export
+calculate_life_table <- function(qx, radix = 100000, max_age = 119) {
+  checkmate::assert_data_table(qx)
+  checkmate::assert_names(names(qx), must.include = c("age", "sex", "qx"))
+  checkmate::assert_int(radix, lower = 1)
+  checkmate::assert_int(max_age, lower = 1, upper = 150)
+
+  dt <- data.table::copy(qx)
+
+  # Determine grouping columns (year if present, plus sex)
+  has_year <- "year" %in% names(dt)
+  if (has_year) {
+    group_cols <- c("year", "sex")
+  } else {
+    group_cols <- "sex"
+  }
+
+  # Calculate life table within each group
+  result <- dt[, {
+    # Ensure sorted by age and complete
+    sd_sorted <- .SD[order(age)]
+    ages <- sd_sorted$age
+    qx_vals <- sd_sorted$qx
+
+    # Fill any missing ages with qx = 0 (or interpolate)
+    full_ages <- 0:max_age
+    qx_full <- rep(NA_real_, length(full_ages))
+    qx_full[match(ages, full_ages)] <- qx_vals
+
+    # For missing qx, use linear interpolation or last value
+    for (i in seq_along(qx_full)) {
+      if (is.na(qx_full[i])) {
+        if (i > 1 && !is.na(qx_full[i - 1])) {
+          qx_full[i] <- qx_full[i - 1]
+        } else {
+          qx_full[i] <- 0
+        }
+      }
+    }
+
+    # Cap qx at 1.0
+    qx_full <- pmin(qx_full, 1.0)
+
+    n <- length(full_ages)
+
+    # px: survival probability
+    px <- 1 - qx_full
+
+    # lx: survivors to exact age x (radix at age 0)
+    lx <- numeric(n)
+    lx[1] <- radix
+    for (i in 2:n) {
+      lx[i] <- lx[i - 1] * px[i - 1]
+    }
+
+    # dx: deaths between ages x and x+1
+    dx <- lx * qx_full
+
+    # Lx: person-years lived between ages x and x+1
+    # Standard formula: Lx = (lx + lx+1) / 2
+    # For last age (omega): L_omega = lx / mx, but since qx ≈ 1, use lx * 0.5
+    Lx <- numeric(n)
+
+    # Age 0: special separation factor for infant mortality
+    # f0 ≈ 0.1 means 10% of infant deaths occur in first fraction of year
+    # L0 = f0 * l0 + (1 - f0) * l1 ≈ 0.1 * l0 + 0.9 * l1
+    # Simplified: L0 = l1 + 0.1 * d0
+    if (n >= 2) {
+      f0 <- 0.1  # Separation factor for infants
+      Lx[1] <- lx[2] + f0 * dx[1]
+    } else {
+      Lx[1] <- lx[1] * 0.5
+    }
+
+    # Ages 1 to second-to-last: average of lx and lx+1
+    for (i in 2:(n - 1)) {
+      Lx[i] <- (lx[i] + lx[i + 1]) / 2
+    }
+
+    # Last age (omega): assume half die during year
+    Lx[n] <- lx[n] * 0.5
+
+    # Tx: total person-years lived above age x
+    Tx <- numeric(n)
+    Tx[n] <- Lx[n]
+    for (i in (n - 1):1) {
+      Tx[i] <- Tx[i + 1] + Lx[i]
+    }
+
+    # ex: life expectancy at age x
+    ex <- Tx / lx
+    # Handle division by zero for very old ages where lx ≈ 0
+    ex[lx < 0.5] <- 0
+
+    data.table::data.table(
+      age = full_ages,
+      qx = qx_full,
+      px = px,
+      lx = lx,
+      dx = dx,
+      Lx = Lx,
+      Tx = Tx,
+      ex = ex
+    )
+  }, by = group_cols]
+
+  data.table::setorder(result, sex, age)
+  if (has_year) {
+    data.table::setorder(result, year, sex, age)
+  }
+
+  n_tables <- length(unique(result$sex))
+  if (has_year) {
+    n_tables <- n_tables * length(unique(result$year))
+  }
+
+  cli::cli_alert_success(
+    "Calculated {n_tables} life table(s) with {max_age + 1} ages each"
+  )
+
+  result
+}
+
+#' Calculate life expectancy series
+#'
+#' @description
+#' Extracts life expectancy at specified ages from life tables.
+#' Commonly used ages: 0 (at birth), 65 (retirement age).
+#'
+#' @param life_table data.table from calculate_life_table()
+#' @param at_ages Integer vector of ages for life expectancy (default: c(0, 65))
+#'
+#' @return data.table with year, sex, age, ex columns
+#'
+#' @export
+calculate_life_expectancy <- function(life_table, at_ages = c(0, 65)) {
+  checkmate::assert_data_table(life_table)
+  checkmate::assert_names(names(life_table), must.include = c("age", "sex", "ex"))
+  checkmate::assert_integerish(at_ages, lower = 0)
+
+  # Filter to requested ages
+  result <- life_table[age %in% at_ages, ]
+
+  # Select relevant columns
+  has_year <- "year" %in% names(result)
+  if (has_year) {
+    result <- result[, .(year, sex, age, ex)]
+    data.table::setorder(result, year, sex, age)
+  } else {
+    result <- result[, .(sex, age, ex)]
+    data.table::setorder(result, sex, age)
+  }
+
+  cli::cli_alert_success(
+    "Extracted life expectancy at ages {paste(at_ages, collapse = ', ')}"
+  )
+
+  result
+}
+
+#' Calculate age-adjusted death rates
+#'
+#' @description
+#' Calculates age-adjusted death rates (ADR by sex, ASDR for both sexes)
+#' using the 2010 Census standard population as weights.
+#'
+#' @param mx data.table with central death rates (year, age, sex, mx)
+#' @param standard_pop data.table with standard population (age, sex, population)
+#'   If NULL, fetches 2010 Census standard population.
+#'
+#' @return data.table with columns:
+#'   - year: calendar year
+#'   - sex: "male", "female", or "both"
+#'   - adr: age-adjusted death rate (deaths per 100,000)
+#'
+#' @details
+#' Age-adjusted death rate formula:
+#' ADR_s = sum(SP_x * mx_s) / sum(SP_x)
+#'
+#' Where SP_x is the standard population at age x.
+#'
+#' ASDR (both sexes) uses sex-specific standard population:
+#' ASDR = sum(SP_x,s * mx_x,s) / sum(SP_x,s)
+#'
+#' Results are expressed per 100,000 population.
+#'
+#' @export
+calculate_age_adjusted_death_rates <- function(mx, standard_pop = NULL) {
+  checkmate::assert_data_table(mx)
+  checkmate::assert_names(names(mx), must.include = c("age", "sex", "mx"))
+
+  # Get standard population if not provided
+  if (is.null(standard_pop)) {
+    standard_pop <- get_standard_population_2010()
+  }
+  checkmate::assert_data_table(standard_pop)
+  checkmate::assert_names(names(standard_pop), must.include = c("age", "sex", "population"))
+
+  # Determine if mx has year column
+
+  has_year <- "year" %in% names(mx)
+
+  # Ensure we have matching ages in both datasets
+  # Standard pop typically goes to age 100, mx may go higher
+  max_std_age <- max(standard_pop$age)
+
+  # Filter mx to ages with standard population
+  mx_filtered <- mx[age <= max_std_age]
+
+  # Calculate ADR by sex
+  results_list <- list()
+
+  # Get unique years if present
+  if (has_year) {
+    years <- unique(mx_filtered$year)
+  } else {
+    years <- NA
+  }
+
+  for (sex_val in c("male", "female")) {
+    # Get standard population for this sex
+    sp <- standard_pop[sex == sex_val, .(age, population)]
+    total_sp <- sum(sp$population)
+
+    for (yr in years) {
+      if (is.na(yr)) {
+        mx_subset <- mx_filtered[sex == sex_val]
+      } else {
+        mx_subset <- mx_filtered[sex == sex_val & year == yr]
+      }
+
+      if (nrow(mx_subset) == 0) next
+
+      # Merge with standard population
+      merged <- merge(mx_subset, sp, by = "age", all.x = TRUE, suffixes = c("", "_sp"))
+      # Handle population column - use standard pop
+      if ("population_sp" %in% names(merged)) {
+        merged[, population := population_sp]
+        merged[, population_sp := NULL]
+      }
+      merged[is.na(population), population := 0]
+
+      # Calculate weighted death rate
+      adr <- sum(merged$population * merged$mx, na.rm = TRUE) / total_sp
+
+      # Convert to per 100,000
+      adr <- adr * 100000
+
+      if (is.na(yr)) {
+        results_list[[length(results_list) + 1]] <- data.table::data.table(
+          sex = sex_val,
+          adr = adr
+        )
+      } else {
+        results_list[[length(results_list) + 1]] <- data.table::data.table(
+          year = yr,
+          sex = sex_val,
+          adr = adr
+        )
+      }
+    }
+  }
+
+  # Calculate ASDR (both sexes combined)
+  sp_both <- standard_pop[sex %in% c("male", "female")]
+  total_sp_both <- sum(sp_both$population)
+
+  for (yr in years) {
+    if (is.na(yr)) {
+      mx_subset <- mx_filtered[sex %in% c("male", "female")]
+    } else {
+      mx_subset <- mx_filtered[sex %in% c("male", "female") & year == yr]
+    }
+
+    if (nrow(mx_subset) == 0) next
+
+    # Merge with standard population (by age and sex)
+    merged <- merge(mx_subset, sp_both[, .(age, sex, population)],
+                    by = c("age", "sex"), all.x = TRUE, suffixes = c("", "_sp"))
+    # Handle population column - use standard pop
+    if ("population_sp" %in% names(merged)) {
+      merged[, population := population_sp]
+      merged[, population_sp := NULL]
+    }
+    merged[is.na(population), population := 0]
+
+    # Calculate weighted death rate
+    asdr <- sum(merged$population * merged$mx, na.rm = TRUE) / total_sp_both
+
+    # Convert to per 100,000
+    asdr <- asdr * 100000
+
+    if (is.na(yr)) {
+      results_list[[length(results_list) + 1]] <- data.table::data.table(
+        sex = "both",
+        adr = asdr
+      )
+    } else {
+      results_list[[length(results_list) + 1]] <- data.table::data.table(
+        year = yr,
+        sex = "both",
+        adr = asdr
+      )
+    }
+  }
+
+  result <- data.table::rbindlist(results_list, fill = TRUE)
+
+  if (has_year) {
+    data.table::setorder(result, year, sex)
+  } else {
+    data.table::setorder(result, sex)
+  }
+
+  cli::cli_alert_success(
+    "Calculated age-adjusted death rates for {nrow(result)} year-sex combinations"
+  )
+
+  result
+}
+
+#' Get 2010 Census standard population
+#'
+#' @description
+#' Returns the 2010 Census standard population by single year of age and sex.
+#' Used as weights for age-adjusted death rate calculations.
+#'
+#' @param cache_dir Directory for caching
+#'
+#' @return data.table with columns: age, sex, population
+#'
+#' @export
+get_standard_population_2010 <- function(cache_dir = here::here("data/raw/census")) {
+  # Check for cached file
+  cache_file <- file.path(cache_dir, "standard_population_2010.rds")
+
+  if (file.exists(cache_file)) {
+    return(readRDS(cache_file))
+  }
+
+  # If not cached, create from hardcoded 2010 Census data
+  # These are approximations based on Census Bureau 2010 data
+  cli::cli_alert_info("Creating 2010 standard population from Census data...")
+
+  # 2010 Census population by 5-year age groups (in thousands)
+  # Source: Census Bureau 2010 Demographic Profile
+  age_groups <- data.table::data.table(
+    age_start = c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85),
+    age_end = c(4, 9, 14, 19, 24, 29, 34, 39, 44, 49, 54, 59, 64, 69, 74, 79, 84, 100),
+    pop_male = c(10319427, 10389638, 10579862, 11303666, 11014176, 10635591,
+                 9996500, 10042022, 10393977, 11209085, 10933274, 9523648,
+                 7483818, 5765502, 4243972, 3182388, 2294374, 1273867),
+    pop_female = c(9881935, 9959019, 10097332, 10736677, 10571823, 10466258,
+                   10137620, 10154272, 10562525, 11468206, 11217456, 9970062,
+                   8077500, 6582716, 5094129, 4135407, 3393811, 2723668)
+  )
+
+  # Expand to single year of age
+  results <- list()
+  for (i in seq_len(nrow(age_groups))) {
+    ages_in_group <- age_groups$age_start[i]:age_groups$age_end[i]
+    n_ages <- length(ages_in_group)
+
+    for (age in ages_in_group) {
+      results[[length(results) + 1]] <- data.table::data.table(
+        age = age,
+        sex = "male",
+        population = round(age_groups$pop_male[i] / n_ages)
+      )
+      results[[length(results) + 1]] <- data.table::data.table(
+        age = age,
+        sex = "female",
+        population = round(age_groups$pop_female[i] / n_ages)
+      )
+    }
+  }
+
+  standard_pop <- data.table::rbindlist(results)
+  data.table::setorder(standard_pop, sex, age)
+
+  # Cache the result
+  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+  saveRDS(standard_pop, cache_file)
+
+  cli::cli_alert_success("Created and cached 2010 standard population")
+
+  standard_pop
+}
+
+#' Calculate death probabilities by marital status
+#'
+#' @description
+#' Applies marital status relative mortality factors to total qx values.
+#' Per SSA methodology, all marital statuses converge to the same qx at age 95.
+#'
+#' @param qx_total data.table with total death probabilities (year, age, sex, qx)
+#' @param marital_factors data.table with relative mortality by marital status
+#'   If NULL, uses default factors based on SSA methodology.
+#'
+#' @return data.table with qx by year, age, sex, marital_status
+#'
+#' @details
+#' Marital status categories:
+#' - married: lowest mortality
+#' - widowed: elevated mortality
+#' - divorced: elevated mortality
+#' - never_married: elevated mortality
+#'
+#' Relative factors from empirical studies (approximate):
+#' - Married: 1.0 (reference)
+#' - Widowed: 1.15-1.30 depending on age/sex
+#' - Divorced: 1.20-1.40
+#' - Never married: 1.25-1.50
+#'
+#' All converge to 1.0 at age 95.
+#'
+#' @export
+calculate_qx_by_marital_status <- function(qx_total, marital_factors = NULL) {
+  checkmate::assert_data_table(qx_total)
+  checkmate::assert_names(names(qx_total), must.include = c("age", "sex", "qx"))
+
+  # Default marital status relative mortality factors
+  # These are simplified approximations of the SSA methodology
+  if (is.null(marital_factors)) {
+    marital_factors <- get_default_marital_factors()
+  }
+
+  dt <- data.table::copy(qx_total)
+  has_year <- "year" %in% names(dt)
+
+  # Expand to all marital statuses
+  marital_statuses <- c("married", "widowed", "divorced", "never_married")
+  result_list <- list()
+
+  for (ms in marital_statuses) {
+    dt_ms <- data.table::copy(dt)
+    dt_ms[, marital_status := ms]
+
+    # Get factors for this marital status
+    factors_ms <- marital_factors[marital_status == ms]
+
+    # Merge factors by age and sex
+    dt_ms <- merge(dt_ms, factors_ms[, .(age, sex, relative_factor)],
+                   by = c("age", "sex"), all.x = TRUE)
+
+    # Fill missing factors with 1.0 (no adjustment)
+    dt_ms[is.na(relative_factor), relative_factor := 1.0]
+
+    # Apply convergence at age 95+
+    # Linear transition from age 85 to 95
+    dt_ms[age >= 85 & age < 95, relative_factor := relative_factor * (95 - age) / 10 + 1.0 * (age - 85) / 10]
+    dt_ms[age >= 95, relative_factor := 1.0]
+
+    # Apply factor to qx
+    dt_ms[, qx := qx * relative_factor]
+
+    # Cap at 1.0
+    dt_ms[qx > 1, qx := 1.0]
+
+    dt_ms[, relative_factor := NULL]
+    result_list[[ms]] <- dt_ms
+  }
+
+  result <- data.table::rbindlist(result_list)
+
+  if (has_year) {
+    data.table::setorder(result, year, sex, marital_status, age)
+  } else {
+    data.table::setorder(result, sex, marital_status, age)
+  }
+
+  cli::cli_alert_success(
+    "Calculated qx for {length(marital_statuses)} marital statuses"
+  )
+
+  result
+}
+
+#' Get default marital status mortality factors
+#'
+#' @description
+#' Returns default relative mortality factors by marital status, age, and sex.
+#' Based on empirical patterns from mortality research.
+#'
+#' @return data.table with columns: age, sex, marital_status, relative_factor
+#'
+#' @details
+#' Factors represent the relative mortality risk compared to married persons.
+#' - Married: 1.00 (reference)
+#' - Widowed: 1.15-1.25 (higher for males, younger ages)
+#' - Divorced: 1.20-1.35 (higher for males, younger ages)
+#' - Never married: 1.25-1.45 (higher for males, younger ages)
+#'
+#' @keywords internal
+get_default_marital_factors <- function() {
+  # Create factors for ages 15-100 (marital status only relevant for adults)
+  ages <- 15:100
+
+  results <- list()
+
+  for (sex_val in c("male", "female")) {
+    for (age_val in ages) {
+      # Base factors vary by sex (males have larger differentials)
+      sex_mult <- if (sex_val == "male") 1.0 else 0.85
+
+      # Age adjustment: differentials are larger at younger ages
+      age_factor <- 1.0 + 0.3 * pmax(0, (65 - age_val)) / 50
+
+      # Married: reference (1.0)
+      results[[length(results) + 1]] <- data.table::data.table(
+        age = age_val,
+        sex = sex_val,
+        marital_status = "married",
+        relative_factor = 1.0
+      )
+
+      # Widowed
+      widowed_base <- 1.15 + 0.10 * sex_mult
+      results[[length(results) + 1]] <- data.table::data.table(
+        age = age_val,
+        sex = sex_val,
+        marital_status = "widowed",
+        relative_factor = widowed_base * age_factor
+      )
+
+      # Divorced
+      divorced_base <- 1.20 + 0.15 * sex_mult
+      results[[length(results) + 1]] <- data.table::data.table(
+        age = age_val,
+        sex = sex_val,
+        marital_status = "divorced",
+        relative_factor = divorced_base * age_factor
+      )
+
+      # Never married
+      never_married_base <- 1.25 + 0.20 * sex_mult
+      results[[length(results) + 1]] <- data.table::data.table(
+        age = age_val,
+        sex = sex_val,
+        marital_status = "never_married",
+        relative_factor = never_married_base * age_factor
+      )
+    }
+  }
+
+  data.table::rbindlist(results)
+}
