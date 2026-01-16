@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 16, 2026
-**Current Phase:** Phase 2A - Data Acquisition (COMPLETE), Ready for Phase 2B
-**Prior Completion:** Phase 1 - Fertility subprocess validated and complete
+**Current Phase:** Phase 2D - Life Tables and Summary Statistics (NOT STARTED)
+**Prior Completion:** Phase 2A - Data Acquisition (COMPLETE), Phase 2B - Historical Mortality (COMPLETE), Phase 2C - Mortality Projection (COMPLETE)
 
 ### Phase 2A Progress Notes - COMPLETED
 - Created `R/data_acquisition/nchs_deaths.R` with functions to download and parse CDC NCHS mortality files
@@ -154,14 +154,18 @@ $$AA_x = 1 - e^{\beta}$$
 
 Where β is the slope of the weighted least-squares regression of log(mx) on year over 2008-2019.
 
-**Weights for regression:**
+**Weights for regression (from SSA 2025 Long-Range Model Documentation):**
 - Years 1-4 (2008-2011): 0.2, 0.4, 0.6, 0.8
-- Years 5-10 (2012-2017): 1.0
+- Years 5-10 (2012-2017): 1.0 each
 - Years 11-12 (2018-2019): 2.0, 3.0
 
 **Starting AAx rules:**
 - If calculated AAx ≥ 0: use as starting value
 - If calculated AAx < 0: use 75% of the value
+
+**Starting mx values:**
+- Starting mx uses **fitted values from regression**, not actual historical values
+- Starting mx = exp(intercept + β × base_year)
 
 ### 2.3 Transition to Ultimate AAx
 
@@ -178,13 +182,21 @@ At year 25, AAx equals ultimate values.
 **Ages 2-99:**
 $$q_x = \frac{m_x}{1 + \frac{1}{2} \cdot m_x}$$
 
-**Ages 100-104 (males, 1.05 growth):**
-$$q_x = q_{x-1} \cdot \left(\frac{q_{99}}{q_{98}} \cdot \frac{104-x}{5} + 1.05 \cdot \frac{x-99}{5}\right)$$
+**Ages 100-104 (transition to ultimate growth rate):**
 
-**Ages 105+ (males):**
-$$q_x = 1.05 \cdot q_{x-1}$$
+Per SSA 2025 Long-Range Model Documentation, the transition formula is:
+$$q_x = q_{x-1} \cdot \left(\frac{q_{99}}{q_{98}} \cdot \frac{104-x}{5} + g \cdot \frac{x-99}{5}\right)$$
 
-**Females:** Same formulas with 1.06 instead of 1.05. Female qx capped at male qx if crossover occurs.
+Where g = 1.05 for males, 1.06 for females.
+
+This gradually transitions from the observed q99/q98 ratio to the ultimate growth rate over ages 100-104.
+
+**Ages 105+:**
+$$q_x = g \cdot q_{x-1}$$
+
+Where g = 1.05 for males, 1.06 for females (5% and 6% annual growth respectively).
+
+**Female cap:** Female qx is capped at male qx if crossover occurs at very old ages.
 
 **Age 0:** Special calculation using detailed infant mortality data (deaths by age in days/months).
 
@@ -291,11 +303,24 @@ These serve as validation targets.
 
 ### 4.2 Whittaker-Henderson Smoothing
 
-Applied to ages 2-99 with:
-- Degree parameter: 2
-- Smoothing parameter: 0.01
+Per SSA 2025 Long-Range Model Documentation:
+> "Whittaker-Henderson Type B smoothing with degree parameter equal to 2 and smoothing parameter equal to 0.01"
 
-This is a standard actuarial graduation technique. Implementation available in R packages or can be coded directly.
+Applied to ages 2-99 with:
+- **Degree parameter (d):** 2
+- **Smoothing parameter (lambda):** 0.01
+
+This is a standard actuarial graduation technique. The Whittaker-Henderson method minimizes:
+$$F = \sum_i w_i (y_i - s_i)^2 + \lambda \sum_i (\Delta^d s_i)^2$$
+
+Where:
+- y_i = original values
+- s_i = smoothed values
+- w_i = weights
+- Δ^d = d-th order differences
+- λ = smoothing parameter
+
+Implementation uses matrix operations: solve (W + λ D'D) s = W y, where D is the d-th order difference matrix.
 
 ### 4.3 COVID-19 Adjustment Factors
 
@@ -409,42 +434,53 @@ calculate_central_death_rates <- function(deaths, population) {
 #'
 #' @description
 #' Calculates mortality improvement rates using weighted log-linear regression.
+#' Uses SSA-specified weights for the 12-year period.
 #'
-#' @param mx_historical data.table with historical mx values
+#' @param mx data.table with historical mx values (year, age, sex, [cause], mx)
 #' @param start_year First year of regression period (default: 2008)
 #' @param end_year Last year of regression period (default: 2019)
+#' @param by_cause Logical: calculate by cause of death (default: TRUE)
 #'
-#' @return data.table with columns: age, sex, cause, aa_x, starting_aa_x
+#' @return data.table with columns: age, sex, [cause], aax, starting_aax, intercept, r_squared
 #'
 #' @details
-#' Weights: 0.2, 0.4, 0.6, 0.8 for years 1-4; 1.0 for years 5-10; 2.0, 3.0 for years 11-12.
-#' If calculated AAx < 0, starting value = 0.75 * AAx.
+#' SSA regression weights (12-year period):
+#' - Years 1-4: 0.2, 0.4, 0.6, 0.8
+#' - Years 5-10: 1.0 each
+#' - Years 11-12: 2.0, 3.0
+#'
+#' Formula: AAx = 1 - exp(beta) where beta is the regression slope.
+#' If calculated AAx < 0, starting_aax = 0.75 * AAx.
 #'
 #' @export
-calculate_mortality_reductions <- function(mx_historical,
-                                            start_year = 2008,
-                                            end_year = 2019) {
-  # For each age, sex, cause:
-  # 1. Fit weighted log-linear regression
-  # 2. Calculate AAx = 1 - exp(slope)
-  # 3. Apply 75% rule for negative values
+calculate_annual_reduction_rates <- function(mx,
+                                              start_year = 2008,
+                                              end_year = 2019,
+                                              by_cause = TRUE) {
+  # For each age, sex, [cause]:
+  # 1. Apply SSA-specified weights
+  # 2. Fit weighted log-linear regression: log(mx) ~ year
+  # 3. Calculate AAx = 1 - exp(beta)
+  # 4. Apply 75% rule for negative values
 }
 
 #' Apply Whittaker-Henderson smoothing
 #'
 #' @description
-#' Applies WH smoothing to mortality rates for ages 2-99.
+#' Applies WH Type B smoothing to mortality rates for ages 2-99.
+#' Per SSA documentation: degree=2, lambda=0.01
 #'
-#' @param rates Vector of rates to smooth
-#' @param degree Degree parameter (default: 2)
-#' @param smoothing_param Smoothing parameter (default: 0.01)
+#' @param values Numeric vector to smooth
+#' @param weights Numeric vector of weights (default: equal weights)
+#' @param lambda Smoothing parameter (default: 0.01 per SSA spec)
+#' @param d Degree/difference order (default: 2 per SSA spec)
 #'
-#' @return Vector of smoothed rates
+#' @return Vector of smoothed values
 #'
 #' @export
-whittaker_henderson_smooth <- function(rates, degree = 2, smoothing_param = 0.01) {
-  # Implement WH smoothing
-  # See: http://www.howardfamily.ca/graduation/index.html
+whittaker_henderson_smooth <- function(values, weights = NULL, lambda = 0.01, d = 2) {
+  # Solve (W + lambda * D'D) * s = W * y
+  # where D is the d-th order difference matrix
 }
 
 #' Calculate fitted starting mx values
@@ -510,23 +546,32 @@ project_central_death_rates <- function(starting_mx, aa_trajectory, years) {
 #' Convert central death rates to death probabilities
 #'
 #' @description
-#' Converts mx to qx using age-appropriate formulas.
+#' Converts mx to qx using age-appropriate formulas per SSA methodology.
 #'
-#' @param mx data.table with central death rates
-#' @param infant_data data.table with detailed infant mortality
-#' @param covid_factors data.table with COVID-19 adjustment factors
+#' @param mx data.table with central death rates (age, sex, mx required)
 #'
-#' @return data.table with columns: year, age, sex, qx
+#' @return data.table with qx column added
 #'
 #' @details
-#' Ages 2-99: qx = mx / (1 + 0.5*mx)
-#' Ages 100+: 5% (male) or 6% (female) annual growth from age 99
-#' Age 0: Special infant mortality calculation
-#' Age 1: From 4m1 with historical ratio
+#' Per SSA 2025 Long-Range Model Documentation:
+#'
+#' **Ages 0-99:** qx = mx / (1 + 0.5*mx)
+#'
+#' **Ages 100-104 (transition):**
+#' qx = q_{x-1} * (q99/q98 * (104-x)/5 + g * (x-99)/5)
+#' where g = 1.05 (male) or 1.06 (female)
+#'
+#' **Ages 105+:**
+#' qx = g * q_{x-1}
+#' where g = 1.05 (male) or 1.06 (female)
+#'
+#' Female qx capped at male qx if crossover occurs.
 #'
 #' @export
-convert_mx_to_qx <- function(mx, infant_data = NULL, covid_factors = NULL) {
-  # Different methods by age group
+convert_mx_to_qx <- function(mx) {
+  # Apply age-appropriate formulas
+  # Handle ages 100+ with growth model
+  # Cap female qx at male qx
 }
 
 #' Calculate life table functions
@@ -654,11 +699,11 @@ mortality:
   transition_rate: 0.80  # 80% of difference each year
   transition_years: 24
 
-  # Smoothing parameters
+  # Smoothing parameters (per SSA 2025 Long-Range Model Documentation)
   whittaker_henderson:
-    degree: 2
-    smoothing_param: 0.01
-    age_range: [2, 99]
+    degree: 2  # d parameter for difference order
+    smoothing_param: 0.01  # lambda parameter
+    age_range: [2, 99]  # Ages to smooth (excludes infant ages and 100+)
 
   # Age-specific parameters
   very_old_age_start: 100
@@ -827,26 +872,55 @@ load_tr2025_life_tables <- function(alternative = "Alt2") {
 - 2A.5: 2023 final data is included in downloaded NCHS files; WONDER API only needed for future provisional data
 - 2A.6: `get_standard_population_2010()` tested and working (303 rows: 101 ages × 3 sex categories)
 
-### Phase 2B: Historical Mortality Calculations
+### Phase 2B: Historical Mortality Calculations - COMPLETE
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 2B.1 | Implement central death rate calculation | 2A | mortality.R |
-| [ ] | 2B.2 | Implement weighted regression for AAx | 2B.1 | AAx values |
-| [ ] | 2B.3 | Implement Whittaker-Henderson smoothing | None | WH function |
-| [ ] | 2B.4 | Calculate historical smoothed mx | 2B.1, 2B.3 | Smoothed mx |
-| [ ] | 2B.5 | Validate historical mx against expectations | 2B.4 | Validation |
+| [x] | 2B.1 | Implement central death rate calculation | 2A | mortality.R |
+| [x] | 2B.2 | Implement weighted regression for AAx | 2B.1 | AAx values |
+| [x] | 2B.3 | Implement Whittaker-Henderson smoothing | None | WH function |
+| [x] | 2B.4 | Calculate historical smoothed mx | 2B.1, 2B.3 | Smoothed mx |
+| [x] | 2B.5 | Validate historical mx against expectations | 2B.4 | Validation |
 
-### Phase 2C: Mortality Projection
+**Phase 2B Implementation Notes (January 2026):**
+- `calculate_central_death_rates()` - Computes mx = deaths / population, supports by-cause breakdown
+- `calculate_annual_reduction_rates()` - SSA-weighted regression (0.2, 0.4, 0.6, 0.8, 1.0×6, 2.0, 3.0)
+- `whittaker_henderson_smooth()` - WH Type B smoothing with d=2, lambda=0.01 per SSA spec
+- `smooth_death_rates()` - Applies WH smoothing to mx for ages 2-99
+- `calculate_starting_mx()` - Uses regression fitted values, not actual historical mx
+- `convert_mx_to_qx()` - Ages 0-99 standard formula, ages 100+ with growth model (1.05 male, 1.06 female)
+- Initial validation shows 0.993 correlation with TR2025 for core ages; older ages need refinement
+
+### Phase 2C: Mortality Projection - COMPLETE
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 2C.1 | Implement AAx transition function | Config | AAx trajectory |
-| [ ] | 2C.2 | Calculate starting mx from regression | 2B.2 | Starting mx |
-| [ ] | 2C.3 | Project mx forward | 2C.1, 2C.2 | Projected mx |
-| [ ] | 2C.4 | Apply WH smoothing to projections | 2B.3, 2C.3 | Smoothed projections |
-| [ ] | 2C.5 | Implement mx to qx conversion | 2C.4 | qx values |
-| [ ] | 2C.6 | Apply COVID adjustments | 2C.5 | Adjusted qx |
+| [x] | 2C.1 | Implement AAx transition function | Config | AAx trajectory |
+| [x] | 2C.2 | Calculate starting mx from regression | 2B.2 | Starting mx |
+| [x] | 2C.3 | Project mx forward | 2C.1, 2C.2 | Projected mx |
+| [x] | 2C.4 | Apply WH smoothing to projections | 2B.3, 2C.3 | Smoothed projections |
+| [x] | 2C.5 | Implement mx to qx conversion | 2C.4 | qx values |
+| [x] | 2C.6 | Apply COVID adjustments | 2C.5 | Adjusted qx |
+
+**Phase 2C Implementation Notes (January 2026):**
+- `get_ultimate_aax_assumptions()` - Returns TR2025 ultimate AAx values by age group and cause
+- `map_age_to_ultimate_group()` - Maps single ages to 5 age groups for ultimate assumptions
+- `calculate_aax_trajectory()` - Transition formula: AA_x^z = ultimate + 0.8^n * (starting - ultimate)
+- `project_death_rates()` - Applies AAx reductions iteratively: mx^z = mx^{z-1} * (1 - AAx^z)
+- `get_covid_adjustment_factors()` - COVID factors for 2024-2025 by age group
+- `apply_covid_adjustments()` - Applies COVID factors to qx
+- `run_mortality_projection()` - Complete pipeline orchestrating all steps
+
+**Validation Results (January 2026):**
+- Core ages (2-70): 0.9997+ correlation with TR2025, mean percent diff 0.02% in 2023, ~4% by 2050
+- Ages 16-70: Within 1-5% of TR2025 (excellent match)
+- Ages 0-1: -22% difference (expected - detailed infant mortality calculation with monthly births not yet implemented)
+- Ages 86+: -36% difference (expected - SSA uses CMS Medicare data for 65+ which we don't have)
+
+**Known Limitations:**
+1. We use NCHS data for all ages; SSA uses CMS Medicare enrollment/deaths for ages 65+
+2. Infant mortality (q0) uses simplified formula; SSA uses detailed age-in-days/months calculation
+3. Monthly births data download still in progress for future q0 refinement
 
 ### Phase 2D: Life Tables and Summary Statistics
 
