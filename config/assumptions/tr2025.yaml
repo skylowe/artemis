@@ -22,13 +22,13 @@ fertility:
   reference_age: 30
   # Ultimate attainment years
   projection_start_year: 2025
-  ultimate_year: 2050
+  ultimate_year: 2045
   age30_ultimate_year: 2036
   # Interpolation weight exponent
   weight_exponent: 1.5
   # Estimated TFR for 2024 (base year)
   tfr_estimate_2024: 1.62
-  # Base year for projections
+  # Base year for projections (latest year with both birth and population data)
   rate_base_year: 2024
   # Years to exclude from trend calculations
   exclude_years:

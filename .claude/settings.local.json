@@ -36,7 +36,17 @@
       "Bash([ -s /tmp/test$yr.dta ])",
       "Bash(then)",
       "Bash(else)",
-      "Bash(fi)"
+      "Bash(fi)",
+      "Bash(dpkg:*)",
+      "Bash(chmod:*)",
+      "Bash(/mnt/c/Users/skylo/git/artemis/scripts/download_nchs_docs.sh:*)",
+      "Bash(xargs rm:*)",
+      "Bash(python3:*)",
+      "Bash(pip install:*)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(python scripts/download_nchs_docs.py:*)",
+      "Bash(pkill:*)",
+      "WebFetch(domain:api.census.gov)"
     ]
   }
 }

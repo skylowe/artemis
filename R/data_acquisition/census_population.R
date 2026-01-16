@@ -27,7 +27,7 @@ fetch_census_population_all <- function(years,
                                         cache_dir = here::here("data/raw/census")) {
   results <- list()
 
-  # 1980-1989: File downloads
+  # 1980-1989: File downloads (intercensal estimates)
   years_1980s <- years[years >= 1980 & years <= 1989]
   if (length(years_1980s) > 0) {
     pop_1980s <- fetch_census_population_files(
@@ -41,8 +41,8 @@ fetch_census_population_all <- function(years,
     }
   }
 
-  # 1990+: API
-  years_api <- years[years >= 1990]
+  # 1990-2019: API (vintages 1990, 2000, 2019)
+  years_api <- years[years >= 1990 & years <= 2019]
   if (length(years_api) > 0) {
     pop_api <- fetch_census_population(
       years = years_api,
@@ -51,6 +51,20 @@ fetch_census_population_all <- function(years,
     )
     if (!is.null(pop_api)) {
       results[["api"]] <- pop_api
+    }
+  }
+
+  # 2020-2024: File download (Vintage 2024 XLSX)
+  years_2020s <- years[years >= 2020 & years <= 2024]
+  if (length(years_2020s) > 0) {
+    pop_2020s <- fetch_census_population_2020s_file(
+      years = years_2020s,
+      ages = ages,
+      sex = sex,
+      cache_dir = cache_dir
+    )
+    if (!is.null(pop_2020s)) {
+      results[["2020s"]] <- pop_2020s
     }
   }
 
@@ -83,11 +97,12 @@ fetch_census_population_all <- function(years,
 #'
 #' @details
 #' The Census API requires different endpoints for different year ranges:
-#' - 2020-2023: Vintage 2023 estimates (pep/charv)
 #' - 2010-2019: Vintage 2019 estimates (pep/charage)
 #' - 2000-2009: Intercensal estimates (pep/int_charage)
 #' - 1990-1999: Intercensal estimates (pep/int_natrespop)
-#' - Pre-1990: Not available via API (requires file downloads)
+#'
+#' Note: 2020+ data is NOT available via API (Census Bureau discontinued PEP API
+#' support after 2020). Use fetch_census_population_2020s_file() for 2020+ data.
 #'
 #' API key should be set in .Renviron as CENSUS_KEY
 #'
@@ -153,10 +168,14 @@ fetch_census_population <- function(years,
 #'
 #' @return Named list of year vectors by vintage
 #'
+#' @details
+#' Note: 2020-2024 are excluded from API vintages because Census Bureau stopped
+#' supporting PEP on the API after 2020. Years 2020+ must be fetched via
+#' file download using fetch_census_population_2020s_file().
+#'
 #' @keywords internal
 split_years_by_vintage <- function(years) {
   list(
-    vintage_2023 = years[years >= 2020 & years <= 2023],
     vintage_2019 = years[years >= 2010 & years <= 2019],
     vintage_2000 = years[years >= 2000 & years <= 2009],
     vintage_1990 = years[years >= 1990 & years <= 1999]
@@ -211,13 +230,11 @@ fetch_vintage_population <- function(vintage, years, ages, sex, api_key, config 
 #'
 #' @keywords internal
 get_vintage_endpoint <- function(vintage) {
+  # Note: Vintage 2023/2024 endpoints are not included here because Census Bureau
+
+  # stopped supporting PEP on the API after 2020. Use fetch_census_population_2020s_file()
+  # for 2020+ data instead.
   endpoints <- list(
-    vintage_2023 = list(
-      base_url = "https://api.census.gov/data/2023/pep/charv",
-      # YEAR values for this endpoint are the actual years
-      date_map = c("2020" = "2020", "2021" = "2021", "2022" = "2022", "2023" = "2023"),
-      fetch_fn = fetch_pep_charv_2023
-    ),
     vintage_2019 = list(
       base_url = "https://api.census.gov/data/2019/pep/charage",
       # DATE_CODE: 3=2010, 4=2011, ..., 12=2019
@@ -241,83 +258,6 @@ get_vintage_endpoint <- function(vintage) {
   )
 
   endpoints[[vintage]]
-}
-
-#' Fetch from 2023 PEP charv endpoint (2020-2023)
-#'
-#' @keywords internal
-fetch_pep_charv_2023 <- function(base_url, years, ages, sex, api_key, date_map) {
-  # This endpoint uses:
-  # - AGE as 4-digit codes where single-year ages end in "00":
-  #   "0100" = age 1, "0200" = age 2, ..., "3000" = age 30, "8500" = age 85
-  #   Other codes represent age groups (e.g., "0401" = ages 0-4, "1519" = ages 15-19)
-  # - YEAR as the actual year
-  # - MONTH: 4 = April 1 (census), 7 = July 1 (mid-year estimate)
-  # - SEX: 0=Both, 1=Male, 2=Female
-  # - for=us:1
-  # We use July 1 (MONTH=7) estimates for consistency with other vintages
-
-  sex_code <- switch(sex, "both" = "0", "male" = "1", "female" = "2")
-
-  # Build requests for each year (API doesn't support multiple years well)
-  all_results <- list()
-
-  for (yr in years) {
-    # Request all ages at once for this year, filtering for July estimates
-    url <- base_url
-    req <- httr2::request(url) |>
-      httr2::req_url_query(
-        get = "POP,SEX,AGE,YEAR,MONTH",
-        `for` = "us:1",
-        YEAR = as.character(yr),
-        MONTH = "7",  # July 1 mid-year estimate
-        SEX = sex_code,
-        key = api_key
-      ) |>
-      httr2::req_timeout(60) |>
-      httr2::req_user_agent("ARTEMIS OASDI Projection Model (R)")
-
-    resp <- api_request_with_retry(req)
-    check_api_response(resp, glue::glue("Census PEP API (vintage_2023, {yr})"))
-
-    json_data <- httr2::resp_body_json(resp, simplifyVector = TRUE)
-
-    if (length(json_data) < 2) next
-
-    # Convert to data.table
-    headers <- json_data[1, ]
-    data_rows <- json_data[-1, , drop = FALSE]
-    dt <- data.table::as.data.table(data_rows)
-    # Handle duplicate column names
-    unique_headers <- make.unique(headers)
-    data.table::setnames(dt, unique_headers)
-
-    # Parse the data
-    # AGE codes: single-year ages end in "00" (e.g., "3000" = age 30)
-    # Other codes are age groups which we need to filter out
-    dt[, age_code := as.integer(AGE)]
-    dt[, population := as.numeric(POP)]
-
-    # Only keep single-year ages (codes ending in 00, except 0000 which is all ages)
-    # Single year ages: 0100 (age 1), 0200 (age 2), ..., 8500 (age 85)
-    dt <- dt[age_code > 0 & age_code %% 100 == 0]
-
-    # Convert code to actual age
-    dt[, age := as.integer(age_code / 100)]
-    dt[, year := as.integer(YEAR)]
-    dt[, sex := sex]
-
-    # Filter to requested ages
-    dt <- dt[age %in% ages]
-
-    all_results[[as.character(yr)]] <- dt[, .(year, age, sex, population)]
-  }
-
-  if (length(all_results) > 0) {
-    data.table::rbindlist(all_results, use.names = TRUE)
-  } else {
-    NULL
-  }
 }
 
 #' Fetch from 2019 PEP charage endpoint (2010-2019)
@@ -750,4 +690,169 @@ parse_census_1980s_file <- function(zip_path, years, ages, sex, ref_month = 7) {
   dt <- dt[, .(population = sum(population)), by = .(year, age, sex)]
 
   dt[, .(year, age, sex, population)]
+}
+
+#' Fetch Census population for 2020-2024 from Vintage 2024 file
+#'
+#' @description
+#' Downloads the Vintage 2024 population estimates file (NC-EST2024-SYASEXN)
+#' from Census Bureau and extracts population by single year of age and sex.
+#' Uses the most recent vintage available which includes any revisions.
+#'
+#' @param years Integer vector of years (2020-2024)
+#' @param ages Integer vector of ages (default: 0:85)
+#' @param sex Character: "both", "male", or "female" (default: "female")
+#' @param cache_dir Character: directory to cache downloaded files
+#'
+#' @return data.table with columns: year, age, sex, population
+#'
+#' @details
+#' The Census Bureau stopped supporting Population Estimates on the API after 2020.
+#' This function downloads the official Vintage 2024 XLSX file which contains
+#' July 1 population estimates by single year of age for 2020-2024.
+#'
+#' File: NC-EST2024-SYASEXN.xlsx
+#' URL: https://www2.census.gov/programs-surveys/popest/tables/2020-2024/national/asrh/
+#'
+#' @export
+fetch_census_population_2020s_file <- function(years,
+                                               ages = 0:85,
+                                               sex = "female",
+                                               cache_dir = here::here("data/raw/census")) {
+  # Filter to valid years for this file (2020-2024)
+  years <- years[years >= 2020 & years <= 2024]
+
+  if (length(years) == 0) {
+    cli::cli_alert_warning("No years in 2020-2024 range provided")
+    return(NULL)
+  }
+
+  cli::cli_alert_info("Fetching Census Vintage 2024 population data for {paste(years, collapse=', ')}")
+
+  # Create cache directory
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+
+  # Download file if not cached
+  url <- "https://www2.census.gov/programs-surveys/popest/tables/2020-2024/national/asrh/nc-est2024-syasexn.xlsx"
+  local_file <- file.path(cache_dir, "nc-est2024-syasexn.xlsx")
+
+  if (!file.exists(local_file)) {
+    cli::cli_alert("Downloading Vintage 2024 population estimates...")
+    tryCatch({
+      download.file(url, local_file, mode = "wb", quiet = TRUE)
+      cli::cli_alert_success("Downloaded {basename(local_file)}")
+    }, error = function(e) {
+      cli::cli_abort(c(
+        "Failed to download Vintage 2024 population file",
+        "x" = conditionMessage(e),
+        "i" = "URL: {url}"
+      ))
+    })
+  } else {
+    cli::cli_alert_success("Using cached {basename(local_file)}")
+  }
+
+  # Read and parse the XLSX file
+  dt <- parse_census_2020s_xlsx(local_file, years, ages, sex)
+
+  if (!is.null(dt) && nrow(dt) > 0) {
+    cli::cli_alert_success("Retrieved {nrow(dt)} population records for 2020s")
+  }
+
+  dt
+}
+
+#' Parse Census Vintage 2024 XLSX file
+#'
+#' @param xlsx_path Character: path to XLSX file
+#' @param years Integer vector of years to extract
+#' @param ages Integer vector of ages to include
+#' @param sex Character: "both", "male", or "female"
+#'
+#' @return data.table with columns: year, age, sex, population
+#'
+#' @details
+#' File structure (NC-EST2024-SYASEXN.xlsx):
+#' - Rows 1-2: Title/metadata
+#' - Row 3: Column headers (Sex and Age, April 1 2020 Base, Population Estimate...)
+#' - Row 4: Year labels (NA, NA, 2020, 2021, 2022, 2023, 2024)
+#' - Rows 5-108: Total population by age (.0, .1, .2, ... .100+)
+#' - Row 109+: Male population section
+#' - Row 213+: Female population section
+#'
+#' @keywords internal
+parse_census_2020s_xlsx <- function(xlsx_path, years, ages, sex) {
+  # Read the raw file without column names
+  raw <- readxl::read_xlsx(xlsx_path, col_names = FALSE)
+
+  # Row 4 contains year labels: NA, NA, 2020, 2021, 2022, 2023, 2024
+  year_row <- as.character(raw[4, ])
+
+  # Find column indices for each requested year (columns 3-7 are July 1 estimates)
+  year_cols <- list()
+  for (yr in years) {
+    col_idx <- which(year_row == as.character(yr))
+    if (length(col_idx) > 0) {
+      year_cols[[as.character(yr)]] <- col_idx[1]
+    }
+  }
+
+  if (length(year_cols) == 0) {
+    cli::cli_alert_warning("No matching years found in file")
+    return(NULL)
+  }
+
+  # Find section boundaries
+  col1 <- as.character(raw[[1]])
+  male_start <- which(col1 == "Male")[1]
+  female_start <- which(col1 == "Female")[1]
+
+  # Determine which rows to use based on sex
+  if (sex == "female") {
+    start_row <- female_start + 1
+    end_row <- nrow(raw)
+  } else if (sex == "male") {
+    start_row <- male_start + 1
+    end_row <- female_start - 1
+  } else {
+    # Total population (both sexes)
+    start_row <- 5  # First data row after headers
+    end_row <- male_start - 1
+  }
+
+  # Extract data for the sex-specific section
+  results <- list()
+
+  for (yr in names(year_cols)) {
+    col_idx <- year_cols[[yr]]
+
+    # Build data.table from the section
+    age_col <- col1[start_row:end_row]
+    pop_col <- as.numeric(raw[[col_idx]][start_row:end_row])
+
+    dt <- data.table::data.table(
+      age_raw = age_col,
+      population = pop_col
+    )
+
+    # Parse age from strings like ".0", ".1", ".25", ".100+"
+    # Age values start with "." followed by the age number
+    dt[, age := suppressWarnings(as.integer(gsub("^\\.(\\d+).*", "\\1", age_raw)))]
+
+    dt[, year := as.integer(yr)]
+    dt[, sex := sex]
+
+    # Filter to valid ages and requested ages
+    dt <- dt[!is.na(age) & !is.na(population) & age %in% ages]
+
+    if (nrow(dt) > 0) {
+      results[[yr]] <- dt[, .(year, age, sex, population)]
+    }
+  }
+
+  if (length(results) > 0) {
+    data.table::rbindlist(results, use.names = TRUE)
+  } else {
+    NULL
+  }
 }

@@ -24,8 +24,8 @@ NULL
 #' URL pattern: https://data.nber.org/nvss/natality/dta/{year}/natality{year}us.dta
 #'
 #' Variable names differ by year:
-#' - 2006-2024: `mager` (mother's age recode)
-#' - 2003-2005: `mager41` (mother's age 41 categories)
+#' - 2004-2024: `mager` (mother's single year of age)
+#' - 2003: `mager41` (mother's age 41 categories, coded 01-41)
 #' - 1968-2002: `dmage` (detail mother's age)
 #'
 #' Sampling weights:
@@ -33,7 +33,7 @@ NULL
 #' - 1972-2005: Use `recwt` weight variable (mixed sampling through 1984, then 100%)
 #' - 2006+: 100% sample, no `recwt` variable (each record = 1 birth)
 #'
-#' Note: 2005 is not available from NBER (403 Forbidden as of 2025).
+#' Note: 2005 DTA is unavailable from NBER (403); CSV is used instead.
 #'
 #' Files are large (500MB-900MB) so results are cached after first download.
 #'
@@ -61,26 +61,40 @@ fetch_nchs_births_by_age <- function(year, cache_dir = "data/raw/nchs", force_do
   cli::cli_alert_warning("This may take several minutes (files are 500-900 MB)")
 
 
+
   # File naming conventions vary by year:
   # 1968-1969: natl{year}.dta
   # 1970-1993: natalityus{year}.dta
   # 1994+: natality{year}us.dta
-  if (year <= 1969) {
+  # Special case: 2005 DTA is unavailable (403), use CSV instead
+  if (year == 2005) {
+    filename <- "natality2005us.csv"
+    url <- sprintf("https://data.nber.org/nvss/natality/csv/2005/%s", filename)
+    file_format <- "csv"
+  } else if (year <= 1969) {
     filename <- sprintf("natl%d.dta", year)
+    url <- sprintf("https://data.nber.org/nvss/natality/dta/%d/%s", year, filename)
+    file_format <- "dta"
   } else if (year <= 1993) {
     filename <- sprintf("natalityus%d.dta", year)
+    url <- sprintf("https://data.nber.org/nvss/natality/dta/%d/%s", year, filename)
+    file_format <- "dta"
   } else {
     filename <- sprintf("natality%dus.dta", year)
+    url <- sprintf("https://data.nber.org/nvss/natality/dta/%d/%s", year, filename)
+    file_format <- "dta"
   }
-  url <- sprintf("https://data.nber.org/nvss/natality/dta/%d/%s", year, filename)
 
   # Download to temp file first
-  temp_file <- tempfile(fileext = ".dta")
+  temp_ext <- if (file_format == "csv") ".csv" else ".dta"
+  temp_file <- tempfile(fileext = temp_ext)
   on.exit(unlink(temp_file), add = TRUE)
 
   # Set longer timeout for large files (default is 60 seconds)
+  # 2005 CSV is 2.6GB, needs extra time
   old_timeout <- getOption("timeout")
-  options(timeout = 600)  # 10 minutes
+  timeout_seconds <- if (year == 2005) 1800 else 600  # 30 min for 2005, 10 min for others
+  options(timeout = timeout_seconds)
   on.exit(options(timeout = old_timeout), add = TRUE)
 
   tryCatch({
@@ -97,12 +111,12 @@ fetch_nchs_births_by_age <- function(year, cache_dir = "data/raw/nchs", force_do
   cli::cli_alert("Reading and processing data...")
 
   # Determine which age variable to use based on year
-  # 2006+: "mager"
-  # 2003-2005: "mager41"
+  # 2004+: "mager" (mother's single year of age)
+  # 2003: "mager41" (coded 01-41, requires conversion)
   # Pre-2003: "dmage"
-  if (year >= 2006) {
+  if (year >= 2004) {
     age_var <- "mager"
-  } else if (year >= 2003) {
+  } else if (year == 2003) {
     age_var <- "mager41"
   } else {
     age_var <- "dmage"
@@ -123,12 +137,27 @@ fetch_nchs_births_by_age <- function(year, cache_dir = "data/raw/nchs", force_do
     weight_method <- "count_records"
   }
 
-  # Use haven to read the Stata file
-  raw_data <- haven::read_dta(temp_file, col_select = dplyr::all_of(cols_to_read))
+  # Read the data file (DTA or CSV)
+  if (file_format == "csv") {
+    # For CSV, use data.table::fread for efficiency
+    raw_data <- data.table::fread(temp_file, select = cols_to_read)
+  } else {
+    # For DTA, use haven::read_dta
+    raw_data <- haven::read_dta(temp_file, col_select = dplyr::all_of(cols_to_read))
+  }
 
   # Aggregate to counts by age
   dt <- data.table::as.data.table(raw_data)
   data.table::setnames(dt, age_var, "age")
+
+  # Convert mager41 codes to actual ages for 2003 only
+  # mager41 coding: 01=Under 15, 02=15, 03=16, ..., 41=54
+  # Formula: actual_age = mager41 + 13 (code 01 maps to 14)
+  # Note: 2004+ uses mager which is already actual age
+  if (year == 2003) {
+    dt[, age := age + 13L]
+    dt[age < 14, age := 14L]  # Code 01 "Under 15" -> age 14
+  }
 
   if (weight_method == "use_recwt") {
     # Use record weights for weighted sum

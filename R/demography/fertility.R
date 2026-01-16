@@ -206,20 +206,30 @@ calculate_interpolation_weights <- function(years,
 #'
 #' @description
 #' Finds the age 30 birth rate in the ultimate year that produces
-#' the target cohort total fertility rate.
+#' the target period TFR at the ultimate year (e.g., 2050).
 #'
-#' @param target_ctfr Numeric: target cohort TFR (default: 1.90)
+#' @param target_ctfr Numeric: target period TFR at ultimate year (default: 1.90)
 #' @param base_age30_rate Numeric: age 30 rate in base year (2024)
 #' @param base_ratios data.table with age-to-30 ratios in base year
 #' @param trend_factors data.table with average trend factors by age
 #' @param ultimate_years data.table with ultimate years by age
 #' @param base_year Integer: base year (default: 2024)
+#' @param overall_ultimate_year Integer: year when all ages have reached ultimate (default: 2050)
 #'
 #' @return Numeric: ultimate age 30 birth rate
 #'
 #' @details
-#' This solves the key equation from TR documentation to find b_30^{ultimate}
-#' that achieves the target CTFR for cohorts reaching their ultimate year.
+#' At the overall ultimate year (2050), all ages have reached their ultimate rates
+#' and the period TFR should equal the target (1.90).
+#'
+#' At ultimate year:
+#'   TFR = sum_x(b_x) = sum_x(b_30 * r_x) = b_30 * sum_x(r_x)
+#'
+#' Therefore:
+#'   b_30^{ultimate} = target_TFR / sum_x(r_x^{ultimate})
+#'
+#' Where r_x^{ultimate} is the ratio for each age at the overall ultimate year,
+#' computed by projecting base ratios forward using trend factors.
 #'
 #' @export
 solve_ultimate_age30_rate <- function(target_ctfr,
@@ -227,37 +237,27 @@ solve_ultimate_age30_rate <- function(target_ctfr,
                                        base_ratios,
                                        trend_factors,
                                        ultimate_years,
-                                       base_year = 2024) {
+                                       base_year = 2024,
+                                       overall_ultimate_year = 2050) {
   # Merge base ratios with trend factors and ultimate years
   dt <- merge(base_ratios[, .(age, ratio_to_30)], trend_factors, by = "age")
   dt <- merge(dt, ultimate_years, by = "age")
 
-  # Calculate years from base to ultimate for each age
-  dt[, years_to_ultimate := ultimate_year - base_year]
+  # Calculate years from base to overall ultimate year (2050)
+  # Note: Each age's ratio evolves with trend factors until its individual ultimate year,
 
-  # Calculate cumulative trend factor from base to ultimate year
-  # p_x^{u_x} = a_x^{years_to_ultimate}
-  dt[, cumulative_trend := avg_trend_factor^years_to_ultimate]
+  # then stays constant. At the overall ultimate year (2050), all ages have stabilized.
+  dt[, years_to_own_ultimate := ultimate_year - base_year]
 
-  # Calculate projected ratio at ultimate year
-  # r_x^{u_x} = r_x^{base} * cumulative_trend
-  dt[, ratio_at_ultimate := ratio_to_30 * cumulative_trend]
+  # Calculate projected ratio at overall ultimate year (2050)
+  # The ratio evolves until each age's individual ultimate year, then is constant
+  # So at 2050, each age's ratio is: r_x^{base} * a_x^{years_to_own_ultimate}
+  dt[, ratio_at_ultimate := ratio_to_30 * (avg_trend_factor ^ years_to_own_ultimate)]
 
-  # Get weight at each age's ultimate year
-  # For simplicity, use weight = 1 at ultimate (full convergence)
-  # The formula from TR: w^{u_x} for age 30's ultimate year (2036)
-  age30_ultimate <- ultimate_years[age == 30, ultimate_year]
-  weights <- calculate_interpolation_weights(dt$ultimate_year,
-                                              base_year = base_year,
-                                              ultimate_year = age30_ultimate)
-  dt <- merge(dt, weights, by.x = "ultimate_year", by.y = "year")
-
-  # Apply the solving formula:
-  # b_30^{2036} = (CTFR - sum((1-w) * b_30^{base} * r_x * p_x^{u_x})) / sum(w * r_x * p_x^{u_x})
-  numerator <- target_ctfr - sum((1 - dt$weight) * base_age30_rate * dt$ratio_at_ultimate)
-  denominator <- sum(dt$weight * dt$ratio_at_ultimate)
-
-  ultimate_age30_rate <- numerator / denominator
+  # At overall ultimate year, period TFR = b_30 * sum(ratios)
+  # So: b_30 = target_TFR / sum(ratios)
+  sum_ratios <- sum(dt$ratio_at_ultimate)
+  ultimate_age30_rate <- target_ctfr / sum_ratios
 
   cli::cli_alert_success("Solved ultimate age 30 rate: {round(ultimate_age30_rate, 6)}")
 
