@@ -24,13 +24,16 @@ NULL
 #' URL pattern: https://data.nber.org/nvss/natality/dta/{year}/natality{year}us.dta
 #'
 #' Variable names differ by year:
-#' - 2003-2024: `mager` (mother's age recode)
+#' - 2006-2024: `mager` (mother's age recode)
+#' - 2003-2005: `mager41` (mother's age 41 categories)
 #' - 1968-2002: `dmage` (detail mother's age)
 #'
 #' Sampling weights:
 #' - Pre-1972: 50% sample from all states, no weight variable (multiply by 2)
-#' - 1972-1984: Mixed sampling by state, use `recwt` weight variable
-#' - 1985+: 100% sample from all states, `recwt` should be 1
+#' - 1972-2005: Use `recwt` weight variable (mixed sampling through 1984, then 100%)
+#' - 2006+: 100% sample, no `recwt` variable (each record = 1 birth)
+#'
+#' Note: 2005 is not available from NBER (403 Forbidden as of 2025).
 #'
 #' Files are large (500MB-900MB) so results are cached after first download.
 #'
@@ -94,26 +97,48 @@ fetch_nchs_births_by_age <- function(year, cache_dir = "data/raw/nchs", force_do
   cli::cli_alert("Reading and processing data...")
 
   # Determine which age variable to use based on year
-  # 2003+ uses "mager", pre-2003 uses "dmage"
-  age_var <- if (year >= 2003) "mager" else "dmage"
+  # 2006+: "mager"
+  # 2003-2005: "mager41"
+  # Pre-2003: "dmage"
+  if (year >= 2006) {
+    age_var <- "mager"
+  } else if (year >= 2003) {
+    age_var <- "mager41"
+  } else {
+    age_var <- "dmage"
+  }
 
-  # Determine if we need weight variable (1972+ has recwt)
-  use_weights <- year >= 1972
-  cols_to_read <- if (use_weights) c(age_var, "recwt") else age_var
+  # Determine weighting strategy:
+  # - Pre-1972: 50% sample, no weight var (multiply by 2)
+  # - 1972-2005: Use recwt weight variable
+  # - 2006+: 100% sample, no recwt (each record = 1 birth)
+  if (year < 1972) {
+    cols_to_read <- age_var
+    weight_method <- "multiply_by_2"
+  } else if (year <= 2005) {
+    cols_to_read <- c(age_var, "recwt")
+    weight_method <- "use_recwt"
+  } else {
+    cols_to_read <- age_var
+    weight_method <- "count_records"
+  }
 
   # Use haven to read the Stata file
   raw_data <- haven::read_dta(temp_file, col_select = dplyr::all_of(cols_to_read))
 
-  # Aggregate to counts by age (using weights if available)
+  # Aggregate to counts by age
   dt <- data.table::as.data.table(raw_data)
   data.table::setnames(dt, age_var, "age")
 
-  if (use_weights) {
+  if (weight_method == "use_recwt") {
     # Use record weights for weighted sum
     result <- dt[, .(births = sum(recwt)), by = age]
-  } else {
+  } else if (weight_method == "multiply_by_2") {
     # Pre-1972: 50% sample, multiply counts by 2
     result <- dt[, .(births = .N * 2L), by = age]
+  } else {
+    # 2016+: 100% sample, each record is one birth
+    result <- dt[, .(births = .N), by = age]
   }
   result[, year := year]
   data.table::setcolorder(result, c("year", "age", "births"))

@@ -22,8 +22,11 @@ tar_option_set(
     "jsonlite",
     "yaml",
     "readxl",
+    "readr",
+    "haven",
     "here",
     "glue",
+    "cli",
     "checkmate"
   ),
   format = "rds",  # Standard R serialization format
@@ -57,33 +60,37 @@ list(
   # DATA ACQUISITION TARGETS - FERTILITY
   # ===========================================================================
 
-  # Birth data from NCHS/CDC (1980-2023)
-  # tar_target(
-  #   nchs_births_raw,
-  #   fetch_nchs_births(
-  #     years = config_assumptions$data_sources$historical_birth_data$start_year:
-  #             config_assumptions$data_sources$historical_birth_data$end_year,
-  #     config = config_api
-
-  #   ),
-  #   cue = tar_cue(mode = "thorough")
-  # ),
+  # Birth data from NCHS via NBER Stata files (1980-2024)
+  # Downloads and caches birth counts by single year of mother's age
+  tar_target(
+    nchs_births_raw,
+    {
+      years <- config_assumptions$data_sources$historical_birth_data$start_year:2024
+      all_births <- data.table::rbindlist(lapply(years, function(yr) {
+        dt <- fetch_nchs_births_by_age(yr)
+        dt[, year := yr]
+        dt
+      }))
+      all_births
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
 
   # Census Bureau female population estimates (1980-2024)
-  # tar_target(
-  #   census_female_pop,
-  #   fetch_census_population(
-  #     years = config_assumptions$data_sources$population_estimates$start_year:
-  #             config_assumptions$data_sources$population_estimates$end_year,
-  #     ages = config_assumptions$fertility$min_fertility_age:
-  #            config_assumptions$fertility$max_fertility_age,
-  #     sex = "female",
-  #     config = config_api
-  #   ),
-  #   cue = tar_cue(mode = "thorough")
-  # ),
+  # Uses file downloads for 1980-1989, API for 1990-2024
+  tar_target(
+    census_female_pop,
+    fetch_census_population_all(
+      years = config_assumptions$data_sources$population_estimates$start_year:
+              config_assumptions$data_sources$population_estimates$end_year,
+      ages = 10:54,  # Wider range to capture all fertility ages after collapse
+      sex = "female"
+    ),
+    cue = tar_cue(mode = "thorough")
+  ),
 
-  # Historical birth rates (1917-1979)
+  # Historical birth rates (1917-1979) - DEFERRED
+  # Only needed for historical output series, not projection methodology
   # tar_target(
   #   historical_birth_rates,
   #   load_historical_birth_rates(
@@ -92,7 +99,9 @@ list(
   #   )
   # ),
 
-  # Provisional birth data (2024)
+  # Provisional birth data - DEFERRED
+  # Not needed since we have final 2024 data from NBER
+  # May be needed in future when running projections before NBER publishes latest year
   # tar_target(
   #   provisional_births_2024,
   #   fetch_provisional_births(year = 2024, config = config_api)
@@ -102,111 +111,107 @@ list(
   # FERTILITY SUBPROCESS TARGETS
   # ===========================================================================
 
-  # Historical birth rates calculation (1941-2023)
-  # tar_target(
-  #   fertility_rates_historical,
-  #   calculate_historical_birth_rates(
-  #     births = nchs_births_raw,
-  #     population = census_female_pop,
-  #     historical_rates = historical_birth_rates
-  #   )
-  # ),
+  # Step 1: Calculate historical birth rates (1980-2024)
+  tar_target(
+    fertility_rates_historical,
+    calculate_historical_birth_rates(
+      births = nchs_births_raw,
+      population = census_female_pop,
+      min_age = config_assumptions$fertility$min_fertility_age,
+      max_age = config_assumptions$fertility$max_fertility_age
+    )
+  ),
 
-  # Estimated 2024 rates
-  # tar_target(
-  #   fertility_rates_2024,
-  #   estimate_current_year_rates(
-  #     provisional_rates = provisional_births_2024,
-  #     prior_year_rates = fertility_rates_historical[year == 2023],
-  #     tfr_estimate = config_assumptions$fertility$tfr_estimate_2024
-  #   )
-  # ),
+  # Step 2: Calculate age-to-30 ratios
+  tar_target(
+    fertility_age30_ratios,
+    calculate_age30_ratios(fertility_rates_historical)
+  ),
 
-  # Combined historical rates through present
-  # tar_target(
-  #   fertility_rates_to_present,
-  #   rbind(fertility_rates_historical, fertility_rates_2024)
-  # ),
+  # Step 3: Calculate trend factors (excluding 1997 due to NCHS method change)
+  tar_target(
+    fertility_trend_factors,
+    calculate_trend_factors(
+      ratios = fertility_age30_ratios,
+      exclude_years = config_assumptions$fertility$exclude_years
+    )
+  ),
 
-  # Age-30 ratios
-  # tar_target(
-  #   fertility_age30_ratios,
-  #   calculate_age30_ratios(fertility_rates_to_present)
-  # ),
+  # Step 4: Calculate ultimate years by age
+  tar_target(
+    fertility_ultimate_years,
+    calculate_ultimate_years(
+      min_age = config_assumptions$fertility$min_fertility_age,
+      max_age = config_assumptions$fertility$max_fertility_age,
+      base_year = config_assumptions$fertility$projection_start_year,
+      end_year = config_assumptions$fertility$ultimate_year
+    )
+  ),
 
-  # Trend factors
-  # tar_target(
-  #   fertility_trend_factors,
-  #   calculate_trend_factors(
-  #     ratios = fertility_age30_ratios,
-  #     exclude_years = config_assumptions$fertility$exclude_years
-  #   )
-  # ),
+  # Step 5: Calculate interpolation weights for projection years
+  tar_target(
+    fertility_weights,
+    calculate_interpolation_weights(
+      years = config_assumptions$metadata$projection_period$start_year:
+              config_assumptions$metadata$projection_period$end_year,
+      base_year = config_assumptions$fertility$rate_base_year,
+      ultimate_year = config_assumptions$fertility$age30_ultimate_year,
+      exponent = config_assumptions$fertility$weight_exponent
+    )
+  ),
 
-  # Ultimate years by age
-  # tar_target(
-  #   fertility_ultimate_years,
-  #   calculate_ultimate_years(config_assumptions$fertility)
-  # ),
+  # Step 6: Solve for ultimate age-30 rate to achieve target CTFR
+  tar_target(
+    fertility_ultimate_age30,
+    solve_ultimate_age30_rate(
+      target_ctfr = config_assumptions$fertility$ultimate_ctfr,
+      base_age30_rate = fertility_rates_historical[year == config_assumptions$fertility$rate_base_year & age == 30, birth_rate],
+      base_ratios = fertility_age30_ratios[year == config_assumptions$fertility$rate_base_year],
+      trend_factors = fertility_trend_factors,
+      ultimate_years = fertility_ultimate_years,
+      base_year = config_assumptions$fertility$rate_base_year
+    )
+  ),
 
-  # Interpolation weights
-  # tar_target(
-  #   fertility_weights,
-  #   calculate_interpolation_weights(
-  #     years = config_assumptions$metadata$projection_period$start_year:
-  #             config_assumptions$metadata$projection_period$end_year,
-  #     config = config_assumptions$fertility
-  #   )
-  # ),
+  # Step 7: Project age-30 rates from base to ultimate
+  tar_target(
+    fertility_age30_projected,
+    project_age30_rates(
+      years = config_assumptions$metadata$projection_period$start_year:
+              config_assumptions$metadata$projection_period$end_year,
+      base_rate = fertility_rates_historical[year == config_assumptions$fertility$rate_base_year & age == 30, birth_rate],
+      ultimate_rate = fertility_ultimate_age30,
+      weights = fertility_weights
+    )
+  ),
 
-  # Solve for ultimate age-30 rate
-  # tar_target(
-  #   fertility_ultimate_age30,
-  #   solve_ultimate_age30_rate(
-  #     target_ctfr = config_assumptions$fertility$ultimate_ctfr,
-  #     base_age30_rate = fertility_rates_to_present[year == 2024 & age == 30, birth_rate],
-  #     trend_factors = fertility_trend_factors,
-  #     ultimate_years = fertility_ultimate_years,
-  #     weights = fertility_weights
-  #   )
-  # ),
+  # Step 8: Project all age-specific rates
+  tar_target(
+    fertility_rates_projected,
+    project_birth_rates(
+      years = config_assumptions$metadata$projection_period$start_year:
+              config_assumptions$metadata$projection_period$end_year,
+      age30_rates = fertility_age30_projected,
+      base_ratios = fertility_age30_ratios[year == config_assumptions$fertility$rate_base_year],
+      trend_factors = fertility_trend_factors,
+      ultimate_years = fertility_ultimate_years
+    )
+  ),
 
-  # Project age-30 rates
-  # tar_target(
-  #   fertility_age30_projected,
-  #   project_age30_rates(
-  #     years = config_assumptions$metadata$projection_period$start_year:
-  #             config_assumptions$metadata$projection_period$end_year,
-  #     base_rate = fertility_rates_to_present[year == 2024 & age == 30, birth_rate],
-  #     ultimate_rate = fertility_ultimate_age30,
-  #     weights = fertility_weights
-  #   )
-  # ),
+  # Combined historical and projected rates (1980-2099)
+  tar_target(
+    fertility_rates_complete,
+    rbind(
+      fertility_rates_historical[, .(year, age, birth_rate)],
+      fertility_rates_projected
+    )
+  ),
 
-  # Project all age rates
-  # tar_target(
-  #   fertility_rates_projected,
-  #   project_birth_rates(
-  #     years = config_assumptions$metadata$projection_period$start_year:
-  #             config_assumptions$metadata$projection_period$end_year,
-  #     age30_rates = fertility_age30_projected,
-  #     base_ratios = fertility_age30_ratios[year == 2024],
-  #     trend_factors = fertility_trend_factors,
-  #     ultimate_years = fertility_ultimate_years
-  #   )
-  # ),
-
-  # Combined historical and projected rates
-  # tar_target(
-  #   fertility_rates_complete,
-  #   rbind(fertility_rates_to_present, fertility_rates_projected)
-  # ),
-
-  # TFR and CTFR series
-  # tar_target(
-  #   fertility_totals,
-  #   calculate_fertility_totals(fertility_rates_complete)
-  # ),
+  # Step 9-10: Calculate TFR (period) and CTFR (cohort) series
+  tar_target(
+    fertility_totals,
+    calculate_fertility_totals(fertility_rates_complete)
+  ),
 
   # ===========================================================================
   # VALIDATION TARGETS
