@@ -64,7 +64,9 @@
       "Bash(grep:*)",
       "WebFetch(domain:govinfo.library.unt.edu)",
       "Bash(pdftotext:*)",
-      "WebFetch(domain:www.pewresearch.org)"
+      "WebFetch(domain:www.pewresearch.org)",
+      "WebFetch(domain:www.nationalww2museum.org)",
+      "WebFetch(domain:en.wikipedia.org)"
     ]
   }
 }
