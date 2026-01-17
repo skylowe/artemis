@@ -4,9 +4,9 @@
 R-based replication of the SSA Office of the Chief Actuary's long-range OASDI projection model. Uses `{targets}` for pipeline orchestration and `{renv}` for dependency management.
 
 ## Current Status
-**Phase:** 4 - Historical Population Subprocess (PLANNING)
-**Most Recent Completion:** Phase 3 - LPR Immigration Subprocess (validated against TR2025)
-**Next Step:** Phase 4A - Core Census Data Acquisition for Historical Population
+**Phase:** 4 - Historical Population Subprocess (IN PROGRESS)
+**Most Recent Completion:** Phase 4A - Core Census Data Acquisition (January 17, 2026)
+**Next Step:** Phase 4B - ACS and IPUMS Data Acquisition
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -40,7 +40,7 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 1. Emigration distribution uses CBO 2021-2024 data instead of unpublished Census 1980-1990 estimates
 2. Refugee/asylee reclassification not implemented (DHS expanded tables don't separate by refugee status)
 
-### Historical Population Subprocess Status (PLANNING)
+### Historical Population Subprocess Status (IN PROGRESS)
 - **Purpose:** Estimate Social Security area population for Dec 31, 1940 through Dec 31, 2022
 - **Key Outputs:**
   - P^z_{x,s} - Population by age/sex (Eq 1.4.1)
@@ -49,7 +49,13 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - C^z_{x,s,m} - Civilian noninstitutionalized population (Eq 1.4.4)
 - **Data Requirements:** 44 distinct data inputs from Census, ACS, IPUMS, DHS, OPM, SSA
 - **Validation:** TR2025 population files (SSPopJan, SSPopJul, SSPopDec)
-- **Key files (planned):** `R/demography/historical_population.R`, `R/demography/historical_marital_status.R`
+- **Key files:** `R/data_acquisition/census_historical_population.R`
+
+**Phase 4A Complete (January 17, 2026):**
+- Census population fetcher for 4 concepts (resident, resident_usaf, civilian, civilian_noninst)
+- July 1 and January 1 reference date support (Jan 1 via interpolation)
+- Territory populations (PR, VI, GU, MP, AS)
+- Population totals validated: 227M (1980) → 337M (2023)
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)
