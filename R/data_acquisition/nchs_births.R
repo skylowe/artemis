@@ -512,8 +512,9 @@ fetch_nchs_births_by_month_sex <- function(year, cache_dir = "data/raw/nchs", fo
 
   # Sex variable name varies by year
   # 2005+: "sex" (infant sex)
-  # 1968-2004: "csex" (child sex)
-  if (year >= 2005) {
+  # 2003-2004: "sex" (NBER changed naming convention)
+  # 1968-2002: "csex" (child sex)
+  if (year >= 2003) {
     sex_var <- "sex"
   } else {
     sex_var <- "csex"
