@@ -418,24 +418,134 @@ calculate_historical_mortality <- function(deaths,
 # Phase 2C: Mortality Projection
 # =============================================================================
 
-#' Get ultimate AAx assumptions from TR2025 configuration
+#' Load mortality configuration
+#'
+#' @description
+#' Loads mortality configuration from a YAML file. If no config_path is provided,
+#' loads from the default TR2025 configuration.
+#'
+#' @param config_path Character: path to YAML config file (default: tr2025.yaml)
+#'
+#' @return List with mortality configuration
+#'
+#' @export
+load_mortality_config <- function(config_path = NULL) {
+  if (is.null(config_path)) {
+    config_path <- here::here("config/assumptions/tr2025.yaml")
+  }
+
+  if (!file.exists(config_path)) {
+    cli::cli_abort(c(
+      "Mortality configuration file not found",
+      "x" = "Path: {config_path}",
+      "i" = "Create a configuration file or use a different path"
+    ))
+  }
+
+  config <- yaml::read_yaml(config_path)
+
+  if (is.null(config$mortality)) {
+    cli::cli_abort(c(
+      "No mortality section in configuration file",
+      "i" = "Config file: {config_path}"
+    ))
+  }
+
+  config$mortality
+}
+
+#' Get ultimate AAx assumptions from configuration
 #'
 #' @description
 #' Returns ultimate annual percentage reduction assumptions by age group,
-#' sex, and cause of death as specified by the Board of Trustees.
+#' sex, and cause of death. Reads from configuration file to allow user
+#' customization of mortality improvement assumptions.
+#'
+#' @param config_path Character: path to YAML config file (default: tr2025.yaml)
+#' @param config List: pre-loaded mortality config (overrides config_path)
 #'
 #' @return data.table with columns: age_group, age_min, age_max, cause, ultimate_aax
 #'
 #' @details
-#' Ultimate values from TR2025 Appendix 1.2-1. Same values for male and female.
+#' Default values are from TR2025 Appendix 1.2-1 (Intermediate Assumptions).
+#' Same values for male and female.
 #' Age groups: under 15, 15-49, 50-64, 65-84, 85+
 #'
+#' To customize assumptions, edit the mortality.ultimate_aax section in
+#' config/assumptions/tr2025.yaml or create a new config file.
+#'
+#' @examples
+#' \dontrun{
+#' # Use default TR2025 assumptions
+#' ultimate <- get_ultimate_aax_assumptions()
+#'
+#' # Use custom config file
+#' ultimate <- get_ultimate_aax_assumptions("config/assumptions/custom.yaml")
+#' }
+#'
 #' @export
-get_ultimate_aax_assumptions <- function() {
-  # Ultimate AAx values from TR2025 documentation (Appendix 1.2-1)
-  # Values are percentages, converted to decimals
+get_ultimate_aax_assumptions <- function(config_path = NULL, config = NULL) {
+  # Load config if not provided
+  if (is.null(config)) {
+    config <- tryCatch({
+      load_mortality_config(config_path)
+    }, error = function(e) {
+      cli::cli_alert_warning("Could not load config, using hardcoded defaults: {conditionMessage(e)}")
+      NULL
+    })
+  }
+
+  # If config loaded successfully, build from config
+  if (!is.null(config) && !is.null(config$ultimate_aax) && !is.null(config$age_groups)) {
+    cli::cli_alert_info("Loading ultimate AAx assumptions from config file")
+
+    results <- list()
+    causes <- c("CVD", "CAN", "ACV", "RES", "DEM", "OTH")
+
+    for (age_grp_name in names(config$age_groups)) {
+      age_grp <- config$age_groups[[age_grp_name]]
+      aax_grp <- config$ultimate_aax[[age_grp_name]]
+
+      if (is.null(aax_grp)) {
+        cli::cli_alert_warning("No AAx values for age group {age_grp_name}, using defaults")
+        next
+      }
+
+      for (cause in causes) {
+        # Get AAx value (as percentage), convert to decimal
+        aax_pct <- aax_grp[[cause]]
+        if (is.null(aax_pct)) {
+          cli::cli_alert_warning("No AAx for {age_grp_name}/{cause}, using 0")
+          aax_pct <- 0
+        }
+
+        results[[length(results) + 1]] <- data.table::data.table(
+          age_group = age_grp_name,
+          age_min = age_grp$min_age,
+          age_max = age_grp$max_age,
+          cause = cause,
+          ultimate_aax = aax_pct / 100  # Convert percentage to decimal
+        )
+      }
+    }
+
+    if (length(results) > 0) {
+      ultimate <- data.table::rbindlist(results)
+      cli::cli_alert_success("Loaded {nrow(ultimate)} ultimate AAx assumptions from config")
+      return(ultimate)
+    }
+  }
+
+
+  # Fallback to hardcoded defaults (TR2025 Alternative II / Intermediate)
+  cli::cli_alert_warning(
+    "Falling back to hardcoded TR2025 Alt II (Intermediate) ultimate AAx assumptions"
+  )
+  cli::cli_alert_info(
+    "To use custom assumptions, ensure config/assumptions/tr2025.yaml exists with mortality.ultimate_aax section"
+  )
   ultimate <- data.table::data.table(
-    age_group = rep(c("under_15", "15_49", "50_64", "65_84", "85_plus"), each = 6),
+    age_group = rep(c("under_15", "age_15_49", "age_50_64", "age_65_84", "age_85_plus"), each = 6),
     age_min = rep(c(0, 15, 50, 65, 85), each = 6),
     age_max = rep(c(14, 49, 64, 84, 119), each = 6),
     cause = rep(c("CVD", "CAN", "ACV", "RES", "DEM", "OTH"), 5),
@@ -459,17 +569,30 @@ get_ultimate_aax_assumptions <- function() {
 #' Map single ages to ultimate AAx age groups
 #'
 #' @param ages Integer vector of ages
+#' @param config List: mortality config with age_groups section (optional)
 #'
 #' @return Character vector of age group names
 #'
 #' @keywords internal
-map_age_to_ultimate_group <- function(ages) {
+map_age_to_ultimate_group <- function(ages, config = NULL) {
+  # Use config age groups if available
+  if (!is.null(config) && !is.null(config$age_groups)) {
+    # Build mapping from config
+    result <- rep(NA_character_, length(ages))
+    for (grp_name in names(config$age_groups)) {
+      grp <- config$age_groups[[grp_name]]
+      result[ages >= grp$min_age & ages <= grp$max_age] <- grp_name
+    }
+    return(result)
+  }
+
+  # Default mapping (matches config/assumptions/tr2025.yaml)
   data.table::fcase(
     ages < 15, "under_15",
-    ages >= 15 & ages < 50, "15_49",
-    ages >= 50 & ages < 65, "50_64",
-    ages >= 65 & ages < 85, "65_84",
-    ages >= 85, "85_plus"
+    ages >= 15 & ages < 50, "age_15_49",
+    ages >= 50 & ages < 65, "age_50_64",
+    ages >= 65 & ages < 85, "age_65_84",
+    ages >= 85, "age_85_plus"
   )
 }
 
@@ -685,6 +808,10 @@ project_death_rates <- function(starting_mx, aax_trajectory, actual_mx = NULL) {
 #'
 #' @description
 #' Returns COVID-19 adjustment factors for qx by year and age group.
+#' Reads from configuration file to allow user customization.
+#'
+#' @param config_path Character: path to YAML config file (default: tr2025.yaml)
+#' @param config List: pre-loaded mortality config (overrides config_path)
 #'
 #' @return data.table with columns: year, age_min, age_max, covid_factor
 #'
@@ -692,7 +819,54 @@ project_death_rates <- function(starting_mx, aax_trajectory, actual_mx = NULL) {
 #' Per SSA TR2025 documentation, COVID impacts death rates through 2025.
 #'
 #' @export
-get_covid_adjustment_factors <- function() {
+get_covid_adjustment_factors <- function(config_path = NULL, config = NULL) {
+  # Load config if not provided
+  if (is.null(config)) {
+    config <- tryCatch({
+      load_mortality_config(config_path)
+    }, error = function(e) {
+      NULL
+    })
+  }
+
+  # If config loaded successfully, build from config
+  if (!is.null(config) && !is.null(config$covid_adjustments)) {
+    results <- list()
+
+    # Age group mapping
+    age_map <- list(
+      age_0 = c(0L, 0L),
+      age_1_14 = c(1L, 14L),
+      age_15_64 = c(15L, 64L),
+      age_65_84 = c(65L, 84L),
+      age_85_plus = c(85L, 119L)
+    )
+
+    for (yr_name in names(config$covid_adjustments)) {
+      yr <- as.integer(yr_name)
+      yr_factors <- config$covid_adjustments[[yr_name]]
+
+      for (age_name in names(yr_factors)) {
+        if (age_name %in% names(age_map)) {
+          results[[length(results) + 1]] <- data.table::data.table(
+            year = yr,
+            age_min = age_map[[age_name]][1],
+            age_max = age_map[[age_name]][2],
+            covid_factor = yr_factors[[age_name]]
+          )
+        }
+      }
+    }
+
+    if (length(results) > 0) {
+      return(data.table::rbindlist(results))
+    }
+  }
+
+  # Fallback to hardcoded defaults (TR2025 Alternative II / Intermediate)
+  cli::cli_alert_warning(
+    "Falling back to hardcoded TR2025 Alt II (Intermediate) COVID adjustment factors"
+  )
   data.table::data.table(
     year = c(rep(2024L, 5), rep(2025L, 5)),
     age_min = rep(c(0L, 1L, 15L, 65L, 85L), 2),
@@ -1640,4 +1814,537 @@ get_default_marital_factors <- function() {
   }
 
   data.table::rbindlist(results)
+}
+
+# =============================================================================
+# Phase 2D: Infant Mortality (q0) Calculation
+# =============================================================================
+
+#' Calculate infant mortality rate (q0) using detailed age-at-death data
+#'
+#' @description
+#' Computes the probability of death in the first year of life (q0) using
+#' detailed infant death data by age (hours, days, months) and monthly birth
+#' data to properly calculate exposure.
+#'
+#' @param infant_deaths data.table with columns: year, sex, age_unit, age_value, deaths
+#'   - age_unit: "minutes", "hours", "days", or "months"
+#'   - age_value: numeric age in that unit
+#' @param monthly_births data.table with columns: year, month, births
+#' @param year Integer: year for which to calculate q0
+#' @param method Character: "separation_factor" (default) or "simple"
+#'
+#' @return data.table with columns: year, sex, q0, deaths, births, exposure
+#'
+#' @details
+#' The SSA methodology uses detailed infant death data to properly calculate
+#' infant mortality. Deaths are categorized by age at death:
+#' - Neonatal (0-27 days): mostly deaths to infants born in the same year
+#' - Post-neonatal (28-364 days): mixed between current and previous year births
+#'
+#' The separation factor approach allocates deaths between birth cohorts based
+#' on the monthly distribution of births and deaths.
+#'
+#' Formula: q0 = D0 / E0
+#' Where:
+#' - D0 = total infant deaths during year
+#' - E0 = exposure (births adjusted for separation factor)
+#'
+#' @export
+calculate_infant_mortality <- function(infant_deaths, monthly_births, year,
+                                       method = c("separation_factor", "simple")) {
+  method <- match.arg(method)
+
+  checkmate::assert_data_table(infant_deaths)
+  checkmate::assert_data_table(monthly_births)
+  checkmate::assert_int(year, lower = 1900, upper = 2100)
+  checkmate::assert_names(names(infant_deaths),
+    must.include = c("year", "sex", "age_unit", "age_value", "deaths"))
+  checkmate::assert_names(names(monthly_births),
+    must.include = c("year", "month", "births"))
+
+  # Filter to the specified year (use local variable to avoid data.table scoping issues)
+  target_year <- year
+  prev_year <- year - 1L
+  deaths_yr <- infant_deaths[year == target_year]
+  births_yr <- monthly_births[year == target_year]
+  births_prev <- monthly_births[year == prev_year]
+
+  if (nrow(deaths_yr) == 0) {
+    cli::cli_abort("No infant deaths data for year {year}")
+  }
+  if (nrow(births_yr) == 0) {
+    cli::cli_abort("No monthly births data for year {year}")
+  }
+
+  # Total births for current and previous year
+  total_births <- sum(births_yr$births)
+  total_births_prev <- if (nrow(births_prev) > 0) sum(births_prev$births) else total_births
+
+  # Sex ratio at birth (proportion male)
+  # CDC reports approximately 51.2% male, 48.8% female
+  # This is a biological constant that varies little over time
+  sex_ratio_male <- 0.512
+  sex_ratio_female <- 1 - sex_ratio_male
+
+  results <- list()
+
+  for (sex_val in c("male", "female")) {
+    # Adjust births for sex ratio since monthly births data is not sex-specific
+    sex_ratio <- if (sex_val == "male") sex_ratio_male else sex_ratio_female
+    births_sex <- as.integer(round(total_births * sex_ratio))
+    births_prev_sex <- as.integer(round(total_births_prev * sex_ratio))
+
+    # Get deaths for this sex
+    deaths_sex <- deaths_yr[sex == sex_val]
+
+    if (nrow(deaths_sex) == 0) {
+      cli::cli_warn("No infant deaths for {sex_val} in {year}")
+      next
+    }
+
+    # Convert deaths to SSA age groupings
+    deaths_by_group <- convert_infant_deaths_to_ssa_groups(deaths_sex)
+
+    # Total infant deaths for this sex
+    total_deaths <- sum(deaths_by_group$deaths)
+
+    if (method == "simple") {
+      # Simple method: q0 = deaths / births (sex-specific)
+      # Assumes all deaths are to current year births
+      # This underestimates q0 slightly
+      q0 <- total_deaths / births_sex
+
+      results[[length(results) + 1]] <- data.table::data.table(
+        year = year,
+        sex = sex_val,
+        q0 = q0,
+        deaths = total_deaths,
+        births = births_sex,
+        exposure = births_sex,
+        method = "simple"
+      )
+    } else {
+      # Separation factor method
+      # Calculate what fraction of deaths are to current year births
+
+      # Get separation factors based on monthly birth distribution
+      sep_factors <- calculate_ssa_separation_factors(
+        monthly_births_current = births_yr,
+        monthly_births_prev = births_prev
+      )
+
+      # Apply separation factors to deaths by age group
+      deaths_with_sep <- merge(
+        deaths_by_group,
+        sep_factors,
+        by = "ssa_age_group",
+        all.x = TRUE
+      )
+
+      # Fill missing separation factors (default to 1.0 for neonatal)
+      deaths_with_sep[is.na(sep_factor), sep_factor := 1.0]
+
+      # Deaths attributed to current year births
+      deaths_current <- sum(deaths_with_sep$deaths * deaths_with_sep$sep_factor)
+      deaths_prev <- sum(deaths_with_sep$deaths * (1 - deaths_with_sep$sep_factor))
+
+      # Exposure calculation (sex-specific births)
+      # E0 = B_current * f + B_prev * (1 - f_prev_cohort)
+      # Simplified: use sex-specific births as primary exposure
+      exposure <- births_sex
+
+      # q0 for current year birth cohort
+      q0 <- deaths_current / exposure
+
+      results[[length(results) + 1]] <- data.table::data.table(
+        year = year,
+        sex = sex_val,
+        q0 = q0,
+        deaths = total_deaths,
+        deaths_current_cohort = deaths_current,
+        births = births_sex,
+        exposure = exposure,
+        method = "separation_factor"
+      )
+    }
+  }
+
+  result <- data.table::rbindlist(results, fill = TRUE)
+  cli::cli_alert_success(
+    "Calculated q0 for {year}: male={round(result[sex=='male', q0], 5)}, female={round(result[sex=='female', q0], 5)}"
+  )
+
+  result
+}
+
+#' Convert infant deaths to SSA age groups
+#'
+#' @description
+#' Converts infant deaths from various age units (minutes, hours, days, months)
+#' to the SSA-specified age groupings for infant mortality calculation.
+#'
+#' SSA age groups (from 2025 Long-Range Model Documentation):
+#' - under 1 day (includes minutes and hours)
+#' - 1-2 days
+#' - 3-6 days
+#' - 7-27 days
+#' - 28 days - 1 month
+#' - 2 months, 3 months, ..., 11 months
+#'
+#' @param deaths data.table with age_unit, age_value, deaths columns
+#'
+#' @return data.table with ssa_age_group, deaths columns
+#'
+#' @keywords internal
+convert_infant_deaths_to_ssa_groups <- function(deaths) {
+  dt <- data.table::copy(deaths)
+
+  # Assign SSA age groups based on age_unit and age_value
+  # SSA groups: under_1_day, 1-2_days, 3-6_days, 7-27_days, 1_month, 2_months, ..., 11_months
+  dt[, ssa_age_group := data.table::fcase(
+    # Under 1 day: minutes and hours, or days == 0
+    age_unit == "minutes", "under_1_day",
+    age_unit == "hours", "under_1_day",
+    age_unit == "days" & age_value == 0, "under_1_day",
+    # 1-2 days
+    age_unit == "days" & age_value >= 1 & age_value <= 2, "1-2_days",
+    # 3-6 days
+    age_unit == "days" & age_value >= 3 & age_value <= 6, "3-6_days",
+    # 7-27 days
+    age_unit == "days" & age_value >= 7 & age_value <= 27, "7-27_days",
+    # Months: map directly
+    age_unit == "months" & age_value == 1, "1_month",
+    age_unit == "months" & age_value == 2, "2_months",
+    age_unit == "months" & age_value == 3, "3_months",
+    age_unit == "months" & age_value == 4, "4_months",
+    age_unit == "months" & age_value == 5, "5_months",
+    age_unit == "months" & age_value == 6, "6_months",
+    age_unit == "months" & age_value == 7, "7_months",
+    age_unit == "months" & age_value == 8, "8_months",
+    age_unit == "months" & age_value == 9, "9_months",
+    age_unit == "months" & age_value == 10, "10_months",
+    age_unit == "months" & age_value == 11, "11_months",
+    default = "other"
+  )]
+
+  # Aggregate deaths by SSA age group
+result <- dt[ssa_age_group != "other", .(deaths = sum(deaths)), by = .(ssa_age_group)]
+
+  result
+}
+
+#' Calculate SSA separation factors for infant mortality
+#'
+#' @description
+#' Calculates the fraction of infant deaths at each SSA age group that should be
+#' attributed to the current year's birth cohort vs the previous year's.
+#'
+#' @param monthly_births_current data.table with year, month, births for current year
+#' @param monthly_births_prev data.table with year, month, births for previous year
+#'
+#' @return data.table with ssa_age_group, sep_factor columns
+#'
+#' @details
+#' The separation factor represents what fraction of deaths at a given age
+#' occurred to infants born in the current calendar year.
+#'
+#' SSA age groups (per 2025 Long-Range Model Documentation):
+#' - under 1 day, 1-2 days, 3-6 days, 7-27 days
+#' - 1 month, 2 months, ..., 11 months
+#'
+#' For neonatal deaths (first 27 days), almost all deaths are to infants
+#' born in the current year (separation factor close to 1.0).
+#'
+#' For post-neonatal deaths by month, the separation factor depends on
+#' when during the year the death occurred. An infant dying at age X months
+#' in month M was born in month (M - X). If M - X <= 0, they were born in
+#' the previous year.
+#'
+#' @keywords internal
+calculate_ssa_separation_factors <- function(monthly_births_current, monthly_births_prev) {
+
+  # For neonatal deaths (under 1 day through 27 days), nearly all deaths
+  # are to infants born in the current calendar year.
+  # Only deaths in January to infants aged close to 1 month could be from
+  # previous year births.
+
+  # Neonatal separation factors (very high - most deaths same year as birth)
+  sep_under_1_day <- 1.0    # All deaths same day as birth
+  sep_1_2_days <- 1.0       # Nearly all same year
+  sep_3_6_days <- 0.995     # Very few from previous year (only late Dec births dying in Jan)
+  sep_7_27_days <- 0.98     # Slightly more from previous year
+
+  # Post-neonatal separation factors by month of age
+  # Logic: death at age M months in calendar month C means birth in month (C - M)
+  # If C - M <= 0, birth was in previous year
+  # Averaging across the year:
+  # - 1 month old: births from (C-1), so Jan deaths = Dec prev year births
+  #   Fraction from current year = 11/12 ≈ 0.917
+  # - 2 months old: Jan-Feb deaths from prev year births = 2/12 from prev year
+  #   Fraction from current year = 10/12 ≈ 0.833
+  # And so on...
+
+  sep_1_month <- 11/12   # ~0.917
+  sep_2_months <- 10/12  # ~0.833
+  sep_3_months <- 9/12   # 0.75
+  sep_4_months <- 8/12   # ~0.667
+  sep_5_months <- 7/12   # ~0.583
+  sep_6_months <- 6/12   # 0.5
+  sep_7_months <- 5/12   # ~0.417
+  sep_8_months <- 4/12   # ~0.333
+  sep_9_months <- 3/12   # 0.25
+  sep_10_months <- 2/12  # ~0.167
+  sep_11_months <- 1/12  # ~0.083
+
+  data.table::data.table(
+    ssa_age_group = c("under_1_day", "1-2_days", "3-6_days", "7-27_days",
+                      "1_month", "2_months", "3_months", "4_months",
+                      "5_months", "6_months", "7_months", "8_months",
+                      "9_months", "10_months", "11_months"),
+    sep_factor = c(sep_under_1_day, sep_1_2_days, sep_3_6_days, sep_7_27_days,
+                   sep_1_month, sep_2_months, sep_3_months, sep_4_months,
+                   sep_5_months, sep_6_months, sep_7_months, sep_8_months,
+                   sep_9_months, sep_10_months, sep_11_months)
+  )
+}
+
+#' Calculate infant mortality for multiple years
+#'
+#' @description
+#' Batch calculation of infant mortality (q0) across multiple years.
+#'
+#' @param infant_deaths data.table with all years of infant death data
+#' @param monthly_births data.table with all years of monthly birth data
+#' @param years Integer vector of years to calculate
+#' @param method Character: calculation method (default: "separation_factor")
+#'
+#' @return data.table with q0 for all years and sexes
+#'
+#' @export
+calculate_infant_mortality_series <- function(infant_deaths, monthly_births, years,
+                                               method = "separation_factor") {
+  checkmate::assert_data_table(infant_deaths)
+  checkmate::assert_data_table(monthly_births)
+  checkmate::assert_integerish(years, min.len = 1)
+
+  results <- list()
+
+  for (yr in years) {
+    tryCatch({
+      result <- calculate_infant_mortality(
+        infant_deaths = infant_deaths,
+        monthly_births = monthly_births,
+        year = yr,
+        method = method
+      )
+      results[[length(results) + 1]] <- result
+    }, error = function(e) {
+      cli::cli_warn("Failed to calculate q0 for {yr}: {conditionMessage(e)}")
+    })
+  }
+
+  if (length(results) == 0) {
+    cli::cli_abort("No q0 values could be calculated")
+  }
+
+  data.table::rbindlist(results, fill = TRUE)
+}
+
+#' Load infant deaths detail data
+#'
+#' @description
+#' Loads cached infant deaths detail data for specified years.
+#'
+#' @param years Integer vector of years to load
+#' @param cache_dir Character: directory containing cached RDS files
+#'
+#' @return data.table with combined infant deaths data
+#'
+#' @export
+load_infant_deaths <- function(years, cache_dir = "data/cache/nchs_deaths") {
+  checkmate::assert_integerish(years, min.len = 1)
+  checkmate::assert_directory_exists(cache_dir)
+
+  results <- list()
+
+  for (yr in years) {
+    file_path <- file.path(cache_dir, sprintf("infant_deaths_detail_%d.rds", yr))
+
+    if (file.exists(file_path)) {
+      dt <- readRDS(file_path)
+      results[[length(results) + 1]] <- data.table::as.data.table(dt)
+    } else {
+      cli::cli_warn("Infant deaths file not found for {yr}: {file_path}")
+    }
+  }
+
+  if (length(results) == 0) {
+    cli::cli_abort("No infant deaths data files found")
+  }
+
+  data.table::rbindlist(results, fill = TRUE)
+}
+
+#' Load monthly births data
+#'
+#' @description
+#' Loads cached monthly births data for specified years.
+#'
+#' @param years Integer vector of years to load
+#' @param cache_dir Character: directory containing cached RDS files
+#'
+#' @return data.table with combined monthly births data
+#'
+#' @export
+load_monthly_births <- function(years, cache_dir = "data/raw/nchs") {
+  checkmate::assert_integerish(years, min.len = 1)
+  checkmate::assert_directory_exists(cache_dir)
+
+  results <- list()
+
+  for (yr in years) {
+    file_path <- file.path(cache_dir, sprintf("births_by_month_%d.rds", yr))
+
+    if (file.exists(file_path)) {
+      dt <- readRDS(file_path)
+      results[[length(results) + 1]] <- data.table::as.data.table(dt)
+    } else {
+      cli::cli_warn("Monthly births file not found for {yr}: {file_path}")
+    }
+  }
+
+  if (length(results) == 0) {
+    cli::cli_abort("No monthly births data files found")
+  }
+
+  data.table::rbindlist(results, fill = TRUE)
+}
+
+#' Project infant mortality (q0) for future years
+#'
+#' @description
+#' Projects q0 for years after the last historical data year using the
+#' SSA methodology: q0 = m0 × (q0/m0 ratio from last historical year).
+#'
+#' Per SSA 2025 Long-Range Model Documentation:
+#' "After the last historical year, q0 is calculated from m0, assuming that
+#' the ratio of q0 to m0 measured for the last historical year would remain
+#' constant thereafter."
+#'
+#' @param q0_historical data.table with historical q0 values (year, sex, q0)
+#' @param m0_series data.table with m0 values for all years (year, sex, m0)
+#' @param projection_years Integer vector of years to project
+#'
+#' @return data.table with projected q0 values
+#'
+#' @export
+project_infant_mortality <- function(q0_historical, m0_series, projection_years) {
+  checkmate::assert_data_table(q0_historical)
+  checkmate::assert_data_table(m0_series)
+  checkmate::assert_names(names(q0_historical), must.include = c("year", "sex", "q0"))
+  checkmate::assert_names(names(m0_series), must.include = c("year", "sex"))
+  checkmate::assert_integerish(projection_years, min.len = 1)
+
+  # Find the last historical year
+  last_hist_year <- max(q0_historical$year)
+
+  # Get q0 and m0 for last historical year
+  q0_last <- q0_historical[year == last_hist_year]
+
+  # Determine m0 column name (could be m0 or mx with age==0)
+  if ("m0" %in% names(m0_series)) {
+    m0_col <- "m0"
+  } else if ("mx" %in% names(m0_series) && "age" %in% names(m0_series)) {
+    m0_series <- m0_series[age == 0]
+    m0_series[, m0 := mx]
+    m0_col <- "m0"
+  } else {
+    cli::cli_abort("m0_series must have either 'm0' column or 'mx' and 'age' columns")
+  }
+
+  m0_last <- m0_series[year == last_hist_year]
+
+  results <- list()
+
+  for (sex_val in c("male", "female")) {
+    # Calculate q0/m0 ratio for last historical year
+    q0_val <- q0_last[sex == sex_val, q0]
+    m0_val <- m0_last[sex == sex_val, m0]
+
+    if (length(q0_val) == 0 || length(m0_val) == 0) {
+      cli::cli_warn("Missing q0 or m0 for {sex_val} in year {last_hist_year}")
+      next
+    }
+
+    ratio <- q0_val / m0_val
+
+    # Project q0 for each projection year
+    for (proj_year in projection_years) {
+      m0_proj <- m0_series[year == proj_year & sex == sex_val, m0]
+
+      if (length(m0_proj) == 0) {
+        cli::cli_warn("Missing m0 for {sex_val} in projection year {proj_year}")
+        next
+      }
+
+      q0_proj <- m0_proj * ratio
+
+      results[[length(results) + 1]] <- data.table::data.table(
+        year = proj_year,
+        sex = sex_val,
+        q0 = q0_proj,
+        method = "projected",
+        q0_m0_ratio = ratio
+      )
+    }
+  }
+
+  result <- data.table::rbindlist(results)
+  cli::cli_alert_success(
+    "Projected q0 for {length(projection_years)} years using q0/m0 ratio from {last_hist_year}"
+  )
+
+  result
+}
+
+#' Integrate infant mortality into death probability series
+#'
+#' @description
+#' Replaces the age-0 death probability (q0) in a qx series with the
+#' properly calculated infant mortality rate.
+#'
+#' @param qx data.table with death probabilities (must include age 0)
+#' @param q0 data.table from calculate_infant_mortality() or calculate_infant_mortality_series()
+#'
+#' @return data.table with updated q0 values
+#'
+#' @export
+integrate_infant_mortality <- function(qx, q0) {
+  checkmate::assert_data_table(qx)
+  checkmate::assert_data_table(q0)
+  checkmate::assert_names(names(qx), must.include = c("year", "age", "sex", "qx"))
+  checkmate::assert_names(names(q0), must.include = c("year", "sex", "q0"))
+
+  dt <- data.table::copy(qx)
+
+  # Merge q0 values
+  q0_subset <- q0[, .(year, sex, q0)]
+
+  # Update age 0 qx with calculated q0
+  dt <- merge(dt, q0_subset, by = c("year", "sex"), all.x = TRUE)
+
+  # Replace qx at age 0 with q0
+  dt[age == 0 & !is.na(q0), qx := q0]
+  dt[, q0 := NULL]
+
+  # Report changes
+  years_updated <- unique(dt[age == 0 & year %in% q0$year, year])
+  if (length(years_updated) > 0) {
+    cli::cli_alert_success(
+      "Updated q0 for {length(years_updated)} years: {min(years_updated)}-{max(years_updated)}"
+    )
+  }
+
+  dt
 }
