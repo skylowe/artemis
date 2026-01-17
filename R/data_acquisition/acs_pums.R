@@ -273,3 +273,268 @@ fetch_acs_pums_mortality_years <- function(cache_dir = here::here("data/cache/ac
     cache_dir = cache_dir
   )
 }
+
+# =============================================================================
+# CIVILIAN AND CIVILIAN NONINSTITUTIONALIZED POPULATION
+# =============================================================================
+
+#' Fetch ACS PUMS civilian population by age and sex
+#'
+#' @description
+#' Retrieves civilian population estimates by single year of age and sex
+#' from the ACS PUMS via Census Microdata API. Civilian population excludes
+#' active duty military personnel.
+#'
+#' @param years Integer vector of years to query (2005-2023 available)
+#' @param ages Integer vector of ages (default: 0:99)
+#' @param cache_dir Character: directory for caching downloaded files
+#'
+#' @return data.table with columns: year, age, sex, population
+#'
+#' @details
+#' Uses the MIL (military service) variable to filter:
+#' - MIL = 1: On active duty (EXCLUDED)
+#' - MIL = 2-4 or NA: Not on active duty (INCLUDED)
+#'
+#' Note: For ages < 17, MIL is not applicable (NA), so all persons are civilian.
+#'
+#' @export
+fetch_acs_pums_civilian <- function(years,
+                                     ages = 0:99,
+                                     cache_dir = here::here("data/cache/acs_pums")) {
+  checkmate::assert_integerish(years, lower = 2005, upper = 2024, min.len = 1)
+  checkmate::assert_integerish(ages, lower = 0, upper = 99, min.len = 1)
+
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+  api_key <- get_api_key("CENSUS_KEY")
+
+  results <- list()
+
+  for (yr in years) {
+    cache_file <- file.path(cache_dir, sprintf("pums_civilian_%d.rds", yr))
+
+    if (file.exists(cache_file)) {
+      cli::cli_alert_success("Loading cached ACS PUMS civilian for {yr}")
+      results[[as.character(yr)]] <- readRDS(cache_file)
+      next
+    }
+
+    cli::cli_alert("Fetching ACS PUMS civilian population for {yr}...")
+
+    tryCatch({
+      dt <- fetch_acs_pums_civilian_year(yr, ages, api_key)
+
+      if (!is.null(dt) && nrow(dt) > 0) {
+        saveRDS(dt, cache_file)
+        cli::cli_alert_success("Cached ACS PUMS civilian for {yr} ({nrow(dt)} rows)")
+        results[[as.character(yr)]] <- dt
+      }
+    }, error = function(e) {
+      cli::cli_alert_warning("Failed for {yr}: {conditionMessage(e)}")
+    })
+  }
+
+  if (length(results) == 0) {
+    cli::cli_abort("No ACS PUMS civilian data retrieved")
+  }
+
+  combined <- data.table::rbindlist(results, use.names = TRUE)
+  data.table::setorder(combined, year, sex, age)
+
+  cli::cli_alert_success(
+    "Retrieved ACS PUMS civilian data for {length(unique(combined$year))} years"
+  )
+
+  combined
+}
+
+#' Fetch ACS PUMS civilian population for a single year
+#'
+#' @keywords internal
+fetch_acs_pums_civilian_year <- function(year, ages, api_key) {
+  base_url <- sprintf("https://api.census.gov/data/%d/acs/acs1/pums", year)
+
+  # Query AGEP (age), SEX, MIL (military service), PWGTP (weight)
+  req <- httr2::request(base_url) |>
+    httr2::req_url_query(
+      get = "AGEP,SEX,MIL,PWGTP",
+      key = api_key
+    ) |>
+    httr2::req_timeout(300) |>
+    httr2::req_user_agent("ARTEMIS OASDI Projection Model (R)")
+
+  resp <- api_request_with_retry(req, max_retries = 3)
+  check_api_response(resp, sprintf("ACS PUMS API (%d)", year))
+
+  json_data <- httr2::resp_body_json(resp, simplifyVector = TRUE)
+
+  if (length(json_data) < 2) {
+    cli::cli_alert_warning("No data returned for {year}")
+    return(NULL)
+  }
+
+  headers <- json_data[1, ]
+  data_rows <- json_data[-1, , drop = FALSE]
+  dt <- data.table::as.data.table(data_rows)
+  data.table::setnames(dt, headers)
+
+  dt[, age := as.integer(AGEP)]
+  dt[, sex_code := as.integer(SEX)]
+  dt[, mil_code := as.integer(MIL)]  # NA for ages < 17
+  dt[, weight := as.numeric(PWGTP)]
+
+  # Map sex codes
+  dt[sex_code == 1, sex := "male"]
+  dt[sex_code == 2, sex := "female"]
+
+  # Filter to civilian only (MIL != 1, where 1 = "On active duty")
+  # For ages < 17, MIL is NA, which means civilian by default
+  dt <- dt[is.na(mil_code) | mil_code != 1]
+
+  # Filter to requested ages
+  dt <- dt[age %in% ages & !is.na(sex) & !is.na(weight)]
+
+  # Aggregate by age and sex
+  result <- dt[, .(population = sum(weight)), by = .(age, sex)]
+  result[, year := year]
+
+  data.table::setcolorder(result, c("year", "age", "sex", "population"))
+  data.table::setorder(result, age, sex)
+
+  result
+}
+
+#' Fetch ACS PUMS civilian noninstitutionalized population by age and sex
+#'
+#' @description
+#' Retrieves civilian noninstitutionalized population estimates by single year
+#' of age and sex from the ACS PUMS. Excludes:
+#' - Active duty military personnel
+#' - Institutionalized populations (prisons, nursing homes, mental facilities)
+#'
+#' @param years Integer vector of years to query (2005-2023 available)
+#' @param ages Integer vector of ages (default: 0:99)
+#' @param cache_dir Character: directory for caching downloaded files
+#'
+#' @return data.table with columns: year, age, sex, population
+#'
+#' @details
+#' Uses two filter variables:
+#' - MIL (military service): Excludes MIL = 1 (on active duty)
+#' - TYPE (type of unit): Excludes TYPE = 2 (institutional group quarters)
+#'
+#' TYPE values: 1 = Housing unit, 2 = Institutional GQ, 3 = Noninstitutional GQ
+#'
+#' Institutional group quarters include: correctional facilities, nursing homes,
+#' mental hospitals. Noninstitutional GQ (included) are: college dorms, military
+#' barracks, group homes.
+#'
+#' @export
+fetch_acs_pums_civilian_noninst <- function(years,
+                                             ages = 0:99,
+                                             cache_dir = here::here("data/cache/acs_pums")) {
+  checkmate::assert_integerish(years, lower = 2005, upper = 2024, min.len = 1)
+  checkmate::assert_integerish(ages, lower = 0, upper = 99, min.len = 1)
+
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+  api_key <- get_api_key("CENSUS_KEY")
+
+  results <- list()
+
+  for (yr in years) {
+    cache_file <- file.path(cache_dir, sprintf("pums_civilian_noninst_%d.rds", yr))
+
+    if (file.exists(cache_file)) {
+      cli::cli_alert_success("Loading cached ACS PUMS civilian noninst for {yr}")
+      results[[as.character(yr)]] <- readRDS(cache_file)
+      next
+    }
+
+    cli::cli_alert("Fetching ACS PUMS civilian noninstitutionalized for {yr}...")
+
+    tryCatch({
+      dt <- fetch_acs_pums_civilian_noninst_year(yr, ages, api_key)
+
+      if (!is.null(dt) && nrow(dt) > 0) {
+        saveRDS(dt, cache_file)
+        cli::cli_alert_success("Cached ACS PUMS civilian noninst for {yr} ({nrow(dt)} rows)")
+        results[[as.character(yr)]] <- dt
+      }
+    }, error = function(e) {
+      cli::cli_alert_warning("Failed for {yr}: {conditionMessage(e)}")
+    })
+  }
+
+  if (length(results) == 0) {
+    cli::cli_abort("No ACS PUMS civilian noninstitutionalized data retrieved")
+  }
+
+  combined <- data.table::rbindlist(results, use.names = TRUE)
+  data.table::setorder(combined, year, sex, age)
+
+  cli::cli_alert_success(
+    "Retrieved ACS PUMS civilian noninst data for {length(unique(combined$year))} years"
+  )
+
+  combined
+}
+
+#' Fetch ACS PUMS civilian noninstitutionalized for a single year
+#'
+#' @keywords internal
+fetch_acs_pums_civilian_noninst_year <- function(year, ages, api_key) {
+  base_url <- sprintf("https://api.census.gov/data/%d/acs/acs1/pums", year)
+
+  # Query AGEP, SEX, MIL, TYPE (housing unit/GQ type), PWGTP
+  # TYPE: 1 = Housing unit, 2 = Institutional GQ, 3 = Noninstitutional GQ
+  req <- httr2::request(base_url) |>
+    httr2::req_url_query(
+      get = "AGEP,SEX,MIL,TYPE,PWGTP",
+      key = api_key
+    ) |>
+    httr2::req_timeout(300) |>
+    httr2::req_user_agent("ARTEMIS OASDI Projection Model (R)")
+
+  resp <- api_request_with_retry(req, max_retries = 3)
+  check_api_response(resp, sprintf("ACS PUMS API (%d)", year))
+
+  json_data <- httr2::resp_body_json(resp, simplifyVector = TRUE)
+
+  if (length(json_data) < 2) {
+    cli::cli_alert_warning("No data returned for {year}")
+    return(NULL)
+  }
+
+  headers <- json_data[1, ]
+  data_rows <- json_data[-1, , drop = FALSE]
+  dt <- data.table::as.data.table(data_rows)
+  data.table::setnames(dt, headers)
+
+  dt[, age := as.integer(AGEP)]
+  dt[, sex_code := as.integer(SEX)]
+  dt[, mil_code := as.integer(MIL)]
+  dt[, gq_type := as.integer(TYPE)]
+  dt[, weight := as.numeric(PWGTP)]
+
+  # Map sex codes
+  dt[sex_code == 1, sex := "male"]
+  dt[sex_code == 2, sex := "female"]
+
+  # Filter to civilian noninstitutionalized:
+  # 1. Civilian: MIL != 1 (not on active duty) or NA (age < 17)
+  # 2. Noninstitutionalized: TYPE != 2 (not in institutional GQ)
+  #    TYPE: 1 = Housing unit, 2 = Institutional GQ, 3 = Noninstitutional GQ
+  dt <- dt[(is.na(mil_code) | mil_code != 1) & (is.na(gq_type) | gq_type != 2)]
+
+  # Filter to requested ages
+  dt <- dt[age %in% ages & !is.na(sex) & !is.na(weight)]
+
+  # Aggregate by age and sex
+  result <- dt[, .(population = sum(weight)), by = .(age, sex)]
+  result[, year := year]
+
+  data.table::setcolorder(result, c("year", "age", "sex", "population"))
+  data.table::setorder(result, age, sex)
+
+  result
+}

@@ -47,11 +47,20 @@
   - AS 2010: 55,529 vs 55,519 (0.02% diff)
 
 **Notes:**
-- Civilian and civilian noninstitutionalized currently use resident as proxy (~1% difference)
+- **Civilian and civilian noninstitutionalized now use real ACS PUMS data (2005-2023)**
+  - Civilian: Filters by MIL variable to exclude active duty military
+  - Civilian noninstitutionalized: Filters by MIL + TYPE to exclude military and institutional GQ
+  - Validated: 327M civilian, 323M civilian noninst (2019) - difference = 3.87M institutionalized (1.18%)
 - True USAF (armed forces overseas) data uses resident as proxy (~0.1% difference)
 - Territory data sources:
   - Puerto Rico: Census PEP API (state FIPS 72) for 2010-2019, IDB for other years
   - Other territories (VI, GU, MP, AS): Census International Database (IDB) API
+
+**ACS PUMS Integration (January 17, 2026):**
+- Added `fetch_acs_pums_civilian()` - uses MIL variable to exclude active duty (MIL=1)
+- Added `fetch_acs_pums_civilian_noninst()` - uses MIL + TYPE variables to exclude military (MIL=1) and institutional GQ (TYPE=2)
+- Updated `fetch_civilian_population()` and `fetch_civilian_noninst_population()` to use ACS PUMS for 2005-2023
+- Data available at single-year-of-age level for ages 0-99
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.

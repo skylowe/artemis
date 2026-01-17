@@ -323,14 +323,11 @@ fetch_resident_usaf_2020s <- function(years, ages, reference_date, cache_dir) {
 #'
 #' @description
 #' Fetches civilian population (excludes active duty military).
-#' Available from 2010 onwards.
+#' Uses ACS PUMS data for 2005-2023, with resident population as fallback.
 #'
 #' @keywords internal
 fetch_civilian_population <- function(years, ages, reference_date, cache_dir) {
   cli::cli_alert_info("Fetching civilian population...")
-
-  # Civilian population available via ACS or special Census files
-  # For 2010+, use Population Estimates with components
 
   # Check cache
   cache_file <- file.path(
@@ -344,76 +341,62 @@ fetch_civilian_population <- function(years, ages, reference_date, cache_dir) {
     return(cached[year %in% years & age %in% ages])
   }
 
-  # Fetch civilian population from appropriate source
-  result <- fetch_pep_charagegroups_civilian(years, ages, reference_date, cache_dir)
-
-  if (!is.null(result) && nrow(result) > 0) {
-    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-    saveRDS(result, cache_file)
-  }
-
-  result
-}
-
-#' Fetch civilian population from PEP charagegroups endpoint
-#'
-#' @keywords internal
-fetch_pep_charagegroups_civilian <- function(years, ages, reference_date, cache_dir) {
-  # The charagegroups endpoint has HISP (origin), but for civilian we need
-  # the resident population minus military
-
-  # For 2010-2019, use the PEP API with appropriate concept
-  # For 2020+, use downloaded files
-
-  api_key <- get_api_key("CENSUS_KEY")
-
-  # For January 1 interpolation, we need year-1 for each target year
-  if (reference_date == "jan1") {
-    # Jan 1 of year Y needs Jul 1 of Y-1 and Jul 1 of Y
-    all_years <- unique(c(years - 1, years))
-    all_years <- all_years[all_years >= 2010 & all_years <= 2024]
-  } else {
-    all_years <- years
-  }
-
-  years_api <- all_years[all_years >= 2010 & all_years <= 2019]
-  years_file <- all_years[all_years >= 2020 & all_years <= 2024]
+  # Split years by data source availability
+  # ACS PUMS: 2005-2023 (single year of age, true civilian via MIL filter)
+  # Note: ACS provides annual estimates, not July 1 / January 1 specific
+  years_acs <- years[years >= 2005 & years <= 2023]
+  years_other <- years[years < 2005 | years > 2023]
 
   results <- list()
 
-  # 2010-2019: Try the API
-  if (length(years_api) > 0) {
-    # Note: The standard PEP endpoints don't have civilian-only
-    # We'd need to use the components or estimate from total - military
-    # For now, approximate using total resident (military ~1% of pop)
+  # Fetch from ACS PUMS for 2005-2023
+  if (length(years_acs) > 0) {
+    cli::cli_alert_info("Using ACS PUMS for true civilian population (2005-2023)")
 
-    cli::cli_alert_info("Civilian pop 2010-2019: using resident as proxy (military ~1%)")
+    # ACS PUMS is annual, not tied to reference date
+    # For January 1, we'd need to interpolate between adjacent years
+    if (reference_date == "jan1") {
+      # Jan 1 of year Y needs ACS from Y-1 and Y
+      acs_years_needed <- unique(c(years_acs - 1, years_acs))
+      acs_years_needed <- acs_years_needed[acs_years_needed >= 2005 & acs_years_needed <= 2023]
+    } else {
+      acs_years_needed <- years_acs
+    }
+
+    acs_data <- tryCatch({
+      fetch_acs_pums_civilian(
+        years = acs_years_needed,
+        ages = ages,
+        cache_dir = here::here("data/cache/acs_pums")
+      )
+    }, error = function(e) {
+      cli::cli_alert_warning("ACS PUMS civilian fetch failed: {conditionMessage(e)}")
+      NULL
+    })
+
+    if (!is.null(acs_data) && nrow(acs_data) > 0) {
+      # ACS is annual; treat as mid-year (July 1) for interpolation purposes
+      if (reference_date == "jan1") {
+        acs_data <- interpolate_jul1_to_jan1(acs_data, years_acs)
+      } else {
+        acs_data <- acs_data[year %in% years_acs]
+      }
+      results[["acs"]] <- acs_data
+    }
+  }
+
+  # Fallback to resident population for years outside ACS coverage
+  if (length(years_other) > 0) {
+    cli::cli_alert_info("Using resident as proxy for civilian (years outside ACS coverage)")
 
     for (s in c("male", "female")) {
       pop <- fetch_census_population(
-        years = years_api,
+        years = years_other,
         ages = ages,
         sex = s
       )
       if (!is.null(pop)) {
-        results[[paste0("api_", s)]] <- pop
-      }
-    }
-  }
-
-  # 2020-2024: File download (same limitation)
-  if (length(years_file) > 0) {
-    cli::cli_alert_info("Civilian pop 2020+: using resident as proxy")
-
-    for (s in c("male", "female")) {
-      pop <- fetch_census_population_2020s_file(
-        years = years_file,
-        ages = ages,
-        sex = s,
-        cache_dir = cache_dir
-      )
-      if (!is.null(pop)) {
-        results[[paste0("file_", s)]] <- pop
+        results[[paste0("other_", s)]] <- pop
       }
     }
   }
@@ -424,11 +407,13 @@ fetch_pep_charagegroups_civilian <- function(years, ages, reference_date, cache_
 
   combined <- data.table::rbindlist(results, use.names = TRUE, fill = TRUE)
 
-  # Interpolate to January 1 if needed
-  if (reference_date == "jan1") {
-    combined <- interpolate_jul1_to_jan1(combined, years)
+  # Cache result
+  if (nrow(combined) > 0) {
+    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+    saveRDS(combined, cache_file)
   }
 
+  data.table::setorder(combined, year, sex, age)
   combined
 }
 
@@ -441,7 +426,7 @@ fetch_pep_charagegroups_civilian <- function(years, ages, reference_date, cache_
 #' @description
 #' Fetches civilian noninstitutionalized population (excludes military
 #' and institutionalized populations like prisons, nursing homes).
-#' Available from 2010 onwards.
+#' Uses ACS PUMS data for 2005-2023, with civilian population as fallback.
 #'
 #' @keywords internal
 fetch_civilian_noninst_population <- function(years, ages, reference_date, cache_dir) {
@@ -459,22 +444,71 @@ fetch_civilian_noninst_population <- function(years, ages, reference_date, cache
     return(cached[year %in% years & age %in% ages])
   }
 
-  # Civilian noninstitutionalized is available from ACS
-  # This requires ACS PUMS data which is more complex
+  # Split years by data source availability
+  # ACS PUMS: 2005-2023 (single year of age, true civilian noninst via MIL + TYPE filter)
+  years_acs <- years[years >= 2005 & years <= 2023]
+  years_other <- years[years < 2005 | years > 2023]
 
-  # For now, approximate using civilian population
-  # Institutional population is ~3-4M out of ~330M (~1%)
+  results <- list()
 
-  cli::cli_alert_info("Using civilian as proxy for civilian noninstitutionalized")
+  # Fetch from ACS PUMS for 2005-2023
+  if (length(years_acs) > 0) {
+    cli::cli_alert_info("Using ACS PUMS for true civilian noninstitutionalized (2005-2023)")
 
-  result <- fetch_civilian_population(years, ages, reference_date, cache_dir)
+    # ACS PUMS is annual; for January 1, interpolate between adjacent years
+    if (reference_date == "jan1") {
+      acs_years_needed <- unique(c(years_acs - 1, years_acs))
+      acs_years_needed <- acs_years_needed[acs_years_needed >= 2005 & acs_years_needed <= 2023]
+    } else {
+      acs_years_needed <- years_acs
+    }
 
-  if (!is.null(result) && nrow(result) > 0) {
-    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-    saveRDS(result, cache_file)
+    acs_data <- tryCatch({
+      fetch_acs_pums_civilian_noninst(
+        years = acs_years_needed,
+        ages = ages,
+        cache_dir = here::here("data/cache/acs_pums")
+      )
+    }, error = function(e) {
+      cli::cli_alert_warning("ACS PUMS civilian noninst fetch failed: {conditionMessage(e)}")
+      NULL
+    })
+
+    if (!is.null(acs_data) && nrow(acs_data) > 0) {
+      # ACS is annual; treat as mid-year (July 1) for interpolation purposes
+      if (reference_date == "jan1") {
+        acs_data <- interpolate_jul1_to_jan1(acs_data, years_acs)
+      } else {
+        acs_data <- acs_data[year %in% years_acs]
+      }
+      results[["acs"]] <- acs_data
+    }
   }
 
-  result
+  # Fallback to civilian population for years outside ACS coverage
+  if (length(years_other) > 0) {
+    cli::cli_alert_info("Using civilian as proxy for civilian noninst (years outside ACS coverage)")
+
+    fallback_data <- fetch_civilian_population(years_other, ages, reference_date, cache_dir)
+    if (!is.null(fallback_data) && nrow(fallback_data) > 0) {
+      results[["fallback"]] <- fallback_data
+    }
+  }
+
+  if (length(results) == 0) {
+    return(NULL)
+  }
+
+  combined <- data.table::rbindlist(results, use.names = TRUE, fill = TRUE)
+
+  # Cache result
+  if (nrow(combined) > 0) {
+    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+    saveRDS(combined, cache_file)
+  }
+
+  data.table::setorder(combined, year, sex, age)
+  combined
 }
 
 # =============================================================================
@@ -857,13 +891,13 @@ summarize_historical_population_availability <- function() {
                 "civilian", "civilian", "civilian_noninst", "civilian_noninst"),
     reference_date = c("jul1", "jan1", "jul1", "jan1",
                        "jul1", "jan1", "jul1", "jan1"),
-    min_year = c(1980, 1981, 1980, 1981, 2010, 2011, 2010, 2011),
-    max_year = c(2024, 2024, 2024, 2024, 2024, 2024, 2024, 2024),
-    source = c("Census PEP", "Interpolated", "Census PEP", "Interpolated",
-               "Proxy (resident)", "Proxy (resident)", "Proxy (civilian)", "Proxy (civilian)"),
+    min_year = c(1980, 1981, 1980, 1981, 2005, 2006, 2005, 2006),
+    max_year = c(2024, 2024, 2024, 2024, 2023, 2023, 2023, 2023),
+    source = c("Census PEP", "Interpolated", "Census PEP (proxy)", "Interpolated",
+               "ACS PUMS (MIL filter)", "Interpolated", "ACS PUMS (MIL+TYPE)", "Interpolated"),
     notes = c("Direct from API/files", "From July 1 interpolation",
-              "Includes armed forces overseas", "From July 1 interpolation",
-              "Military ~1% of pop", "From July 1 interpolation",
-              "Institutional ~1% of pop", "From July 1 interpolation")
+              "USAF ~0.1% of pop, uses resident", "From July 1 interpolation",
+              "True civilian via MIL variable", "From July 1 interpolation",
+              "True civ noninst via MIL+TYPE", "From July 1 interpolation")
   )
 }
