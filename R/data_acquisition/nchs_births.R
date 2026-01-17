@@ -510,8 +510,14 @@ fetch_nchs_births_by_month_sex <- function(year, cache_dir = "data/raw/nchs", fo
     month_var <- "birmon"
   }
 
-  # Sex variable is consistently named "sex" across years
-  sex_var <- "sex"
+  # Sex variable name varies by year
+  # 2005+: "sex" (infant sex)
+  # 1968-2004: "csex" (child sex)
+  if (year >= 2005) {
+    sex_var <- "sex"
+  } else {
+    sex_var <- "csex"
+  }
 
   # Determine weighting strategy
   if (year < 1972) {

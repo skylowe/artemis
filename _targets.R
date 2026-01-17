@@ -235,9 +235,214 @@ list(
   # )
 
   # ===========================================================================
+  # DATA ACQUISITION TARGETS - MORTALITY
+  # ===========================================================================
+
+  # NCHS Deaths data (1968-2023) - downloads and caches by age, sex, cause
+  tar_target(
+    nchs_deaths_raw,
+    {
+      years <- 1968:2023
+      all_deaths <- data.table::rbindlist(lapply(years, function(yr) {
+        cache_file <- sprintf("data/cache/nchs_deaths/deaths_by_age_sex_cause_%d.rds", yr)
+        if (file.exists(cache_file)) {
+          dt <- readRDS(cache_file)
+          dt[, year := yr]
+          dt
+        } else {
+          dt <- fetch_nchs_deaths_by_age(yr)
+          dt[, year := yr]
+          dt
+        }
+      }))
+      all_deaths
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # Census population for mortality calculations (both sexes, ages 0-100)
+  tar_target(
+    census_population_both,
+    {
+      cache_file <- "data/cache/census/population_by_age_sex_1980_2023.rds"
+      if (file.exists(cache_file)) {
+        readRDS(cache_file)
+      } else {
+        fetch_census_population_all(
+          years = 1980:2023,
+          ages = 0:100,
+          sex = "both"
+        )
+      }
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # Total births by year for q0 calculation
+  tar_target(
+    nchs_births_total,
+    {
+      years <- 1968:2023
+      data.table::rbindlist(lapply(years, function(yr) {
+        births_file <- sprintf("data/raw/nchs/births_by_month_%d.rds", yr)
+        if (file.exists(births_file)) {
+          b <- readRDS(births_file)
+          data.table::data.table(year = yr, births = sum(b$births))
+        } else {
+          # Fall back to births_by_age if available
+          age_file <- sprintf("data/raw/nchs/births_by_age_%d.rds", yr)
+          if (file.exists(age_file)) {
+            b <- readRDS(age_file)
+            data.table::data.table(year = yr, births = sum(b$births))
+          } else {
+            NULL
+          }
+        }
+      }))
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # ===========================================================================
+  # MORTALITY SUBPROCESS TARGETS
+  # ===========================================================================
+
+  # Step 1: Calculate historical central death rates (mx) by age, sex, cause
+  tar_target(
+    mortality_mx_historical,
+    calculate_central_death_rates(
+      deaths = nchs_deaths_raw,
+      population = census_population_both,
+      by_cause = TRUE
+    )
+  ),
+
+  # Step 2: Calculate total mx (sum across causes)
+  tar_target(
+    mortality_mx_total,
+    calculate_total_death_rates(mortality_mx_historical)
+  ),
+
+  # Step 3: Calculate historical AAx (annual percentage reduction)
+  # Uses weighted regression over 2008-2019 period (weights are hardcoded per SSA spec)
+  tar_target(
+    mortality_aax_historical,
+    calculate_annual_reduction_rates(
+      mx = mortality_mx_historical,
+      start_year = config_assumptions$mortality$regression_start_year,
+      end_year = config_assumptions$mortality$regression_end_year,
+      by_cause = TRUE
+    )
+  ),
+
+  # Step 4: Get starting mx values (fitted values from regression at base year)
+  tar_target(
+    mortality_mx_starting,
+    calculate_starting_mx(
+      aax_results = mortality_aax_historical,
+      base_year = config_assumptions$mortality$base_year
+    )
+  ),
+
+  # Step 5: Run full mortality projection
+  tar_target(
+    mortality_mx_projected,
+    run_mortality_projection(
+      deaths = nchs_deaths_raw,
+      population = census_population_both,
+      base_year = config_assumptions$mortality$base_year,
+      projection_end = config_assumptions$metadata$projection_period$end_year,
+      by_cause = FALSE
+    )
+  ),
+
+  # Step 6: Calculate qx from mx (including q0 using births)
+  tar_target(
+    mortality_qx_historical,
+    {
+      # Get years with population data
+      pop_years <- unique(census_population_both$year)
+      mx_filtered <- mortality_mx_total[year %in% pop_years]
+
+      # Calculate qx for ages 1+ from mx
+      qx_from_mx <- convert_mx_to_qx(mx_filtered, max_age = 119)
+
+      # Calculate q0 using deaths/births
+      infant_deaths <- nchs_deaths_raw[age == 0, .(deaths = sum(deaths)), by = .(year, sex)]
+      q0 <- merge(infant_deaths, nchs_births_total, by = "year", all.x = TRUE)
+      q0 <- q0[!is.na(births)]  # Only years with births data
+      # Use 51.2% male assumption until sex-specific births available
+      q0[sex == "male", births_sex := births * 0.512]
+      q0[sex == "female", births_sex := births * 0.488]
+      q0[, qx := deaths / births_sex]
+      q0 <- q0[, .(year, age = 0L, sex, qx)]
+
+      # Combine q0 with qx for ages 1+
+      qx_ages1plus <- qx_from_mx[age >= 1, .(year, age, sex, qx)]
+      result <- data.table::rbindlist(list(q0, qx_ages1plus), use.names = TRUE)
+      data.table::setorder(result, year, sex, age)
+      result
+    }
+  ),
+
+  # Step 7: Calculate life tables from qx
+  tar_target(
+    mortality_life_tables,
+    calculate_life_table(
+      qx = mortality_qx_historical,
+      radix = 100000,
+      max_age = 119
+    )
+  ),
+
+  # Step 8: Calculate life expectancy at key ages
+  tar_target(
+    mortality_life_expectancy,
+    calculate_life_expectancy(
+      life_table = mortality_life_tables,
+      at_ages = c(0, 65)
+    )
+  ),
+
+  # ===========================================================================
+  # MORTALITY VALIDATION TARGETS
+  # ===========================================================================
+
+  # Load TR2025 historical qx for validation
+  tar_target(
+    tr2025_qx_historical,
+    load_tr2025_death_probs_hist(sex = "both")
+  ),
+
+  # Load TR2025 life tables for validation
+  tar_target(
+    tr2025_life_tables,
+    load_tr2025_life_tables_hist(sex = "both")
+  ),
+
+  # Validate qx against TR2025
+  tar_target(
+    mortality_qx_validation,
+    validate_qx_against_tr2025(
+      qx_calculated = mortality_qx_historical,
+      years = 2010:2019,
+      tolerance = 0.05
+    )
+  ),
+
+  # Validate life expectancy against TR2025
+  tar_target(
+    mortality_ex_validation,
+    validate_life_expectancy_against_tr2025(
+      life_table = mortality_life_tables,
+      at_ages = c(0, 65),
+      tolerance = 0.5  # 0.5 year tolerance
+    )
+  ),
+
+  # ===========================================================================
   # PLACEHOLDER: Future process targets will be added here
   # ===========================================================================
-  # - Mortality subprocess targets
   # - Immigration subprocess targets
   # - Historical population targets
   # - Marriage/Divorce targets

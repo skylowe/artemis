@@ -1143,6 +1143,7 @@ convert_mx_to_qx <- function(mx, max_age = 119) {
   checkmate::assert_names(names(mx), must.include = c("age", "sex", "mx"))
 
   dt <- data.table::copy(mx)
+  has_year <- "year" %in% names(dt)
 
   # For ages 0-99: standard formula qx = mx / (1 + 0.5*mx)
   dt[age <= 99, qx := mx / (1 + 0.5 * mx)]
@@ -1150,60 +1151,74 @@ convert_mx_to_qx <- function(mx, max_age = 119) {
   # Define growth rates by sex
   growth_rates <- c(male = 1.05, female = 1.06)
 
-  # Process ages 100+ for each sex separately using extrapolation from q98/q99
+  # Determine grouping: by year if present, otherwise single group
+  if (has_year) {
+    years <- unique(dt$year)
+  } else {
+    years <- NA  # Single pass
+  }
+
+  # Process ages 100+ for each year/sex combination
   results_list <- list()
+  list_idx <- 1
 
-  for (sex_val in c("male", "female")) {
-    growth_rate <- growth_rates[sex_val]
+  for (yr in years) {
+    for (sex_val in c("male", "female")) {
+      growth_rate <- growth_rates[sex_val]
 
-    # Get q98 and q99 for this sex (these should be valid from mx calculation)
-    q98_val <- dt[sex == sex_val & age == 98, qx][1]
-    q99_val <- dt[sex == sex_val & age == 99, qx][1]
-
-    if (!is.na(q98_val) && !is.na(q99_val) && q98_val > 0) {
-      ratio <- q99_val / q98_val
-
-      # Build qx series for ages 100+
-      qx_series <- numeric(max_age - 99)
-      prev_qx <- q99_val
-
-      for (i in seq_along(qx_series)) {
-        age_x <- 99 + i
-
-        if (age_x <= 104) {
-          # Transition formula for ages 100-104
-          multiplier <- ratio * (104 - age_x) / 5 + growth_rate * (age_x - 99) / 5
-        } else {
-          # Simple growth formula for ages 105+
-          multiplier <- growth_rate
-        }
-
-        new_qx <- prev_qx * multiplier
-        qx_series[i] <- pmin(new_qx, 1.0)
-        prev_qx <- qx_series[i]
+      # Get q98 and q99 for this sex (and year if applicable)
+      if (has_year && !is.na(yr)) {
+        q98_val <- dt[sex == sex_val & age == 98 & year == yr, qx][1]
+        q99_val <- dt[sex == sex_val & age == 99 & year == yr, qx][1]
+      } else {
+        q98_val <- dt[sex == sex_val & age == 98, qx][1]
+        q99_val <- dt[sex == sex_val & age == 99, qx][1]
       }
 
-      # Create data for ages 100+
-      ages_100_plus <- data.table::data.table(
-        age = 100:max_age,
-        sex = sex_val,
-        qx = qx_series
-      )
-      results_list[[sex_val]] <- ages_100_plus
+      if (!is.na(q98_val) && !is.na(q99_val) && q98_val > 0) {
+        ratio <- q99_val / q98_val
+
+        # Build qx series for ages 100+
+        qx_series <- numeric(max_age - 99)
+        prev_qx <- q99_val
+
+        for (i in seq_along(qx_series)) {
+          age_x <- 99 + i
+
+          if (age_x <= 104) {
+            # Transition formula for ages 100-104
+            multiplier <- ratio * (104 - age_x) / 5 + growth_rate * (age_x - 99) / 5
+          } else {
+            # Simple growth formula for ages 105+
+            multiplier <- growth_rate
+          }
+
+          new_qx <- prev_qx * multiplier
+          qx_series[i] <- pmin(new_qx, 1.0)
+          prev_qx <- qx_series[i]
+        }
+
+        # Create data for ages 100+
+        ages_100_plus <- data.table::data.table(
+          age = 100:max_age,
+          sex = sex_val,
+          qx = qx_series
+        )
+        if (has_year && !is.na(yr)) {
+          ages_100_plus[, year := yr]
+        }
+        results_list[[list_idx]] <- ages_100_plus
+        list_idx <- list_idx + 1
+      }
     }
   }
 
   # Combine ages 100+ results
   if (length(results_list) > 0) {
-    dt_100_plus <- data.table::rbindlist(results_list)
+    dt_100_plus <- data.table::rbindlist(results_list, fill = TRUE)
 
     # Remove any existing ages 100+ from dt (they have NA or bad mx)
     dt <- dt[age < 100]
-
-    # Add the extrapolated ages 100+
-    # First, get columns from dt to match
-    common_cols <- intersect(names(dt), names(dt_100_plus))
-    dt_100_plus <- dt_100_plus[, ..common_cols]
 
     # Add any missing columns with NA
     for (col in setdiff(names(dt), names(dt_100_plus))) {
@@ -1214,14 +1229,26 @@ convert_mx_to_qx <- function(mx, max_age = 119) {
   }
 
   # Female qx capped at male qx if crossover occurs at very old ages
-  male_qx_lookup <- dt[sex == "male", .(age, male_qx = qx)]
+  # Must merge by age AND year (if present) to avoid cartesian join
+  if (has_year) {
+    male_qx_lookup <- dt[sex == "male", .(year, age, male_qx = qx)]
+    merge_keys <- c("year", "age")
+  } else {
+    male_qx_lookup <- dt[sex == "male", .(age, male_qx = qx)]
+    merge_keys <- "age"
+  }
+
   if (nrow(male_qx_lookup) > 0 && any(dt$sex == "female")) {
-    dt <- merge(dt, male_qx_lookup, by = "age", all.x = TRUE)
+    dt <- merge(dt, male_qx_lookup, by = merge_keys, all.x = TRUE)
     dt[sex == "female" & !is.na(male_qx) & !is.na(qx), qx := pmin(qx, male_qx)]
     dt[, male_qx := NULL]
   }
 
-  data.table::setorder(dt, sex, age)
+  if (has_year) {
+    data.table::setorder(dt, year, sex, age)
+  } else {
+    data.table::setorder(dt, sex, age)
+  }
 
   cli::cli_alert_success("Converted mx to qx for {nrow(dt)} records (ages 0-{max_age})")
 
