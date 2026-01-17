@@ -62,6 +62,19 @@
 - Updated `fetch_civilian_population()` and `fetch_civilian_noninst_population()` to use ACS PUMS for 2005-2023
 - Data available at single-year-of-age level for ages 0-99
 
+**DMDC Armed Forces Overseas Integration (January 17, 2026):**
+- Created `R/data_acquisition/dmdc_armed_forces.R` with:
+  - `fetch_armed_forces_overseas()` - combines troopdata + ACS PUMS for age/sex detail
+  - `get_armed_forces_overseas_total()` - quick lookup for overseas totals
+- Data sources:
+  - `troopdata` R package: Total overseas troops by year (1950-2024)
+  - ACS PUMS (MIL=1): Age/sex distribution of active duty military
+- Updated `fetch_resident_usaf_population()` to use real USAF data instead of proxy
+- Validation:
+  - 2019 overseas troops: 205,326 (troopdata) vs 205,324 (our estimate)
+  - 2024 overseas troops: 164,732
+  - Adds ~0.06% to resident population (concentrated in ages 17-65)
+
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
 

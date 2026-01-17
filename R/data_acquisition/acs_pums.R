@@ -485,11 +485,14 @@ fetch_acs_pums_civilian_noninst <- function(years,
 fetch_acs_pums_civilian_noninst_year <- function(year, ages, api_key) {
   base_url <- sprintf("https://api.census.gov/data/%d/acs/acs1/pums", year)
 
-  # Query AGEP, SEX, MIL, TYPE (housing unit/GQ type), PWGTP
-  # TYPE: 1 = Housing unit, 2 = Institutional GQ, 3 = Noninstitutional GQ
+  # Variable name changed between years:
+  # - 2005-2019: TYPE (1 = Housing unit, 2 = Institutional GQ, 3 = Noninstitutional GQ)
+  # - 2021-2023: TYPEHUGQ (same values)
+  gq_var <- if (year >= 2021) "TYPEHUGQ" else "TYPE"
+
   req <- httr2::request(base_url) |>
     httr2::req_url_query(
-      get = "AGEP,SEX,MIL,TYPE,PWGTP",
+      get = paste0("AGEP,SEX,MIL,", gq_var, ",PWGTP"),
       key = api_key
     ) |>
     httr2::req_timeout(300) |>
@@ -513,7 +516,12 @@ fetch_acs_pums_civilian_noninst_year <- function(year, ages, api_key) {
   dt[, age := as.integer(AGEP)]
   dt[, sex_code := as.integer(SEX)]
   dt[, mil_code := as.integer(MIL)]
-  dt[, gq_type := as.integer(TYPE)]
+  # Handle both variable names
+  if (gq_var == "TYPEHUGQ") {
+    dt[, gq_type := as.integer(TYPEHUGQ)]
+  } else {
+    dt[, gq_type := as.integer(TYPE)]
+  }
   dt[, weight := as.numeric(PWGTP)]
 
   # Map sex codes
@@ -522,8 +530,8 @@ fetch_acs_pums_civilian_noninst_year <- function(year, ages, api_key) {
 
   # Filter to civilian noninstitutionalized:
   # 1. Civilian: MIL != 1 (not on active duty) or NA (age < 17)
-  # 2. Noninstitutionalized: TYPE != 2 (not in institutional GQ)
-  #    TYPE: 1 = Housing unit, 2 = Institutional GQ, 3 = Noninstitutional GQ
+  # 2. Noninstitutionalized: gq_type != 2 (not in institutional GQ)
+  #    Values: 1 = Housing unit, 2 = Institutional GQ, 3 = Noninstitutional GQ
   dt <- dt[(is.na(mil_code) | mil_code != 1) & (is.na(gq_type) | gq_type != 2)]
 
   # Filter to requested ages

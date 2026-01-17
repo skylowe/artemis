@@ -169,6 +169,10 @@ fetch_resident_population <- function(years, ages, reference_date, cache_dir) {
 #' Fetches U.S. resident population plus armed forces overseas.
 #' This is the base population used for Social Security area calculations.
 #'
+#' Uses:
+#' - Census PEP for resident population
+#' - troopdata + ACS PUMS for armed forces overseas by age/sex
+#'
 #' @keywords internal
 fetch_resident_usaf_population <- function(years, ages, reference_date, cache_dir) {
   cli::cli_alert_info("Fetching resident + armed forces overseas population...")
@@ -185,60 +189,74 @@ fetch_resident_usaf_population <- function(years, ages, reference_date, cache_di
     return(cached[year %in% years & age %in% ages])
   }
 
-  # For 2020+, use the Vintage file which includes armed forces
-  years_2020s <- years[years >= 2020 & years <= 2024]
-  years_pre2020 <- years[years < 2020]
+  # Step 1: Get resident population
+  cli::cli_alert("Fetching resident population...")
+  resident_data <- fetch_resident_population(years, ages, reference_date, cache_dir)
 
-  results <- list()
-
-  # 2020-2024: Use NC-EST file (includes armed forces overseas)
-  if (length(years_2020s) > 0) {
-    result_2020s <- fetch_resident_usaf_2020s(years_2020s, ages, reference_date, cache_dir)
-    if (!is.null(result_2020s)) {
-      results[["2020s"]] <- result_2020s
-    }
+  if (is.null(resident_data) || nrow(resident_data) == 0) {
+    cli::cli_abort("Could not retrieve resident population")
   }
 
-  # Pre-2020: Use PEP API/files (resident population)
-  # Note: For pre-2020, we may need to add armed forces estimates separately
-  # For now, use resident as approximation (armed forces overseas is small ~200-400k)
-  if (length(years_pre2020) > 0) {
-    if (reference_date == "jul1") {
-      result_pre2020 <- fetch_census_population_both_sexes(
-        years = years_pre2020,
-        ages = ages,
-        cache_dir = cache_dir
-      )
-    } else {
-      # January 1 interpolation
-      all_years <- c(min(years_pre2020) - 1, years_pre2020, max(years_pre2020))
-      all_years <- all_years[all_years >= 1980 & all_years < 2020]
+  # Step 2: Get armed forces overseas by age and sex
+  cli::cli_alert("Fetching armed forces overseas...")
 
-      jul1_data <- fetch_census_population_both_sexes(
-        years = all_years,
-        ages = ages,
-        cache_dir = cache_dir
-      )
-      result_pre2020 <- interpolate_jul1_to_jan1(jul1_data, years_pre2020)
-    }
+  # Military ages typically 17-65, but we filter to requested ages
+  mil_ages <- intersect(ages, 17:65)
 
-    if (!is.null(result_pre2020)) {
-      results[["pre2020"]] <- result_pre2020
-    }
+  usaf_data <- tryCatch({
+    fetch_armed_forces_overseas(
+      years = years,
+      ages = mil_ages,
+      cache_dir = file.path(cache_dir, "..", "dmdc")
+    )
+  }, error = function(e) {
+    cli::cli_alert_warning("Could not fetch armed forces overseas: {conditionMessage(e)}")
+    cli::cli_alert_info("Using resident only (armed forces overseas ~0.1% of population)")
+    NULL
+  })
+
+  # Step 3: Combine resident + armed forces overseas
+  if (!is.null(usaf_data) && nrow(usaf_data) > 0) {
+    cli::cli_alert("Combining resident population with armed forces overseas...")
+
+    # Merge and add populations
+    # First, ensure both have same columns
+    resident_data <- resident_data[, .(year, age, sex, population)]
+    usaf_data <- usaf_data[, .(year, age, sex, population)]
+
+    # For ages with USAF data, add to resident
+    # For ages without USAF data (< 17 or > 65), use resident only
+    combined <- merge(
+      resident_data,
+      usaf_data,
+      by = c("year", "age", "sex"),
+      all.x = TRUE,
+      suffixes = c("_resident", "_usaf")
+    )
+
+    # Replace NA USAF with 0
+    combined[is.na(population_usaf), population_usaf := 0]
+
+    # Total = resident + USAF
+    combined[, population := population_resident + population_usaf]
+    combined[, population_resident := NULL]
+    combined[, population_usaf := NULL]
+
+    result <- combined
+  } else {
+    # Fallback: use resident only
+    result <- resident_data
   }
 
-  if (length(results) == 0) {
-    return(NULL)
-  }
-
-  combined <- data.table::rbindlist(results, use.names = TRUE, fill = TRUE)
-  data.table::setorder(combined, year, sex, age)
+  data.table::setorder(result, year, sex, age)
 
   # Cache result
   dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(combined, cache_file)
+  saveRDS(result, cache_file)
 
-  combined
+  cli::cli_alert_success("Retrieved resident + USAF population")
+
+  result
 }
 
 #' Fetch resident + USAF population for 2020s

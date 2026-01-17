@@ -57,7 +57,9 @@
       "WebFetch(domain:www.dhs.gov)",
       "WebFetch(domain:ohss.dhs.gov)",
       "Bash(wget:*)",
-      "Bash(__NEW_LINE_3abb3c5f7ee05c15__ echo \"\")"
+      "Bash(__NEW_LINE_3abb3c5f7ee05c15__ echo \"\")",
+      "WebFetch(domain:dwp.dmdc.osd.mil)",
+      "WebFetch(domain:download.militaryonesource.mil)"
     ]
   }
 }
