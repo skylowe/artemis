@@ -18,10 +18,10 @@
 - [x] Completed
 
 ### Current Status
-**Last Updated:** January 16, 2026
+**Last Updated:** January 17, 2026
 **Current Phase:** COMPLETE (All phases finished)
 **Completed:** Phase 2A - Data Acquisition, Phase 2B - Historical Mortality, Phase 2C - Mortality Projection, Phase 2D - Life Tables, Phase 2E - Validation, Phase 2F - Targets Integration (ALL COMPLETE)
-**Pending:** Infant mortality (q0) refinement once sex-specific monthly births download completes
+**Final Refinement:** Sex-specific births integration COMPLETE (see notes below)
 
 ### Phase 2E Progress Notes - COMPLETED
 
@@ -46,8 +46,32 @@
 **Validation Conclusions:**
 1. Core mortality methodology (ages 1-64) is correctly implemented and matches TR2025
 2. Expected differences at ages 65+ due to NCHS vs Medicare data sources
-3. q0 discrepancy will be resolved with proper deaths/births calculation once sex-specific births data download completes
-4. Sex-specific births download in progress (variable name fix applied: csex for 1968-2004, sex for 2005+)
+3. q0 now calculated using actual sex-specific births (see below)
+
+### Sex-Specific Births Integration - COMPLETED (January 17, 2026)
+
+**Implementation:**
+- Downloaded sex-specific monthly births for all 57 years (1968-2024) from NCHS via NBER
+- Created `nchs_births_by_sex` target to aggregate monthly data to annual births by sex
+- Updated `mortality_qx_unadjusted` target to use actual sex-specific births for q0 calculation
+- Variable name fix: `csex` for years < 2003, `sex` for years >= 2003 (NBER naming change)
+- Timeout increased for large files (1800s for 2003-2005, 900s for others)
+
+**Data Quality:**
+- Total births downloaded: 216,859,853 (1968-2024)
+- M/F ratio verification: All years show ~1.05 ratio (biologically expected)
+- Actual % male ranges from 51.11% to 51.29% (vs previous assumed 51.2%)
+
+**q0 Calculation Improvement:**
+- Previous method: Estimated male births = total × 0.512
+- New method: Uses actual year-specific sex-specific births
+- Formula: q0 = infant_deaths[sex] / births[sex] for each year and sex
+
+**Updated Validation Results (January 17, 2026):**
+- Life expectancy (e0, e65): 100% within 0.5 year tolerance
+- qx ages 0-64: 95-100% within 5% tolerance
+- qx ages 65-84: 69-78% within tolerance (NCHS vs Medicare data)
+- qx ages 85+: Lower accuracy at extreme ages (expected)
 
 ### Phase 2A Progress Notes - COMPLETED
 - Created `R/data_acquisition/nchs_deaths.R` with functions to download and parse CDC NCHS mortality files

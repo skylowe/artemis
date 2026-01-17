@@ -278,11 +278,11 @@ list(
     cue = tar_cue(mode = "thorough")
   ),
 
-  # Total births by year for q0 calculation
+  # Total births by year for q0 calculation (legacy - kept for compatibility)
   tar_target(
     nchs_births_total,
     {
-      years <- 1968:2023
+      years <- 1968:2024
       data.table::rbindlist(lapply(years, function(yr) {
         births_file <- sprintf("data/raw/nchs/births_by_month_%d.rds", yr)
         if (file.exists(births_file)) {
@@ -297,6 +297,25 @@ list(
           } else {
             NULL
           }
+        }
+      }))
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # Sex-specific births by year for accurate q0 calculation
+  tar_target(
+    nchs_births_by_sex,
+    {
+      years <- 1968:2024
+      data.table::rbindlist(lapply(years, function(yr) {
+        births_file <- sprintf("data/raw/nchs/births_by_month_sex_%d.rds", yr)
+        if (file.exists(births_file)) {
+          b <- readRDS(births_file)
+          # Aggregate monthly data to annual by sex
+          b[, .(births = sum(births)), by = .(year, sex)]
+        } else {
+          NULL
         }
       }))
     },
@@ -368,15 +387,14 @@ list(
       # Calculate qx for ages 1+ from mx
       qx_from_mx <- convert_mx_to_qx(mx_filtered, max_age = 119)
 
-      # Calculate q0 using deaths/births (also filter to pop_years)
+      # Calculate q0 using deaths/births with actual sex-specific births
       infant_deaths <- nchs_deaths_raw[age == 0 & year %in% pop_years,
                                        .(deaths = sum(deaths)), by = .(year, sex)]
-      q0 <- merge(infant_deaths, nchs_births_total, by = "year", all.x = TRUE)
+
+      # Use actual sex-specific births data
+      q0 <- merge(infant_deaths, nchs_births_by_sex, by = c("year", "sex"), all.x = TRUE)
       q0 <- q0[!is.na(births)]  # Only years with births data
-      # Use 51.2% male assumption until sex-specific births available
-      q0[sex == "male", births_sex := births * 0.512]
-      q0[sex == "female", births_sex := births * 0.488]
-      q0[, qx := deaths / births_sex]
+      q0[, qx := deaths / births]
       q0 <- q0[, .(year, age = 0L, sex, qx)]
 
       # Combine q0 with qx for ages 1+

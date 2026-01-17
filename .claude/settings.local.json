@@ -56,7 +56,8 @@
       "WebFetch(domain:rdrr.io)",
       "WebFetch(domain:www.dhs.gov)",
       "WebFetch(domain:ohss.dhs.gov)",
-      "Bash(wget:*)"
+      "Bash(wget:*)",
+      "Bash(__NEW_LINE_3abb3c5f7ee05c15__ echo \"\")"
     ]
   }
 }

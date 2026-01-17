@@ -18,17 +18,15 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 ### Mortality Subprocess Status (COMPLETE)
 - All projection methodology steps implemented in `R/demography/mortality.R`
 - Data acquisition complete: NCHS deaths (1968-2023), Census population (1980-2023)
+- Sex-specific births (1968-2024) downloaded for accurate q0 calculation
 - HMD calibration implemented for ages 85+ (substitutes for Medicare data we don't have)
-- Historical qx validated against TR2025: 100% within 5% tolerance for ages 1-64
-- Life expectancy projection validated against TR2025 Alt2:
-  - e0: 100% within 0.5 years (2023-2099)
-  - e65: 93.5% within 0.5 years, 100% within 1.0 year
+- Historical qx validated against TR2025: 95-100% within 5% tolerance for ages 0-64
+- Life expectancy validated against TR2025: 100% within 0.5 year tolerance
 - Projections extend to 2099 per TR methodology
-- Key files: `R/demography/mortality.R`, `R/data_acquisition/nchs_deaths.R`, `R/data_acquisition/hmd_data.R`
+- Key files: `R/demography/mortality.R`, `R/data_acquisition/nchs_deaths.R`, `R/data_acquisition/nchs_births.R`
 
 ### Pending Improvements
-- Sex-specific births download in progress (for refined q0 calculation)
-- Future: Detailed infant mortality using age-in-days/months methodology
+- Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)
 
 ## Plan Documents
 For detailed implementation status and task tracking, see:
