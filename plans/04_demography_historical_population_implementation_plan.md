@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 17, 2026
-**Current Phase:** Phase 4B - ACS and IPUMS Data Acquisition (IN PROGRESS)
-**Next Step:** Phase 4C - Other Data Sources
+**Current Phase:** Phase 4B - ACS and IPUMS Data Acquisition (COMPLETED)
+**Next Step:** Phase 4C - Other Data Sources (OPM, SSA, DHS)
 
 ### Phase 4A Progress Notes - COMPLETED (January 17, 2026)
 
@@ -75,7 +75,7 @@
   - 2024 overseas troops: 164,732
   - Adds ~0.06% to resident population (concentrated in ages 17-65)
 
-### Phase 4B Progress Notes - IN PROGRESS (January 17, 2026)
+### Phase 4B Progress Notes - COMPLETED (January 17, 2026)
 
 **ACS PUMS Marital Status Functions:**
 - Added `fetch_acs_pums_civilian_noninst_marital()` in `R/data_acquisition/acs_pums.R`
@@ -109,9 +109,18 @@
 - Note: IPUMS extracts require server-side processing (can take hours)
 
 **IPUMS Marriage Grids:**
-- `fetch_ipums_marriage_grids()` placeholder function created
-- Full implementation requires additional variables (SPLOC, RELATE, SERIAL)
-- Lower priority - ACS grids available for 2006+ which is primary period needed
+- `fetch_ipums_marriage_grids()` fully implemented with SPLOC spouse linking
+- Variables: AGE, SEX, MARST, SPLOC, SERIAL, PERNUM, PERWT
+- Uses SPLOC (spouse's person number in household) to link married couples
+- Extract ID 3 submitted to IPUMS servers
+
+**IPUMS Extracts Status (January 17, 2026):**
+- Extract 2 (Marital Status): 7 samples (1940-2000), status = COMPLETED
+  - 1940: 130.3M, 1950: 152.2M, 1960: 179.3M, 1970: 203.0M, 1980: 226.9M, 1990: 248.1M, 2000: 281.4M
+  - Cached to `data/cache/ipums/ipums_marital_status_all.rds`
+- Extract 3 (Marriage Grids): 7 samples (1940-2000), status = COMPLETED
+  - 1940: 28.0M, 1950: 35.6M, 1960: 40.3M, 1970: 44.3M, 1980: 49.7M, 1990: TBD, 2000: 56.9M marriages
+  - Cached to `data/cache/ipums/ipums_marriage_grids_all.rds`
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
@@ -1117,8 +1126,8 @@ validate_o_against_dhs <- function(o_pop, dhs_estimates)
 | [x] | 4B.4 | Implement ACS marriage grid fetcher | 4B.1 | fetch_acs_marriage_grids() |
 | [x] | 4B.5 | Fetch ACS marriage grids (2006-2023) | 4B.4 | Cached grids (17 years) |
 | [x] | 4B.6 | Implement IPUMS historical data fetcher | None | ipums_historical.R |
-| [~] | 4B.7 | Fetch IPUMS marital status (1940-2000) | 4B.6 | Pending extract submission |
-| [~] | 4B.8 | Fetch IPUMS marriage grids (1940-2000) | 4B.6 | Placeholder (requires SPLOC, RELATE) |
+| [x] | 4B.7 | Fetch IPUMS marital status (1940-2000) | 4B.6 | 7 census years cached |
+| [x] | 4B.8 | Fetch IPUMS marriage grids (1940-2000) | 4B.6 | 7 census years cached |
 
 ### Phase 4C: Other Data Sources
 
