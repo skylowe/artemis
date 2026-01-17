@@ -61,7 +61,9 @@
       "WebFetch(domain:dwp.dmdc.osd.mil)",
       "WebFetch(domain:download.militaryonesource.mil)",
       "WebFetch(domain:www.ssa.gov)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "WebFetch(domain:govinfo.library.unt.edu)",
+      "Bash(pdftotext:*)"
     ]
   }
 }
