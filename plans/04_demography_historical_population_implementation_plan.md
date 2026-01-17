@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 17, 2026
-**Current Phase:** Phase 4C - Other Data Sources (COMPLETED)
-**Next Step:** Phase 4D - Core Population Calculations
+**Current Phase:** Phase 4D - Core Population Calculations (COMPLETED)
+**Next Step:** Phase 4E - Marital Status Calculations
 
 ### Phase 4A Progress Notes - COMPLETED (January 17, 2026)
 
@@ -182,6 +182,45 @@
 - Uses Census 2000 decennial data with interpolation to ACS 2006
 - `fetch_marital_status_full_range()` - combines 2000-2005 + 2006-2023
 - Extends marital status coverage from 2006 back to 2000
+
+### Phase 4D Progress Notes - COMPLETED (January 17, 2026)
+
+**Implementation:**
+- Created `R/demography/historical_population.R` with main entry point `calculate_historical_population()`
+- Implements Equation 1.4.1: P^z_{x,s} = USAF + UC + TERR + FED + DEP + BEN + OTH
+- Key functions:
+  - `gather_population_components()` - fetches all input data
+  - `calculate_tab_year_populations()` - calculates ages 0-84 for tab years
+  - `build_up_ages_85_plus()` - estimates elderly population using survival method
+  - `interpolate_populations()` - fills non-tab years using Census data or interpolation
+  - `validate_historical_population()` - compares against TR2025
+
+**Equation 1.4.1 Components:**
+- USAF: Census resident + armed forces overseas (335.4M for 2022)
+- UC: Net census undercount adjustment (~1.4M, ~0.4% for 2022)
+- TERR: Territory populations - PR, VI, GU, MP, AS (~3.5M)
+- FED: Federal civilian employees overseas (~30K)
+- DEP: Dependents of military and federal employees (~100K)
+- BEN: Residual beneficiaries abroad (~700K)
+- OTH: Other citizens overseas (~400K)
+
+**Validation Results (2019-2022):**
+| Year | Calculated | TR2025 | Difference |
+|------|------------|--------|------------|
+| 2019 | 335,263,570 | 335,637,330 | -0.11% |
+| 2020 | 337,108,109 | 336,676,148 | +0.13% |
+| 2021 | 338,206,626 | 337,872,645 | +0.10% |
+| 2022 | 341,882,678 | 340,587,396 | +0.38% |
+
+- Mean absolute error: 0.18%
+- All years within 1% tolerance: YES
+
+**Technical Notes:**
+- Tab years: 1940, 1950, 1956, 1960, 1969-2009, 2022
+- Modern years (1980+) use Census PEP API data directly
+- Pre-1980 years use historical estimates with age distribution interpolation
+- Data caching reduces API calls on subsequent runs
+- Main bottleneck: ACS PUMS downloads for armed forces age/sex distribution
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
@@ -1200,15 +1239,15 @@ validate_o_against_dhs <- function(o_pop, dhs_estimates)
 | [x] | 4C.4 | Compile undercount factors | Research | census_undercount.R |
 | [x] | 4C.5 | Compile historical pre-1980 data | Archives | historical_static.R |
 
-### Phase 4D: Core Population Calculations
+### Phase 4D: Core Population Calculations - COMPLETED (January 17, 2026)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 4D.1 | Implement tab year population calculation | 4A, 4C | historical_population.R |
-| [ ] | 4D.2 | Implement 85+ build-up | 4D.1, Mortality | Ages 85+ populations |
-| [ ] | 4D.3 | Implement inter-tab interpolation | 4D.1, 4D.2 | Full time series |
-| [ ] | 4D.4 | Calculate P_x_s (Eq 1.4.1) | 4D.1-4D.3 | Total population |
-| [ ] | 4D.5 | Validate P_x_s against TR2025 | 4D.4, TR2025 | Validation report |
+| [x] | 4D.1 | Implement tab year population calculation | 4A, 4C | historical_population.R |
+| [x] | 4D.2 | Implement 85+ build-up | 4D.1, Mortality | Ages 85+ populations |
+| [x] | 4D.3 | Implement inter-tab interpolation | 4D.1, 4D.2 | Full time series |
+| [x] | 4D.4 | Calculate P_x_s (Eq 1.4.1) | 4D.1-4D.3 | Total population |
+| [x] | 4D.5 | Validate P_x_s against TR2025 | 4D.4, TR2025 | Validation report |
 
 ### Phase 4E: Marital Status Calculations
 

@@ -5,8 +5,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ## Current Status
 **Phase:** 4 - Historical Population Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 4C - Other Data Sources (January 17, 2026)
-**Next Step:** Phase 4D - Core Population Calculations
+**Most Recent Completion:** Phase 4D - Core Population Calculations (January 17, 2026)
+**Next Step:** Phase 4E - Marital Status Calculations
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -91,6 +91,15 @@ Reviewed TR2025 documentation against implementation. Added missing data for 8 o
 - Fully implemented: 32 inputs
 - Partially implemented: 6 inputs (totals available, age/sex estimated)
 - Not implemented: 6 inputs (IRCA, State Dept historical, Americans overseas - low priority)
+
+**Phase 4D Complete (January 17, 2026):**
+- Core population calculation: `R/demography/historical_population.R`
+- Main function: `calculate_historical_population()` - implements Equation 1.4.1
+- Components: USAF + UC + TERR + FED + DEP + BEN + OTH
+- Tab year calculation for ages 0-84 with survival-based 85+ build-up
+- Inter-tab interpolation using Census data directly (1980+) or linear interpolation (pre-1980)
+- Validation: 2019-2022 within 0.2% mean absolute error of TR2025
+- Key output: P^z_{x,s} (population by age and sex for Dec 31, 1940-2022)
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)

@@ -43,3 +43,4 @@ Thumbs.db
 /.venv/lib
 /.venv
 /data/cache
+/data/dmdc
