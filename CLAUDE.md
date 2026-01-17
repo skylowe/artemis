@@ -4,9 +4,9 @@
 R-based replication of the SSA Office of the Chief Actuary's long-range OASDI projection model. Uses `{targets}` for pipeline orchestration and `{renv}` for dependency management.
 
 ## Current Status
-**Phase:** 3 - LPR Immigration Subprocess (NOT STARTED)
-**Most Recent Completion:** Phase 2 - Mortality Subprocess (validated against TR2025)
-**Next Step:** Implement LPR Immigration subprocess (data acquisition from DHS)
+**Phase:** 3 - LPR Immigration Subprocess (COMPLETE)
+**Most Recent Completion:** Phase 3 - LPR Immigration Subprocess (validated against TR2025)
+**Next Step:** Phase 4 - Temporary/Unlawful Immigration or Population Projections
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -25,8 +25,24 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - Projections extend to 2099 per TR methodology
 - Key files: `R/demography/mortality.R`, `R/data_acquisition/nchs_deaths.R`, `R/data_acquisition/nchs_births.R`
 
+### LPR Immigration Subprocess Status (COMPLETE)
+- Core projection functions in `R/demography/lpr_immigration.R` and `R/demography/legal_emigration.R`
+- Data acquisition: DHS expanded tables (2006-2023), CBO migration data (2021-2099)
+- Age-sex distributions calculated from DHS 2016-2020 reference years
+- Beers interpolation converts 5-year age groups to single years
+- LPR immigration matches TR2025 assumptions: 1,213,000 (2025-26), 1,050,000 (2027+)
+- Emigration = 25% of LPR immigration per TR methodology
+- Net LPR immigration: 909,750 (2025-26), 787,500 (2027+)
+- 11 targets integrated into pipeline, all passing validation
+- Key files: `R/demography/lpr_immigration.R`, `R/demography/legal_emigration.R`, `R/data_acquisition/dhs_immigration.R`, `R/data_acquisition/cbo_migration.R`
+
+**Methodology Deviations from TR2025:**
+1. Emigration distribution uses CBO 2021-2024 data instead of unpublished Census 1980-1990 estimates
+2. Refugee/asylee reclassification not implemented (DHS expanded tables don't separate by refugee status)
+
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)
+- Optional: Historical DHS data (1941-1972), IRCA legalizations (low priority)
 
 ## Plan Documents
 For detailed implementation status and task tracking, see:

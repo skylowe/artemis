@@ -528,9 +528,153 @@ list(
   ),
 
   # ===========================================================================
+  # DATA ACQUISITION TARGETS - IMMIGRATION
+  # ===========================================================================
+
+  # DHS LPR immigration data (2006-2023)
+  # Age-sex distributions for new arrivals and adjustments of status
+  tar_target(
+    dhs_lpr_data,
+    {
+      cache_file <- "data/cache/dhs_immigration/dhs_lpr_all_years.rds"
+      if (file.exists(cache_file)) {
+        readRDS(cache_file)
+      } else {
+        cli::cli_abort("DHS data not cached - run fetch_dhs_lpr_data_multi() first")
+      }
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # CBO migration data (for emigration distribution)
+  tar_target(
+    cbo_migration_data,
+    load_cbo_migration(
+      file_path = "data/raw/cbo/grossMigration_byYearAgeSexStatusFlow.csv"
+    ),
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # ===========================================================================
+  # LPR IMMIGRATION SUBPROCESS TARGETS (Hybrid B+C Approach)
+  # ===========================================================================
+  # Uses CBO data for age-sex distributions, DHS for NEW/AOS ratio, TR2025 for totals
+  # Produces all 5 required outputs: L (LPR), NEW, AOS, E (Emigration), NL (Net LPR)
+
+  # Step 1: Calculate LPR immigration distribution from CBO data
+  tar_target(
+    lpr_distribution,
+    calculate_lpr_distribution_cbo(
+      cbo_data = cbo_migration_data,
+      reference_years = config_assumptions$immigration$lpr$distribution_years
+    )
+  ),
+
+  # Step 2: Calculate emigration distribution from CBO data
+  tar_target(
+    emigration_distribution,
+    calculate_emigration_distribution_cbo(
+      cbo_data = cbo_migration_data,
+      reference_years = config_assumptions$immigration$emigration$distribution_years
+    )
+  ),
+
+  # Step 3: Calculate NEW/AOS ratio from DHS data
+  tar_target(
+    new_aos_ratio,
+    calculate_new_aos_ratio(
+      dhs_data = load_dhs_lpr_data(),
+      reference_years = config_assumptions$immigration$lpr$new_aos_ratio_years
+    )
+  ),
+
+  # Step 4: Get TR2025 LPR immigration assumptions
+  tar_target(
+    lpr_assumptions,
+    get_tr2025_lpr_assumptions(
+      years = config_assumptions$metadata$projection_period$start_year:
+              config_assumptions$metadata$projection_period$end_year
+    )
+  ),
+
+  # Step 5: Project total LPR immigration (L) by age and sex
+  tar_target(
+    lpr_immigration_projected,
+    project_lpr_immigration(
+      assumptions = lpr_assumptions,
+      distribution = lpr_distribution
+    )
+  ),
+
+  # Step 6: Split LPR into NEW and AOS
+  tar_target(
+    lpr_new_aos_split,
+    split_lpr_new_aos(
+      lpr_immigration = lpr_immigration_projected,
+      new_ratio = new_aos_ratio$new_ratio
+    )
+  ),
+
+  # Extract NEW arrivals
+  tar_target(
+    new_arrivals_projected,
+    lpr_new_aos_split$new_arrivals
+  ),
+
+  # Extract AOS
+  tar_target(
+    aos_projected,
+    lpr_new_aos_split$aos
+  ),
+
+  # Step 7: Project legal emigration (E) by age and sex
+  tar_target(
+    legal_emigration_projected,
+    project_legal_emigration(
+      assumptions = lpr_assumptions,
+      distribution = emigration_distribution
+    )
+  ),
+
+  # Step 8: Calculate net LPR immigration (NL = L - E)
+  tar_target(
+    net_lpr_immigration,
+    calculate_net_lpr(
+      lpr_immigration = lpr_immigration_projected,
+      emigration = legal_emigration_projected
+    )
+  ),
+
+  # ===========================================================================
+  # IMMIGRATION VALIDATION TARGETS
+  # ===========================================================================
+
+  # Comprehensive validation of all 5 LPR outputs
+  tar_target(
+    lpr_immigration_validation,
+    {
+      # Build projection result list for validation
+      projection_result <- list(
+        lpr_immigration = lpr_immigration_projected,
+        new_arrivals = new_arrivals_projected,
+        aos = aos_projected,
+        emigration = legal_emigration_projected,
+        net_lpr = net_lpr_immigration,
+        distributions = list(
+          lpr = lpr_distribution,
+          emigration = emigration_distribution
+        ),
+        new_aos_ratio = new_aos_ratio,
+        assumptions = lpr_assumptions
+      )
+      validate_lpr_outputs(projection_result, tolerance = 0.001)
+    }
+  ),
+
+  # ===========================================================================
   # PLACEHOLDER: Future process targets will be added here
   # ===========================================================================
-  # - Immigration subprocess targets
+  # - Temporary/unlawful immigration subprocess targets
   # - Historical population targets
   # - Marriage/Divorce targets
   # - Projected population targets
