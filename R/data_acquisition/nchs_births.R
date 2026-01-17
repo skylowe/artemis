@@ -93,7 +93,7 @@ fetch_nchs_births_by_age <- function(year, cache_dir = "data/raw/nchs", force_do
   # Set longer timeout for large files (default is 60 seconds)
   # 2005 CSV is 2.6GB, needs extra time
   old_timeout <- getOption("timeout")
-  timeout_seconds <- if (year == 2005) 1800 else 600  # 30 min for 2005, 10 min for others
+  timeout_seconds <- if (year %in% 2003:2005) 1800 else 900  # 30 min for large files (2003-2005), 15 min for others  # 30 min for 2005, 10 min for others
   options(timeout = timeout_seconds)
   on.exit(options(timeout = old_timeout), add = TRUE)
 
@@ -306,7 +306,7 @@ fetch_nchs_births_by_month <- function(year, cache_dir = "data/raw/nchs", force_
   on.exit(unlink(temp_file), add = TRUE)
 
   old_timeout <- getOption("timeout")
-  timeout_seconds <- if (year == 2005) 1800 else 600
+  timeout_seconds <- if (year %in% 2003:2005) 1800 else 900  # 30 min for large files (2003-2005), 15 min for others
   options(timeout = timeout_seconds)
   on.exit(options(timeout = old_timeout), add = TRUE)
 
@@ -485,7 +485,7 @@ fetch_nchs_births_by_month_sex <- function(year, cache_dir = "data/raw/nchs", fo
   on.exit(unlink(temp_file), add = TRUE)
 
   old_timeout <- getOption("timeout")
-  timeout_seconds <- if (year == 2005) 1800 else 600
+  timeout_seconds <- if (year %in% 2003:2005) 1800 else 900  # 30 min for large files (2003-2005), 15 min for others
   options(timeout = timeout_seconds)
   on.exit(options(timeout = old_timeout), add = TRUE)
 
