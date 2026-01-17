@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 17, 2026
-**Current Phase:** Phase 4B - ACS and IPUMS Data Acquisition (COMPLETED)
-**Next Step:** Phase 4C - Other Data Sources (OPM, SSA, DHS)
+**Current Phase:** Phase 4C - Other Data Sources (COMPLETED)
+**Next Step:** Phase 4D - Core Population Calculations
 
 ### Phase 4A Progress Notes - COMPLETED (January 17, 2026)
 
@@ -121,6 +121,39 @@
 - Extract 3 (Marriage Grids): 7 samples (1940-2000), status = COMPLETED
   - 1940: 28.0M, 1950: 35.6M, 1960: 40.3M, 1970: 44.3M, 1980: 49.7M, 1990: TBD, 2000: 56.9M marriages
   - Cached to `data/cache/ipums/ipums_marriage_grids_all.rds`
+
+### Phase 4C Progress Notes - COMPLETED (January 17, 2026)
+
+**SSA Beneficiaries Abroad (`R/data_acquisition/ssa_beneficiaries_abroad.R`):**
+- `fetch_ssa_beneficiaries_abroad()` - reads Table 5.J11 from SSA supplements
+- Data sources: 5.J11_2000_2012.xlsx (historical), supplement13-24.xlsx (2013-2023)
+- Complete time series: 2000-2023 (24 years)
+- Trend: 385,492 (2000) → 703,865 (2023) beneficiaries in foreign countries
+- Includes breakdown by: retired workers, disabled workers, survivors, spouses, children
+
+**OPM Federal Employees Overseas (`R/data_acquisition/opm_federal_employees.R`):**
+- `fetch_opm_federal_employees_overseas()` - federal civilian employees abroad
+- Data: Historical estimates + FedScope reference points (1980-2024)
+- Trend: 55,000 (1980) → 88,160 (2009 peak) → 30,800 (2024)
+- Includes optional dependent estimates (~50% of employees)
+
+**DHS Unauthorized Estimates (`R/data_acquisition/dhs_unauthorized.R`):**
+- `fetch_dhs_unauthorized_estimates()` - unauthorized immigrant population
+- Data: DHS OHSS published estimates (1990-2022)
+- Trend: 3.5M (1990) → 12.2M (2007 peak) → 11.0M (2022)
+- Includes age/sex distribution based on DHS characteristics
+
+**Census Undercount Factors (`R/data_acquisition/census_undercount.R`):**
+- `fetch_census_undercount_factors()` - net undercount by age/sex
+- Coverage: Decennial censuses 1940-2020
+- Based on Census Bureau Demographic Analysis (DA) and Post-Enumeration Survey (PES)
+- Pattern: Higher undercount for young children (5%), slight overcount for elderly (-0.3%)
+
+**Historical Static Data (`R/data_acquisition/historical_static.R`):**
+- `get_territory_historical_population()` - PR, VI, GU, AS, MP populations (1950-2000)
+- `get_pre1950_armed_forces()` - WWII era military overseas estimates
+- `get_population_benchmarks()` - decennial census totals for validation
+- `get_tab_years()` - defines years for precise historical calculation
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
@@ -1133,11 +1166,11 @@ validate_o_against_dhs <- function(o_pop, dhs_estimates)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 4C.1 | Implement OPM federal employees fetcher | None | OPM data |
-| [ ] | 4C.2 | Implement SSA beneficiaries abroad fetcher | None | SSA Supplement data |
-| [ ] | 4C.3 | Implement DHS unauthorized estimates fetcher | None | DHS data |
-| [ ] | 4C.4 | Compile undercount factors | Research | Undercount data |
-| [ ] | 4C.5 | Compile historical pre-1980 data | Archives | Static files |
+| [x] | 4C.1 | Implement OPM federal employees fetcher | None | opm_federal_employees.R |
+| [x] | 4C.2 | Implement SSA beneficiaries abroad fetcher | None | ssa_beneficiaries_abroad.R |
+| [x] | 4C.3 | Implement DHS unauthorized estimates fetcher | None | dhs_unauthorized.R |
+| [x] | 4C.4 | Compile undercount factors | Research | census_undercount.R |
+| [x] | 4C.5 | Compile historical pre-1980 data | Archives | historical_static.R |
 
 ### Phase 4D: Core Population Calculations
 

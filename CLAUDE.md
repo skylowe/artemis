@@ -5,8 +5,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ## Current Status
 **Phase:** 4 - Historical Population Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 4B - ACS and IPUMS Data Acquisition (January 17, 2026)
-**Next Step:** Phase 4C - Other Data Sources (OPM, SSA, DHS)
+**Most Recent Completion:** Phase 4C - Other Data Sources (January 17, 2026)
+**Next Step:** Phase 4D - Core Population Calculations
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -64,6 +64,14 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - Marriage data: 60M (2006) → 66M (2023), avg husband 2.3 years older than wife
 - IPUMS historical fetcher: `R/data_acquisition/ipums_historical.R` for 1940-2000 decennial census
 - Key files: `R/data_acquisition/acs_pums.R`, `R/data_acquisition/ipums_historical.R`
+
+**Phase 4C Complete (January 17, 2026):**
+- SSA beneficiaries abroad: `fetch_ssa_beneficiaries_abroad()` - 385K (2000) → 704K (2023)
+- OPM federal employees overseas: `fetch_opm_federal_employees_overseas()` - 55K (1980) → 31K (2024)
+- DHS unauthorized estimates: `fetch_dhs_unauthorized_estimates()` - 8.5M (2000) → 11M (2022)
+- Census undercount factors: `fetch_census_undercount_factors()` - by age/sex (1940-2020)
+- Historical static data: territory populations, pre-1950 armed forces, tab years
+- Key files: `R/data_acquisition/ssa_beneficiaries_abroad.R`, `opm_federal_employees.R`, `dhs_unauthorized.R`, `census_undercount.R`, `historical_static.R`
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)
