@@ -19,9 +19,9 @@
 
 ### Current Status
 **Last Updated:** January 16, 2026
-**Current Phase:** 3A (Complete - core tasks)
-**Completed:** 3A.1-3A.3, 3A.6 (core data acquisition complete)
-**Pending:** 3A.4-3A.5 (low priority), 3B-3F
+**Current Phase:** 3B (Complete)
+**Completed:** 3A (core), 3B (emigration using CBO data)
+**Pending:** 3A.4-3A.5 (low priority), 3C-3F
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
@@ -812,11 +812,31 @@ validate_distribution <- function(distribution) {
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 3B.1 | Research Census emigration data availability | None | Data assessment |
-| [ ] | 3B.2 | Create or obtain emigration estimates file | 3B.1 | census_emigration.R |
-| [ ] | 3B.3 | Create or obtain conversion factors file | 3B.1 | Static file |
-| [ ] | 3B.4 | Implement Beers interpolation function | None | legal_emigration.R |
-| [ ] | 3B.5 | Test Beers interpolation against known values | 3B.4 | Test results |
+| [x] | 3B.1 | Research Census emigration data availability | None | Data assessment (unavailable) |
+| [x] | 3B.2 | Use CBO migration data for emigration distribution | 3B.1 | cbo_migration.R |
+| [x] | 3B.3 | Create legal emigration projection functions | 3B.2 | legal_emigration.R |
+| [x] | 3B.4 | Test emigration projection against TR2025 | 3B.3 | Validated |
+| [N/A] | 3B.5 | Beers interpolation (not needed - CBO has single-year data) | - | Skipped |
+
+**METHODOLOGY DEVIATION - Emigration Distribution:**
+
+TR2025 methodology uses unpublished Census Bureau estimates of emigration by age and sex
+based on changes between the 1980 and 1990 censuses, with Beers interpolation to convert
+5-year age groups to single years.
+
+**Our implementation uses CBO data instead because:**
+1. Census emigration estimates are unpublished and unavailable
+2. CBO provides LPR+ emigration data by single year of age (no Beers interpolation needed)
+3. CBO data is more recent (2021-2024 vs 1980-1990)
+4. CBO data is from the January 2026 Demographic Outlook report
+
+**What we preserve from TR methodology:**
+- Emigration = 25% of LPR immigration (Trustees assumption)
+- Fixed age-sex distribution applied to aggregate totals
+- Distribution calculated from historical reference period (2021-2024 instead of 1990)
+
+**Data source:** CBO January 2026 "The Demographic Outlook: 2026 to 2056"
+https://www.cbo.gov/publication/61879
 
 ### Phase 3C: Core Immigration Functions
 
