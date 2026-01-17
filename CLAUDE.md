@@ -4,9 +4,9 @@
 R-based replication of the SSA Office of the Chief Actuary's long-range OASDI projection model. Uses `{targets}` for pipeline orchestration and `{renv}` for dependency management.
 
 ## Current Status
-**Phase:** 3 - LPR Immigration Subprocess (COMPLETE)
+**Phase:** 4 - Historical Population Subprocess (PLANNING)
 **Most Recent Completion:** Phase 3 - LPR Immigration Subprocess (validated against TR2025)
-**Next Step:** Phase 4 - Temporary/Unlawful Immigration or Population Projections
+**Next Step:** Phase 4A - Core Census Data Acquisition for Historical Population
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -40,6 +40,17 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 1. Emigration distribution uses CBO 2021-2024 data instead of unpublished Census 1980-1990 estimates
 2. Refugee/asylee reclassification not implemented (DHS expanded tables don't separate by refugee status)
 
+### Historical Population Subprocess Status (PLANNING)
+- **Purpose:** Estimate Social Security area population for Dec 31, 1940 through Dec 31, 2022
+- **Key Outputs:**
+  - P^z_{x,s} - Population by age/sex (Eq 1.4.1)
+  - P^z_{x,s,m} - Population by age/sex/marital status (Eq 1.4.2)
+  - O^z_{x,s} - Temporary/unlawfully present population (Eq 1.4.3)
+  - C^z_{x,s,m} - Civilian noninstitutionalized population (Eq 1.4.4)
+- **Data Requirements:** 44 distinct data inputs from Census, ACS, IPUMS, DHS, OPM, SSA
+- **Validation:** TR2025 population files (SSPopJan, SSPopJul, SSPopDec)
+- **Key files (planned):** `R/demography/historical_population.R`, `R/demography/historical_marital_status.R`
+
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)
 - Optional: Historical DHS data (1941-1972), IRCA legalizations (low priority)
@@ -48,7 +59,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 For detailed implementation status and task tracking, see:
 - `plans/01_demography_fertility_implementation_plan.md` - Demography intro and fertility subprocess
 - `plans/02_demography_mortality_implementation_plan.md` - Mortality subprocess (Phase 2)
-- `plans/03_demography_lpr_immigration_implementation_plan.md` - LPR Immigration subprocess (Phase 3)
+- `plans/03_demography_lpr_immigration_implementation_plan_v2.md` - LPR Immigration subprocess (Phase 3)
+- `plans/04_demography_historical_population_implementation_plan.md` - Historical Population subprocess (Phase 4)
 
 The plan documents contain:
 - Detailed task breakdowns with status checkboxes
