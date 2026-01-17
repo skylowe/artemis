@@ -19,9 +19,9 @@
 
 ### Current Status
 **Last Updated:** January 16, 2026
-**Current Phase:** Phase 2E - Validation and Testing (COMPLETE)
-**Prior Completion:** Phase 2A - Data Acquisition, Phase 2B - Historical Mortality, Phase 2C - Mortality Projection, Phase 2D - Life Tables, Phase 2E - Validation (ALL COMPLETE)
-**Pending:** Infant mortality (q0) refinement once monthly births download completes; Phase 2F targets integration
+**Current Phase:** COMPLETE (All phases finished)
+**Completed:** Phase 2A - Data Acquisition, Phase 2B - Historical Mortality, Phase 2C - Mortality Projection, Phase 2D - Life Tables, Phase 2E - Validation, Phase 2F - Targets Integration (ALL COMPLETE)
+**Pending:** Infant mortality (q0) refinement once sex-specific monthly births download completes
 
 ### Phase 2E Progress Notes - COMPLETED
 
@@ -975,23 +975,62 @@ load_tr2025_life_tables <- function(alternative = "Alt2") {
 **Note on Infant Mortality (q0):**
 Once monthly births download completes (background task in progress), a detailed q0 calculation using deaths by age-in-days/months can be implemented to improve accuracy at age 0.
 
-### Phase 2E: Validation and Testing
+### Phase 2E: Validation and Testing - COMPLETE
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 2E.1 | Create TR2025 validation data loader | Raw data | Validation data |
-| [ ] | 2E.2 | Validate qx against TR2025 | 2C.6, 2E.1 | Validation report |
-| [ ] | 2E.3 | Validate life expectancy against TR2025 | 2D.2, 2E.1 | Validation report |
-| [ ] | 2E.4 | Create unit tests | All functions | test-mortality.R |
-| [ ] | 2E.5 | Run full pipeline validation | All | Validated outputs |
+| [x] | 2E.1 | Create TR2025 validation data loader | Raw data | Validation data |
+| [x] | 2E.2 | Validate qx against TR2025 | 2C.6, 2E.1 | Validation report |
+| [x] | 2E.3 | Validate life expectancy against TR2025 | 2D.2, 2E.1 | Validation report |
+| [x] | 2E.4 | Create unit tests | All functions | test-mortality.R |
+| [x] | 2E.5 | Run full pipeline validation | All | Validated outputs |
 
-### Phase 2F: Targets Integration
+**Phase 2E Implementation Notes (January 2026):**
+- `R/validation/mortality_validation.R` created with validation functions
+- `load_tr2025_death_probs_hist()` - loads historical qx from TR2025
+- `load_tr2025_life_tables_hist()` - loads historical life tables from TR2025
+- `validate_qx_against_tr2025()` - compares calculated qx vs TR2025
+- `validate_life_expectancy_against_tr2025()` - compares life expectancy vs TR2025
+- HMD calibration added for ages 85+ via `adjust_qx_with_hmd()` in mortality.R
+- Projected life expectancy validated against TR2025 Alt2 projections (2023-2099)
+
+**Projected Life Expectancy Validation Results (vs TR2025 Alt2):**
+- e0 (both sexes): 100% within 0.5 years of TR2025 through 2099
+- e65 (both sexes): 93.5% within 0.5 years, 100% within 1.0 year
+- Male e0: max difference -0.33 years (slight underprediction mid-century)
+- Female e0: max difference +0.32 years (slight overprediction by 2099)
+- Male e65: max difference +0.27 years
+- Female e65: max difference +0.63 years by 2099
+
+### Phase 2F: Targets Integration - COMPLETE
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 2F.1 | Add mortality targets to _targets.R | All functions | Pipeline targets |
-| [ ] | 2F.2 | Test full pipeline execution | 2F.1 | Working pipeline |
-| [ ] | 2F.3 | Documentation and cleanup | All | Documented code |
+| [x] | 2F.1 | Add mortality targets to _targets.R | All functions | Pipeline targets |
+| [x] | 2F.2 | Test full pipeline execution | 2F.1 | Working pipeline |
+| [x] | 2F.3 | Documentation and cleanup | All | Documented code |
+
+**Phase 2F Implementation Notes (January 2026):**
+- All mortality targets added to `_targets.R`:
+  - `nchs_deaths_raw` - NCHS deaths data (1968-2023)
+  - `census_population_both` - Census population by age/sex (1980-2023)
+  - `nchs_births_total` - Total births for q0 calculation
+  - `mortality_mx_historical` - Historical central death rates by cause
+  - `mortality_mx_total` - Total mx (sum across causes)
+  - `mortality_aax_historical` - AAx from weighted regression
+  - `mortality_mx_starting` - Starting mx (fitted values from regression)
+  - `mortality_mx_projected` - Full mortality projection
+  - `mortality_qx_unadjusted` - qx before HMD adjustment
+  - `mortality_qx_historical` - qx with HMD calibration for ages 85+
+  - `mortality_life_tables` - Complete period life tables
+  - `mortality_life_expectancy_hist` - Historical life expectancy
+  - `mortality_qx_projected` - Projected qx (2024-2099) with HMD calibration
+  - `mortality_life_tables_projected` - Projected life tables
+  - `mortality_life_expectancy_proj` - Projected life expectancy
+  - `mortality_life_expectancy` - Combined historical + projected (1980-2099)
+  - Validation targets: `tr2025_qx_historical`, `tr2025_life_tables`, `mortality_qx_validation`, `mortality_ex_validation`
+- Pipeline runs successfully with `tar_make()`
+- HMD data acquisition module: `R/data_acquisition/hmd_data.R`
 
 ---
 

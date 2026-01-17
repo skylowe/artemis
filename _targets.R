@@ -408,13 +408,69 @@ list(
     )
   ),
 
-  # Step 8: Calculate life expectancy at key ages
+  # Step 8: Calculate life expectancy at key ages (historical)
   tar_target(
-    mortality_life_expectancy,
+    mortality_life_expectancy_hist,
     calculate_life_expectancy(
       life_table = mortality_life_tables,
       at_ages = c(0, 65)
     )
+  ),
+
+  # ===========================================================================
+  # PROJECTED MORTALITY TARGETS
+  # ===========================================================================
+
+  # Step 9: Extract and adjust projected qx (2024-2099)
+  # The projection already has qx, but we need to apply HMD calibration for ages 85+
+  tar_target(
+    mortality_qx_projected,
+    {
+      # Get projected qx from the projection output
+      qx_proj <- mortality_mx_projected$projected_qx
+
+      # Filter to projection years only (2024+, since 2020-2023 are in historical)
+      qx_proj <- qx_proj[year >= 2024]
+
+      # Apply HMD calibration for ages 85+
+      adjust_qx_with_hmd(
+        qx = qx_proj,
+        transition_age = 85,
+        max_age = 119
+      )
+    }
+  ),
+
+  # Step 10: Calculate projected life tables
+  tar_target(
+    mortality_life_tables_projected,
+    calculate_life_table(
+      qx = mortality_qx_projected,
+      radix = 100000,
+      max_age = 119
+    )
+  ),
+
+  # Step 11: Calculate projected life expectancy
+  tar_target(
+    mortality_life_expectancy_proj,
+    calculate_life_expectancy(
+      life_table = mortality_life_tables_projected,
+      at_ages = c(0, 65)
+    )
+  ),
+
+  # Step 12: Combine historical and projected life expectancy
+  tar_target(
+    mortality_life_expectancy,
+    {
+      combined <- data.table::rbindlist(
+        list(mortality_life_expectancy_hist, mortality_life_expectancy_proj),
+        use.names = TRUE
+      )
+      data.table::setorder(combined, year, sex, age)
+      combined
+    }
   ),
 
   # ===========================================================================

@@ -4,21 +4,31 @@
 R-based replication of the SSA Office of the Chief Actuary's long-range OASDI projection model. Uses `{targets}` for pipeline orchestration and `{renv}` for dependency management.
 
 ## Current Status
-**Phase:** 2A - Mortality Subprocess Data Acquisition (NOT STARTED)
-**Most Recent Completion:** Phase 1 - Fertility Subprocess (validated against TR2025)
-**Next Step:** Phase 2A - Implement NCHS death data acquisition and cause-of-death mapping
+**Phase:** 2 - Mortality Subprocess (COMPLETE)
+**Most Recent Completion:** Phase 2 - Mortality Subprocess (validated against TR2025)
+**Next Step:** Phase 3 - Immigration Subprocess or Population Projections
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
-- Data acquisition complete: NCHS births (1980-2023), Census population (1980-2024)
+- Data acquisition complete: NCHS births (1980-2024), Census population (1980-2024)
 - Validation against TR2025: Historical and projected TFR match within 2% tolerance
 - Ultimate TFR correctly reaches configured target (1.90) at ultimate year
 - Configuration-driven: ultimate rate, years, and other parameters adjustable in `config/assumptions/tr2025.yaml`
 
-### Mortality Subprocess Status (PHASE 2 - NOT STARTED)
-- Implementation plan created: `plans/02_demography_mortality_implementation_plan.md`
-- Validation data available: Death probabilities and life tables in `data/raw/SSA_TR2025/`
-- Key challenges: Multiple data sources, cause-of-death categorization, Whittaker-Henderson smoothing
+### Mortality Subprocess Status (COMPLETE)
+- All projection methodology steps implemented in `R/demography/mortality.R`
+- Data acquisition complete: NCHS deaths (1968-2023), Census population (1980-2023)
+- HMD calibration implemented for ages 85+ (substitutes for Medicare data we don't have)
+- Historical qx validated against TR2025: 100% within 5% tolerance for ages 1-64
+- Life expectancy projection validated against TR2025 Alt2:
+  - e0: 100% within 0.5 years (2023-2099)
+  - e65: 93.5% within 0.5 years, 100% within 1.0 year
+- Projections extend to 2099 per TR methodology
+- Key files: `R/demography/mortality.R`, `R/data_acquisition/nchs_deaths.R`, `R/data_acquisition/hmd_data.R`
+
+### Pending Improvements
+- Sex-specific births download in progress (for refined q0 calculation)
+- Future: Detailed infant mortality using age-in-days/months methodology
 
 ## Plan Documents
 For detailed implementation status and task tracking, see:
