@@ -28,22 +28,30 @@
 - Created `R/data_acquisition/census_historical_population.R` with main entry point `fetch_census_historical_population()`
 - Supports 4 population concepts: resident, resident_usaf, civilian, civilian_noninst
 - Supports 2 reference dates: jul1 (July 1) and jan1 (January 1, via interpolation)
-- Territory populations via `fetch_territory_populations()` with fallback to hardcoded estimates
+- Territory populations via `fetch_territory_populations()` using real Census API data
 
 **Data Fetched:**
 - Resident/USAF populations: 1980-2024 (July 1), 1981-2024 (January 1)
 - Civilian populations: 2010-2024 (July 1), 2011-2024 (January 1)
 - Civilian noninstitutionalized: 2010-2024 (July 1), 2011-2024 (January 1)
-- Territory populations: 2010-2023 (PR, VI, GU, MP, AS) via hardcoded estimates
+- Territory populations: 2010-2023 (PR, VI, GU, MP, AS) via Census PEP and IDB APIs
 
 **Validation:**
 - Population totals match expected U.S. figures (227M in 1980 → 337M in 2023)
 - Age structure reasonable (73M ages 0-17, 204M ages 18-64, 59M ages 65+ in 2023)
+- Territory populations match Census decennial counts within 2.5% (mid-year estimate vs April 1)
+  - PR 2010: 3,721,525 (exact match with PEP API)
+  - VI 2010: 108,357 vs 106,405 (1.8% diff)
+  - GU 2010: 163,334 vs 159,358 (2.5% diff)
+  - MP 2010: 55,121 vs 53,883 (2.3% diff)
+  - AS 2010: 55,529 vs 55,519 (0.02% diff)
 
 **Notes:**
 - Civilian and civilian noninstitutionalized currently use resident as proxy (~1% difference)
-- Census IDB API requires different parameters; using hardcoded territory estimates as fallback
 - True USAF (armed forces overseas) data uses resident as proxy (~0.1% difference)
+- Territory data sources:
+  - Puerto Rico: Census PEP API (state FIPS 72) for 2010-2019, IDB for other years
+  - Other territories (VI, GU, MP, AS): Census International Database (IDB) API
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.

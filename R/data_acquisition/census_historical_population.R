@@ -575,21 +575,27 @@ convert_jan1_to_dec31 <- function(jan1_data, shift_years = TRUE) {
 #' Fetches population estimates for U.S. territories:
 #' Puerto Rico, Virgin Islands, Guam, Northern Mariana Islands, American Samoa.
 #'
+#' Uses two data sources:
+#' - Puerto Rico: Census PEP API (better quality, single-year-of-age data)
+#' - Other territories: Census International Database (IDB) API
+#'
 #' @param years Integer vector of years
 #' @param territories Character vector of territory codes (default: all)
+#' @param by_age Logical: if TRUE, returns age-sex detail (PR only for 2010-2019)
 #' @param cache_dir Character: cache directory
 #'
-#' @return data.table with columns: year, territory, population
-#'   (age-sex detail available for recent years only)
+#' @return data.table with columns: year, territory, population (and optionally age, sex)
 #'
 #' @export
 fetch_territory_populations <- function(years,
                                          territories = c("PR", "VI", "GU", "MP", "AS"),
+                                         by_age = FALSE,
                                          cache_dir = here::here("data/raw/census")) {
   cli::cli_alert_info("Fetching territory populations...")
 
   # Check cache
-  cache_file <- file.path(cache_dir, "territory_populations.rds")
+  cache_suffix <- if (by_age) "_by_age" else ""
+  cache_file <- file.path(cache_dir, paste0("territory_populations", cache_suffix, ".rds"))
 
   if (file.exists(cache_file)) {
     cli::cli_alert_success("Loading cached territory populations")
@@ -600,17 +606,23 @@ fetch_territory_populations <- function(years,
     }
   }
 
-  # Territory population sources:
-  # 1. Census International Database (IDB) for annual totals 1951-2023
-  # 2. ACS for recent detailed data (2005+)
-  # 3. Decennial census for historical detail
-
   results <- list()
 
-  # Fetch from Census International Database API
-  idb_result <- fetch_territory_populations_idb(years, territories, cache_dir)
-  if (!is.null(idb_result)) {
-    results[["idb"]] <- idb_result
+  # Puerto Rico: Use PEP API (better quality data with age detail)
+  if ("PR" %in% territories) {
+    pr_result <- fetch_puerto_rico_population_pep(years, by_age, cache_dir)
+    if (!is.null(pr_result) && nrow(pr_result) > 0) {
+      results[["PR"]] <- pr_result
+    }
+  }
+
+  # Other territories: Use IDB API
+  other_territories <- setdiff(territories, "PR")
+  if (length(other_territories) > 0) {
+    idb_result <- fetch_territory_populations_idb(years, other_territories, cache_dir)
+    if (!is.null(idb_result) && nrow(idb_result) > 0) {
+      results[["IDB"]] <- idb_result
+    }
   }
 
   if (length(results) == 0) {
@@ -627,141 +639,200 @@ fetch_territory_populations <- function(years,
   combined[year %in% years & territory %in% territories]
 }
 
+#' Fetch Puerto Rico population from Census PEP API
+#'
+#' @description
+#' Puerto Rico is included in the Census Population Estimates Program (PEP)
+#' as state FIPS code 72. This provides better quality data than IDB.
+#'
+#' @keywords internal
+fetch_puerto_rico_population_pep <- function(years, by_age = FALSE, cache_dir) {
+  api_key <- get_api_key("CENSUS_KEY")
+
+  cli::cli_alert("Fetching Puerto Rico population from PEP API...")
+
+  results <- list()
+
+  # Split years by data source
+  years_2010_2019 <- years[years >= 2010 & years <= 2019]
+  years_other <- years[years < 2010 | years > 2019]
+
+  # 2010-2019: Use PEP charage API
+
+  if (length(years_2010_2019) > 0) {
+    # Date code mapping: 3=2010, 4=2011, ..., 12=2019
+    date_map <- setNames(as.character(3:12), as.character(2010:2019))
+
+    for (yr in years_2010_2019) {
+      tryCatch({
+        url <- "https://api.census.gov/data/2019/pep/charage"
+
+        if (by_age) {
+          # Get age-sex detail
+          req <- httr2::request(url) |>
+            httr2::req_url_query(
+              get = "POP,AGE,SEX",
+              `for` = "state:72",
+              DATE_CODE = date_map[[as.character(yr)]],
+              key = api_key
+            ) |>
+            httr2::req_timeout(60) |>
+            httr2::req_user_agent("ARTEMIS OASDI Projection Model (R)")
+
+          resp <- api_request_with_retry(req)
+          check_api_response(resp, paste("Census PEP API PR", yr))
+
+          json_data <- httr2::resp_body_json(resp, simplifyVector = TRUE)
+
+          if (length(json_data) >= 2) {
+            dt <- data.table::as.data.table(json_data[-1, , drop = FALSE])
+            data.table::setnames(dt, json_data[1, ])
+
+            dt[, year := yr]
+            dt[, territory := "PR"]
+            dt[, population := as.numeric(POP)]
+            dt[, age := as.integer(AGE)]
+            dt[, sex_code := as.integer(SEX)]
+            dt[, sex := fifelse(sex_code == 1, "male", fifelse(sex_code == 2, "female", "both"))]
+
+            # Filter to individual sexes (not both)
+            dt <- dt[sex_code %in% c(1, 2)]
+
+            results[[paste0("PR_", yr)]] <- dt[, .(year, territory, age, sex, population)]
+          }
+        } else {
+          # Get total population only
+          req <- httr2::request(url) |>
+            httr2::req_url_query(
+              get = "POP,NAME",
+              `for` = "state:72",
+              DATE_CODE = date_map[[as.character(yr)]],
+              key = api_key
+            ) |>
+            httr2::req_timeout(60) |>
+            httr2::req_user_agent("ARTEMIS OASDI Projection Model (R)")
+
+          resp <- api_request_with_retry(req)
+          check_api_response(resp, paste("Census PEP API PR", yr))
+
+          json_data <- httr2::resp_body_json(resp, simplifyVector = TRUE)
+
+          if (length(json_data) >= 2) {
+            pop <- as.numeric(json_data[2, 1])
+            results[[paste0("PR_", yr)]] <- data.table::data.table(
+              year = yr,
+              territory = "PR",
+              population = pop
+            )
+          }
+        }
+      }, error = function(e) {
+        cli::cli_alert_warning("Failed to fetch PR for {yr}: {conditionMessage(e)}")
+      })
+    }
+  }
+
+  # Other years: Fall back to IDB
+  if (length(years_other) > 0) {
+    cli::cli_alert_info("PR years outside 2010-2019 will use IDB API")
+    idb_result <- fetch_territory_populations_idb(years_other, "PR", cache_dir)
+    if (!is.null(idb_result) && nrow(idb_result) > 0) {
+      results[["PR_IDB"]] <- idb_result
+    }
+  }
+
+  if (length(results) > 0) {
+    data.table::rbindlist(results, use.names = TRUE, fill = TRUE)
+  } else {
+    NULL
+  }
+}
+
 #' Fetch territory populations from Census International Database
+#'
+#' @description
+#' Fetches population data from Census IDB API. The IDB provides population
+#' estimates for all countries and territories worldwide.
 #'
 #' @keywords internal
 fetch_territory_populations_idb <- function(years, territories, cache_dir) {
-  # Census IDB API endpoint
-  # https://api.census.gov/data/timeseries/idb/5year
-
   api_key <- get_api_key("CENSUS_KEY")
 
-  # Map territory codes to FIPS/IDB codes
+  # Territory GENC codes (ISO 3166-1 alpha-2)
   territory_map <- list(
-    "PR" = list(name = "Puerto Rico", fips = "72"),
-    "VI" = list(name = "Virgin Islands", fips = "78"),
-    "GU" = list(name = "Guam", fips = "66"),
-    "MP" = list(name = "Northern Mariana Islands", fips = "69"),
-    "AS" = list(name = "American Samoa", fips = "60")
+    "PR" = list(name = "Puerto Rico", genc = "PR"),
+    "VI" = list(name = "Virgin Islands", genc = "VI"),
+    "GU" = list(name = "Guam", genc = "GU"),
+    "MP" = list(name = "Northern Mariana Islands", genc = "MP"),
+    "AS" = list(name = "American Samoa", genc = "AS")
   )
 
   results <- list()
 
-  for (terr_code in territories) {
-    if (!terr_code %in% names(territory_map)) {
-      cli::cli_alert_warning("Unknown territory code: {terr_code}")
-      next
-    }
+  # Fetch all years at once from IDB by getting all data and filtering
+  cli::cli_alert("Fetching territory populations from Census IDB API...")
 
-    terr_info <- territory_map[[terr_code]]
-
-    cli::cli_alert("Fetching {terr_info$name} population...")
-
-    # Try Census IDB API
+  for (yr in years) {
     tryCatch({
-      # IDB endpoint for 5-year age groups
-      url <- "https://api.census.gov/data/timeseries/idb/5year"
+      # IDB 1year endpoint gives single-year age data
+      url <- "https://api.census.gov/data/timeseries/idb/1year"
 
       req <- httr2::request(url) |>
         httr2::req_url_query(
-          get = "POP,NAME,GENC",
-          GENC = terr_info$fips,
-          YR = paste(years, collapse = ","),
+          get = "POP,NAME,GENC,AGE,SEX",
+          YR = as.character(yr),
           key = api_key
         ) |>
-        httr2::req_timeout(60) |>
+        httr2::req_timeout(120) |>
         httr2::req_user_agent("ARTEMIS OASDI Projection Model (R)")
 
       resp <- api_request_with_retry(req)
-      check_api_response(resp, paste("Census IDB API", terr_info$name))
+      check_api_response(resp, paste("Census IDB API", yr))
 
       json_data <- httr2::resp_body_json(resp, simplifyVector = TRUE)
 
       if (length(json_data) >= 2) {
-        headers <- json_data[1, ]
-        data_rows <- json_data[-1, , drop = FALSE]
-        dt <- data.table::as.data.table(data_rows)
-        data.table::setnames(dt, headers)
+        dt <- data.table::as.data.table(json_data[-1, , drop = FALSE])
+        data.table::setnames(dt, json_data[1, ])
 
-        dt[, territory := terr_code]
-        dt[, year := as.integer(YR)]
         dt[, population := as.numeric(POP)]
+        dt[, age := as.integer(AGE)]
+        dt[, sex_code := as.integer(SEX)]
+        dt[, year := yr]
 
-        results[[terr_code]] <- dt[, .(year, territory, population)]
+        # Filter to requested territories using GENC codes
+        terr_genc <- sapply(territories, function(t) {
+          if (t %in% names(territory_map)) territory_map[[t]]$genc else t
+        })
+        dt <- dt[GENC %in% terr_genc]
+
+        if (nrow(dt) > 0) {
+          # Map GENC back to territory codes
+          for (t in territories) {
+            if (t %in% names(territory_map)) {
+              dt[GENC == territory_map[[t]]$genc, territory := t]
+            }
+          }
+
+          # Filter to SEX=0 (both sexes combined) to avoid double-counting
+          # IDB returns SEX=0 (both), SEX=1 (male), SEX=2 (female)
+          # Summing all would double-count since SEX=0 already has the total
+          dt <- dt[sex_code == 0]
+
+          # Sum across ages to get total population by territory
+          totals <- dt[, .(population = sum(population)), by = .(year, territory)]
+          results[[as.character(yr)]] <- totals
+        }
       }
     }, error = function(e) {
-      cli::cli_alert_warning("Failed to fetch {terr_info$name}: {conditionMessage(e)}")
+      cli::cli_alert_warning("Failed to fetch IDB data for {yr}: {conditionMessage(e)}")
     })
   }
 
   if (length(results) > 0) {
-    data.table::rbindlist(results, use.names = TRUE)
-  } else {
-    # Fallback: use hardcoded estimates for major territories
-    get_hardcoded_territory_populations(years, territories)
-  }
-}
-
-#' Hardcoded territory population estimates (fallback)
-#'
-#' @keywords internal
-get_hardcoded_territory_populations <- function(years, territories) {
-  # Approximate populations for major territories
-  # Source: Census Bureau estimates
-
-  territory_data <- data.table::data.table(
-    territory = c("PR", "PR", "PR", "VI", "VI", "VI", "GU", "GU", "GU", "MP", "MP", "AS", "AS"),
-    year = c(2010, 2020, 2023, 2010, 2020, 2023, 2010, 2020, 2023, 2010, 2020, 2010, 2020),
-    population = c(
-      3721525, 3285874, 3205691,  # PR
-      106405, 87146, 87417,       # VI
-      159358, 168801, 172952,     # GU
-      53883, 51659,               # MP
-      55519, 49710                # AS
-    )
-  )
-
-  # Filter to requested
-  result <- territory_data[territory %in% territories]
-
-  # Interpolate for missing years
-  if (nrow(result) > 0) {
-    all_results <- list()
-    for (terr in unique(result$territory)) {
-      terr_data <- result[territory == terr]
-      for (yr in years) {
-        if (yr %in% terr_data$year) {
-          all_results[[paste(terr, yr)]] <- terr_data[year == yr]
-        } else {
-          # Linear interpolation
-          before <- terr_data[year < yr][order(-year)][1]
-          after <- terr_data[year > yr][order(year)][1]
-
-          if (nrow(before) > 0 && nrow(after) > 0) {
-            frac <- (yr - before$year) / (after$year - before$year)
-            pop <- before$population + frac * (after$population - before$population)
-            all_results[[paste(terr, yr)]] <- data.table::data.table(
-              territory = terr,
-              year = yr,
-              population = round(pop)
-            )
-          } else if (nrow(before) > 0) {
-            all_results[[paste(terr, yr)]] <- data.table::data.table(
-              territory = terr,
-              year = yr,
-              population = before$population
-            )
-          } else if (nrow(after) > 0) {
-            all_results[[paste(terr, yr)]] <- data.table::data.table(
-              territory = terr,
-              year = yr,
-              population = after$population
-            )
-          }
-        }
-      }
-    }
-    data.table::rbindlist(all_results, use.names = TRUE)
+    combined <- data.table::rbindlist(results, use.names = TRUE)
+    cli::cli_alert_success("Retrieved IDB data for {length(unique(combined$territory))} territories, {length(unique(combined$year))} years")
+    combined
   } else {
     NULL
   }
