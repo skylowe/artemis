@@ -4,9 +4,9 @@
 R-based replication of the SSA Office of the Chief Actuary's long-range OASDI projection model. Uses `{targets}` for pipeline orchestration and `{renv}` for dependency management.
 
 ## Current Status
-**Phase:** 2 - Mortality Subprocess (COMPLETE)
+**Phase:** 3 - LPR Immigration Subprocess (NOT STARTED)
 **Most Recent Completion:** Phase 2 - Mortality Subprocess (validated against TR2025)
-**Next Step:** Phase 3 - Immigration Subprocess or Population Projections
+**Next Step:** Implement LPR Immigration subprocess (data acquisition from DHS)
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -34,6 +34,7 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 For detailed implementation status and task tracking, see:
 - `plans/01_demography_fertility_implementation_plan.md` - Demography intro and fertility subprocess
 - `plans/02_demography_mortality_implementation_plan.md` - Mortality subprocess (Phase 2)
+- `plans/03_demography_lpr_immigration_implementation_plan.md` - LPR Immigration subprocess (Phase 3)
 
 The plan documents contain:
 - Detailed task breakdowns with status checkboxes
