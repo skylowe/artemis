@@ -820,7 +820,10 @@ get_pre1950_armed_forces <- function(years = 1940:1949) {
   )
 
   target_years <- years
-  data[year %in% target_years, .(year, overseas_troops, source)]
+  result <- data[year %in% target_years, .(year, overseas_troops, source)]
+  # Rename to match expected column name from DMDC data
+  data.table::setnames(result, "overseas_troops", "population")
+  result
 }
 
 # =============================================================================

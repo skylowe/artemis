@@ -71,7 +71,8 @@
       "WebFetch(domain:data.opm.gov)",
       "WebFetch(domain:www.fedscope.opm.gov)",
       "WebFetch(domain:sgp.fas.org)",
-      "WebFetch(domain:www.everycrsreport.com)"
+      "WebFetch(domain:www.everycrsreport.com)",
+      "Bash(xargs:*)"
     ]
   }
 }

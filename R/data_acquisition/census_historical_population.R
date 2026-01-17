@@ -185,8 +185,10 @@ fetch_resident_usaf_population <- function(years, ages, reference_date, cache_di
 
   if (file.exists(cache_file)) {
     cli::cli_alert_success("Loading cached resident+USAF population")
-    cached <- readRDS(cache_file)
-    return(cached[year %in% years & age %in% ages])
+    cached <- data.table::setDT(readRDS(cache_file))
+    requested_years <- years
+    requested_ages <- ages
+    return(cached[year %in% requested_years & age %in% requested_ages])
   }
 
   # Step 1: Get resident population

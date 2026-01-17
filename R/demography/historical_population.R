@@ -281,9 +281,9 @@ estimate_pre1980_population <- function(years, ages) {
   result_list <- lapply(years, function(yr) {
     year_dist <- interpolate_age_distribution(yr, decennial_dist)
 
-    # Get totals for this year by sex
-    male_total <- totals[year == yr & sex == "male", total]
-    female_total <- totals[year == yr & sex == "female", total]
+    # Get totals for this year by sex (data is in wide format: year, male, female, total)
+    male_total <- totals[year == yr, male]
+    female_total <- totals[year == yr, female]
 
     if (length(male_total) == 0) male_total <- NA_real_
     if (length(female_total) == 0) female_total <- NA_real_
@@ -293,7 +293,7 @@ estimate_pre1980_population <- function(years, ages) {
       year = yr,
       age = age,
       sex = sex,
-      population = fifelse(
+      population = data.table::fifelse(
         sex == "male",
         proportion * male_total,
         proportion * female_total
@@ -646,17 +646,45 @@ get_other_citizens_overseas <- function(years) {
 
 #' Fetch Armed Forces Overseas Data
 #'
+#' @description
+#' Fetches armed forces overseas population data for all years.
+#' Uses static estimates for pre-1950 and DMDC/troopdata for 1950+.
+#'
 #' @keywords internal
 fetch_armed_forces_for_historical <- function(years) {
-  tryCatch({
-    # Use DMDC data from dmdc_armed_forces.R
-    af <- fetch_armed_forces_overseas(years = years)
-    af
-  }, error = function(e) {
-    cli::cli_alert_warning("Armed forces data error: {conditionMessage(e)}")
-    # Fallback to static estimates
-    get_pre1950_armed_forces(years)
-  })
+  result_list <- list()
+
+  # Pre-1950: Use static historical estimates
+  pre1950_years <- years[years < 1950]
+  if (length(pre1950_years) > 0) {
+    pre1950_data <- get_pre1950_armed_forces(pre1950_years)
+    result_list$pre1950 <- pre1950_data
+  }
+
+  # 1950+: Use DMDC/troopdata
+  post1950_years <- years[years >= 1950]
+  if (length(post1950_years) > 0) {
+    post1950_data <- tryCatch({
+      af <- fetch_armed_forces_overseas(years = post1950_years)
+      af
+    }, error = function(e) {
+      cli::cli_alert_warning("Armed forces data error (1950+): {conditionMessage(e)}")
+      # Return empty data.table if fetch fails
+      data.table::data.table(year = integer(), population = numeric(), source = character())
+    })
+
+    if (nrow(post1950_data) > 0) {
+      result_list$post1950 <- post1950_data
+    }
+  }
+
+  if (length(result_list) == 0) {
+    return(data.table::data.table(year = integer(), population = numeric(), source = character()))
+  }
+
+  result <- data.table::rbindlist(result_list, fill = TRUE)
+  data.table::setorder(result, year)
+  result
 }
 
 # =============================================================================
@@ -979,7 +1007,7 @@ build_up_ages_85_plus <- function(tab_years,
       year = yr,
       age = age,
       sex = sex,
-      population = fifelse(
+      population = data.table::fifelse(
         sex == "male",
         prop * totals_85plus[sex == "male", total_85plus],
         prop * totals_85plus[sex == "female", total_85plus]
