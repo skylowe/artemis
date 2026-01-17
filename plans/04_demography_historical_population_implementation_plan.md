@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 17, 2026
-**Current Phase:** Phase 4A - Core Census Data Acquisition (COMPLETE)
-**Next Step:** Phase 4B - ACS and IPUMS Data Acquisition
+**Current Phase:** Phase 4B - ACS and IPUMS Data Acquisition (IN PROGRESS)
+**Next Step:** Phase 4C - Other Data Sources
 
 ### Phase 4A Progress Notes - COMPLETED (January 17, 2026)
 
@@ -74,6 +74,44 @@
   - 2019 overseas troops: 205,326 (troopdata) vs 205,324 (our estimate)
   - 2024 overseas troops: 164,732
   - Adds ~0.06% to resident population (concentrated in ages 17-65)
+
+### Phase 4B Progress Notes - IN PROGRESS (January 17, 2026)
+
+**ACS PUMS Marital Status Functions:**
+- Added `fetch_acs_pums_civilian_noninst_marital()` in `R/data_acquisition/acs_pums.R`
+  - Fetches civilian noninstitutionalized population by age, sex, and marital status
+  - Uses MIL + TYPE variables to filter military and institutional GQ
+  - Marital status categories: married_spouse_present, separated, widowed, divorced, never_married
+  - Validated: 262.7M population ages 15-99 (2019)
+  - Available for 2006-2023 (excluding 2020 COVID gap)
+
+**ACS Marriage Grid Functions:**
+- Added `fetch_acs_marriage_grids()` in `R/data_acquisition/acs_pums.R`
+  - Creates husband-age × wife-age marriage grids
+  - Links spouses via SERIALNO (household ID)
+  - Returns 85×85 matrices (ages 15-99)
+  - Helper functions: `summarize_marriage_grid()`, `marriage_grid_to_dt()`
+- Validated for 2019:
+  - 63.5M total marriages
+  - Average husband age: 53.2, wife age: 50.9
+  - Average age difference: 2.3 years (husband older)
+- Data cached for 2006-2023 (17 years, excluding 2020)
+
+**IPUMS Historical Data Functions:**
+- Created `R/data_acquisition/ipums_historical.R`
+  - `fetch_ipums_marital_status()` - downloads decennial census microdata (1940-2000)
+  - `fetch_ipums_extract()` - downloads previously submitted extracts
+  - `get_ipums_extract_status()` - checks extract processing status
+  - `calculate_ipums_marital_proportions()` - converts counts to proportions
+- Uses ipumsr package with IPUMS_API_KEY from .Renviron
+- Sample IDs: us1940a, us1950a, us1960a, us1970a, us1980a, us1990a, us2000a
+- Variables: AGE, SEX, MARST, PERWT
+- Note: IPUMS extracts require server-side processing (can take hours)
+
+**IPUMS Marriage Grids:**
+- `fetch_ipums_marriage_grids()` placeholder function created
+- Full implementation requires additional variables (SPLOC, RELATE, SERIAL)
+- Lower priority - ACS grids available for 2006+ which is primary period needed
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
@@ -1073,14 +1111,14 @@ validate_o_against_dhs <- function(o_pop, dhs_estimates)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 4B.1 | Implement ACS PUMS marital status fetcher | None | acs_marital_status.R |
-| [ ] | 4B.2 | Fetch ACS total population by marital status | 4B.1 | ACS data 2006-2023 |
-| [ ] | 4B.3 | Fetch ACS civ noninst by marital status | 4B.1 | ACS data 2006-2023 |
-| [ ] | 4B.4 | Implement ACS marriage grid fetcher | 4B.1 | Marriage grids |
-| [ ] | 4B.5 | Fetch ACS marriage grids (2006-2023) | 4B.4 | Cached grids |
-| [ ] | 4B.6 | Implement IPUMS historical data fetcher | None | ipums_historical.R |
-| [ ] | 4B.7 | Fetch IPUMS marital status (1940-2000) | 4B.6 | Historical marital data |
-| [ ] | 4B.8 | Fetch IPUMS marriage grids (1940-2000) | 4B.6 | Historical grids |
+| [x] | 4B.1 | Implement ACS PUMS marital status fetcher | None | acs_pums.R (extended) |
+| [x] | 4B.2 | Fetch ACS total population by marital status | 4B.1 | Existing fetch_acs_pums_marital_status() |
+| [x] | 4B.3 | Fetch ACS civ noninst by marital status | 4B.1 | fetch_acs_pums_civilian_noninst_marital() |
+| [x] | 4B.4 | Implement ACS marriage grid fetcher | 4B.1 | fetch_acs_marriage_grids() |
+| [x] | 4B.5 | Fetch ACS marriage grids (2006-2023) | 4B.4 | Cached grids (17 years) |
+| [x] | 4B.6 | Implement IPUMS historical data fetcher | None | ipums_historical.R |
+| [~] | 4B.7 | Fetch IPUMS marital status (1940-2000) | 4B.6 | Pending extract submission |
+| [~] | 4B.8 | Fetch IPUMS marriage grids (1940-2000) | 4B.6 | Placeholder (requires SPLOC, RELATE) |
 
 ### Phase 4C: Other Data Sources
 

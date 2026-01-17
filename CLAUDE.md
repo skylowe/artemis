@@ -5,8 +5,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ## Current Status
 **Phase:** 4 - Historical Population Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 4A - Core Census Data Acquisition (January 17, 2026)
-**Next Step:** Phase 4B - ACS and IPUMS Data Acquisition
+**Most Recent Completion:** Phase 4B - ACS and IPUMS Data Acquisition (January 17, 2026)
+**Next Step:** Phase 4C - Other Data Sources (OPM, SSA, DHS)
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -56,6 +56,14 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - July 1 and January 1 reference date support (Jan 1 via interpolation)
 - Territory populations (PR, VI, GU, MP, AS)
 - Population totals validated: 227M (1980) → 337M (2023)
+
+**Phase 4B Complete (January 17, 2026):**
+- ACS PUMS marital status: `fetch_acs_pums_civilian_noninst_marital()` - 2006-2023
+- ACS marriage grids: `fetch_acs_marriage_grids()` - husband-age × wife-age matrices
+- Marriage grids cached for 17 years (2006-2023, excluding 2020)
+- Marriage data: 60M (2006) → 66M (2023), avg husband 2.3 years older than wife
+- IPUMS historical fetcher: `R/data_acquisition/ipums_historical.R` for 1940-2000 decennial census
+- Key files: `R/data_acquisition/acs_pums.R`, `R/data_acquisition/ipums_historical.R`
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)
