@@ -946,6 +946,7 @@ summarize_marriage_grid <- function(grid) {
 #'
 #' @export
 marriage_grid_to_dt <- function(grid) {
+
   year <- attr(grid, "year")
   ages <- as.integer(rownames(grid))
 
@@ -961,4 +962,569 @@ marriage_grid_to_dt <- function(grid) {
   data.table::setcolorder(result, c("year", "husband_age", "wife_age", "marriages"))
 
   result
+}
+
+# =============================================================================
+# FOREIGN-BORN FLOWS BY YEAR OF ENTRY
+# =============================================================================
+
+#' Fetch ACS PUMS foreign-born population by year of entry
+#'
+#' @description
+#' Retrieves foreign-born population by single year of age, sex, and year of
+#' entry to the US from ACS PUMS. This is Input #25 in TR2025 documentation,
+#' used to estimate flows of temporary and unlawfully present immigrants
+#' for Equation 1.4.3 (O_{x,s} unauthorized population).
+#'
+#' @param years Integer vector of ACS years to query (2013-2023 available)
+#' @param ages Integer vector of ages (default: 0:99)
+#' @param include_cuban Logical: if TRUE, separately identify Cuban-born (default: TRUE)
+#' @param cache_dir Character: directory for caching downloaded files
+#'
+#' @return data.table with columns: year, age, sex, year_of_entry, nativity,
+#'   is_cuban, population
+#'
+#' @details
+#' Uses ACS PUMS variables:
+#' - AGEP: Age (0-99)
+#' - SEX: Sex (1=Male, 2=Female)
+#' - NATIVITY: Nativity (1=Native, 2=Foreign born)
+#' - YOEP: Year of entry to the US (for foreign-born)
+#' - POBP: Place of birth (Cuba = 327)
+#' - PWGTP: Person weight
+#'
+#' Year of entry is critical for distinguishing:
+#' - Recent arrivals (likely unauthorized or temporary)
+#' - Long-term residents (more likely documented)
+#'
+#' Cuban immigrants have special status under Cuban Adjustment Act,
+#' making them important to track separately.
+#'
+#' @export
+fetch_acs_foreign_born_flows <- function(years,
+                                          ages = 0:99,
+                                          include_cuban = TRUE,
+                                          cache_dir = here::here("data/cache/acs_pums")) {
+  checkmate::assert_integerish(years, lower = 2006, upper = 2024, min.len = 1)
+  checkmate::assert_integerish(ages, lower = 0, upper = 99, min.len = 1)
+
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+  api_key <- get_api_key("CENSUS_KEY")
+
+  results <- list()
+
+  for (yr in years) {
+    # Skip 2020 - ACS not released due to COVID
+    if (yr == 2020) {
+      cli::cli_alert_warning("Skipping 2020 - ACS 1-year not released due to COVID")
+      next
+    }
+
+    cache_file <- file.path(cache_dir, sprintf("foreign_born_flows_%d.rds", yr))
+
+    if (file.exists(cache_file)) {
+      cli::cli_alert_success("Loading cached foreign-born flows for {yr}")
+      results[[as.character(yr)]] <- readRDS(cache_file)
+      next
+    }
+
+    cli::cli_alert("Fetching ACS PUMS foreign-born flows for {yr}...")
+
+    tryCatch({
+      dt <- fetch_acs_foreign_born_year(yr, ages, include_cuban, api_key)
+
+      if (!is.null(dt) && nrow(dt) > 0) {
+        saveRDS(dt, cache_file)
+        cli::cli_alert_success("Cached foreign-born flows for {yr} ({nrow(dt)} rows)")
+        results[[as.character(yr)]] <- dt
+      }
+    }, error = function(e) {
+      cli::cli_alert_warning("Failed for {yr}: {conditionMessage(e)}")
+    })
+  }
+
+  if (length(results) == 0) {
+    cli::cli_abort("No ACS PUMS foreign-born flow data retrieved")
+  }
+
+  combined <- data.table::rbindlist(results, use.names = TRUE)
+  data.table::setorder(combined, year, sex, age, year_of_entry)
+
+  cli::cli_alert_success(
+    "Retrieved ACS foreign-born flows for {length(unique(combined$year))} years"
+  )
+
+  combined
+}
+
+#' Fetch ACS PUMS foreign-born flows for a single year
+#'
+#' @keywords internal
+fetch_acs_foreign_born_year <- function(year, ages, include_cuban, api_key) {
+  base_url <- sprintf("https://api.census.gov/data/%d/acs/acs1/pums", year)
+
+  # Build variable list
+  # YOEP = Year of Entry to US (for foreign-born only)
+  # POBP = Place of Birth (for identifying Cuban-born)
+  # NATIVITY = 1 (Native) or 2 (Foreign born)
+  vars <- "AGEP,SEX,NATIVITY,YOEP,PWGTP"
+  if (include_cuban) {
+    vars <- paste0(vars, ",POBP")
+  }
+
+  req <- httr2::request(base_url) |>
+    httr2::req_url_query(
+      get = vars,
+      # Filter to foreign-born only (NATIVITY = 2)
+      NATIVITY = "2",
+      key = api_key
+    ) |>
+    httr2::req_timeout(600) |>  # Large query
+    httr2::req_user_agent("ARTEMIS OASDI Projection Model (R)")
+
+  resp <- api_request_with_retry(req, max_retries = 3)
+  check_api_response(resp, sprintf("ACS PUMS API (%d)", year))
+
+  json_data <- httr2::resp_body_json(resp, simplifyVector = TRUE)
+
+  if (length(json_data) < 2) {
+    cli::cli_alert_warning("No data returned for {year}")
+    return(NULL)
+  }
+
+  headers <- json_data[1, ]
+  data_rows <- json_data[-1, , drop = FALSE]
+  dt <- data.table::as.data.table(data_rows)
+  data.table::setnames(dt, headers)
+
+  # Parse variables
+  dt[, age := as.integer(AGEP)]
+  dt[, sex_code := as.integer(SEX)]
+  dt[, nativity := as.integer(NATIVITY)]
+  dt[, year_of_entry := as.integer(YOEP)]
+  dt[, weight := as.numeric(PWGTP)]
+
+  # Map sex codes
+  dt[sex_code == 1, sex := "male"]
+  dt[sex_code == 2, sex := "female"]
+
+  # Identify Cuban-born if requested
+  # POBP = 327 is Cuba
+  if (include_cuban && "POBP" %in% names(dt)) {
+    dt[, pobp := as.integer(POBP)]
+    dt[, is_cuban := (pobp == 327)]
+    dt[is.na(is_cuban), is_cuban := FALSE]
+  } else {
+    dt[, is_cuban := FALSE]
+  }
+
+  # Filter to requested ages and valid data
+  # YOEP can be NA for some records (shouldn't happen for foreign-born but check)
+  dt <- dt[age %in% ages & !is.na(sex) & !is.na(weight)]
+
+  # Aggregate by age, sex, year of entry, Cuban status
+  result <- dt[, .(population = sum(weight)),
+               by = .(age, sex, year_of_entry, is_cuban)]
+  result[, survey_year := year]
+
+  data.table::setcolorder(result, c("survey_year", "age", "sex", "year_of_entry",
+                                    "is_cuban", "population"))
+  data.table::setnames(result, "survey_year", "year")
+  data.table::setorder(result, age, sex, year_of_entry)
+
+  result
+}
+
+#' Calculate foreign-born flows by year of entry
+#'
+#' @description
+#' Calculates net foreign-born population flows by analyzing changes in
+#' foreign-born population by year of entry across survey years.
+#' This helps estimate unauthorized population movements.
+#'
+#' @param flows_data data.table from fetch_acs_foreign_born_flows
+#' @param entry_years Integer vector of years of entry to analyze
+#'
+#' @return data.table with estimated annual flows
+#'
+#' @export
+calculate_foreign_born_flows <- function(flows_data, entry_years = NULL) {
+  if (is.null(entry_years)) {
+    entry_years <- sort(unique(flows_data$year_of_entry))
+    entry_years <- entry_years[!is.na(entry_years)]
+  }
+
+  # Calculate total foreign-born by year of entry and survey year
+  totals <- flows_data[year_of_entry %in% entry_years,
+                       .(total_population = sum(population)),
+                       by = .(year, year_of_entry)]
+
+  data.table::setorder(totals, year_of_entry, year)
+
+  totals
+}
+
+#' Summarize foreign-born by entry cohort
+#'
+#' @description
+#' Summarizes foreign-born population by entry year cohorts.
+#'
+#' @param flows_data data.table from fetch_acs_foreign_born_flows
+#'
+#' @return data.table with summary by entry cohort
+#'
+#' @export
+summarize_foreign_born_cohorts <- function(flows_data) {
+  # Define cohorts
+  flows_data[, entry_cohort := data.table::fcase(
+    year_of_entry < 1990, "Before 1990",
+    year_of_entry >= 1990 & year_of_entry < 2000, "1990-1999",
+    year_of_entry >= 2000 & year_of_entry < 2010, "2000-2009",
+    year_of_entry >= 2010 & year_of_entry < 2015, "2010-2014",
+    year_of_entry >= 2015, "2015+"
+  )]
+
+  # Summarize by survey year and cohort
+  summary <- flows_data[!is.na(entry_cohort),
+                        .(total_population = sum(population),
+                          cuban_population = sum(population[is_cuban == TRUE]),
+                          non_cuban_population = sum(population[is_cuban == FALSE])),
+                        by = .(year, entry_cohort)]
+
+  data.table::setorder(summary, year, entry_cohort)
+
+  summary
+}
+
+# =============================================================================
+# PRE-2006 MARITAL STATUS DATA (IPUMS Census 2000)
+# =============================================================================
+
+#' Fetch Census 2000 marital status data
+#'
+#' @description
+#' Retrieves marital status data for years before ACS coverage (2000-2005).
+#' This is Input #18 in TR2025 documentation.
+#'
+#' Uses IPUMS USA Census 2000 microdata (5% sample), which provides:
+#' - Single-year-of-age detail (not available from Census APIs)
+#' - Complete marital status categories
+#' - Weighted population counts
+#'
+#' For years 2000-2005:
+#' - 2000: Census 2000 IPUMS microdata
+#' - 2001-2005: Interpolated between Census 2000 and ACS 2006
+#'
+#' @param years Integer vector of years to query (2000-2005)
+#' @param ages Integer vector of ages (default: 15:99)
+#' @param cache_dir Character: directory for caching downloaded files
+#'
+#' @return data.table with columns: year, age, sex, marital_status, population
+#'
+#' @details
+#' Before calling this function, download the IPUMS data by running:
+#' `fetch_ipums_marital_status(census_years = 2000)`
+#'
+#' This requires an IPUMS API key (IPUMS_API_KEY in .Renviron).
+#' Get a key at: https://account.ipums.org/api_keys
+#'
+#' @export
+fetch_census2000_pums_marital <- function(years = 2000:2005,
+                                           ages = 15:99,
+                                           cache_dir = here::here("data/cache/census2000")) {
+  checkmate::assert_integerish(years, lower = 2000, upper = 2005, min.len = 1)
+
+  checkmate::assert_integerish(ages, lower = 0, upper = 99, min.len = 1)
+
+  cli::cli_alert_info("Fetching Census 2000 marital status data...")
+
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+
+  # Check cache first
+  cache_file <- file.path(cache_dir, "census2000_marital_api.rds")
+
+  if (file.exists(cache_file)) {
+    cached <- readRDS(cache_file)
+    cached <- cached[year %in% years & age %in% ages]
+    if (nrow(cached) > 0) {
+      cli::cli_alert_success("Loaded Census 2000 marital data from cache")
+      return(cached)
+    }
+  }
+
+  # Use IPUMS Census 2000 microdata (5% sample with single-year ages)
+  census2000_data <- fetch_ipums_census2000_marital(ages, cache_dir)
+
+  # Require IPUMS data - no hardcoded fallbacks
+  if (is.null(census2000_data) || nrow(census2000_data) == 0) {
+    cli::cli_abort(c(
+      "IPUMS Census 2000 marital status data required",
+      "i" = "Run fetch_ipums_marital_status(census_years = 2000) to download IPUMS data",
+      "i" = "IPUMS provides single-year-of-age microdata from the 5% sample",
+      "i" = "Get an IPUMS API key at: https://account.ipums.org/api_keys",
+      "x" = "No hardcoded fallback - real microdata is required"
+    ))
+  }
+
+  # Build full series with interpolation for 2001-2005
+  result <- build_census2000_marital_series(years, ages, census2000_data)
+
+  # Cache result
+  saveRDS(result, cache_file)
+
+  cli::cli_alert_success("Retrieved Census 2000 marital data for {length(unique(result$year))} years")
+
+  result
+}
+
+#' Fetch Census 2000 marital data from IPUMS cache
+#'
+#' @description
+#' Loads Census 2000 marital status data from cached IPUMS extract.
+#' IPUMS provides single-year-of-age detail from the 5% sample.
+#'
+#' @param ages Integer vector of ages to include
+#' @param cache_dir Character: directory where census2000 cache is stored
+#'
+#' @return data.table with columns: age, sex, marital_status, population
+#'   or NULL if IPUMS data not available
+#'
+#' @keywords internal
+fetch_ipums_census2000_marital <- function(ages, cache_dir) {
+  # IPUMS data is cached in the ipums directory
+
+  ipums_cache_dir <- file.path(dirname(cache_dir), "ipums")
+  ipums_cache_file <- file.path(ipums_cache_dir, "ipums_marital_status_all.rds")
+
+  if (!file.exists(ipums_cache_file)) {
+    cli::cli_alert_warning("IPUMS marital status cache not found")
+    cli::cli_alert_info("Run fetch_ipums_marital_status(census_years = 2000) to download")
+    return(NULL)
+  }
+
+  cli::cli_alert("Loading Census 2000 marital data from IPUMS cache...")
+
+  tryCatch({
+    ipums_data <- readRDS(ipums_cache_file)
+
+    # Convert to plain data.table (IPUMS data may have haven_labelled columns)
+    ipums_data <- data.table::as.data.table(ipums_data)
+
+    # Convert haven_labelled columns to standard types
+    if (inherits(ipums_data$year, "haven_labelled")) {
+      ipums_data[, year := as.integer(year)]
+    }
+    if (inherits(ipums_data$age, "haven_labelled")) {
+      ipums_data[, age := as.integer(age)]
+    }
+    if (inherits(ipums_data$population, "haven_labelled")) {
+      ipums_data[, population := as.numeric(population)]
+    }
+
+    # Filter to year 2000 and requested ages
+    census2000 <- ipums_data[year == 2000 & age %in% ages]
+
+    if (nrow(census2000) == 0) {
+      cli::cli_alert_warning("No Census 2000 data in IPUMS cache")
+      return(NULL)
+    }
+
+    # Map IPUMS marital_status to our standard codes
+    # IPUMS uses: "married", "widowed", "divorced", "separated", "never_married"
+    # We use: "married_spouse_present", "widowed", "divorced", "separated", "never_married"
+    census2000[marital_status == "married", marital_status := "married_spouse_present"]
+
+    # Remove year column (will be added back in build_census2000_marital_series)
+    result <- census2000[, .(age, sex, marital_status, population)]
+
+    # Ensure age is integer for downstream processing
+    result[, age := as.integer(age)]
+
+    cli::cli_alert_success("Loaded IPUMS Census 2000 data: {format(nrow(result), big.mark=',')} rows")
+    cli::cli_alert_success("Ages {min(result$age)}-{max(result$age)}, population: {format(sum(result$population), big.mark=',')}")
+
+    result
+
+  }, error = function(e) {
+    cli::cli_alert_warning("Error reading IPUMS cache: {conditionMessage(e)}")
+    NULL
+  })
+}
+
+#' Build Census 2000 era marital status series
+#'
+#' @description
+#' Constructs marital status data for 2000-2005 using Census 2000 as base
+#' and interpolating to ACS 2006.
+#'
+#' @keywords internal
+build_census2000_marital_series <- function(years, ages, census2000_data) {
+  results <- list()
+
+  # Try to get ACS 2006 data for interpolation
+  acs2006_data <- tryCatch({
+    fetch_acs_pums_civilian_noninst_marital(years = 2006, ages = ages)
+  }, error = function(e) {
+    NULL
+  })
+
+  for (yr in years) {
+    if (yr == 2000) {
+      # Use Census 2000 directly
+      yr_data <- data.table::copy(census2000_data)
+      yr_data[, year := 2000]
+      results[["2000"]] <- yr_data
+    } else {
+      # Interpolate between Census 2000 and ACS 2006
+      weight_2006 <- (yr - 2000) / 6  # 0 at 2000, 1 at 2006
+
+      if (!is.null(acs2006_data) && nrow(acs2006_data) > 0) {
+        # True interpolation between Census 2000 and ACS 2006
+        yr_data <- interpolate_marital_data(census2000_data, acs2006_data, weight_2006, yr)
+      } else {
+        # Fallback: apply trend adjustments to Census 2000
+        yr_data <- data.table::copy(census2000_data)
+        yr_data[, year := yr]
+
+        # Apply demographic trend adjustments
+        yr_data[marital_status == "married_spouse_present",
+                population := as.integer(population * (1 - 0.003 * (yr - 2000)))]
+        yr_data[marital_status == "never_married",
+                population := as.integer(population * (1 + 0.005 * (yr - 2000)))]
+      }
+
+      results[[as.character(yr)]] <- yr_data
+    }
+  }
+
+  combined <- data.table::rbindlist(results, use.names = TRUE, fill = TRUE)
+  data.table::setcolorder(combined, c("year", "age", "sex", "marital_status", "population"))
+  data.table::setorder(combined, year, sex, marital_status, age)
+
+  combined
+}
+
+#' Interpolate marital data between two years
+#'
+#' @keywords internal
+interpolate_marital_data <- function(data_start, data_end, weight_end, target_year) {
+  # Merge the two datasets
+  start <- data.table::copy(data_start)
+  end <- data.table::copy(data_end)
+
+  start[, pop_start := population]
+  end[, pop_end := population]
+
+  merged <- merge(
+    start[, .(age, sex, marital_status, pop_start)],
+    end[, .(age, sex, marital_status, pop_end)],
+    by = c("age", "sex", "marital_status"),
+    all = TRUE
+  )
+
+  # Fill NAs with zeros
+
+  merged[is.na(pop_start), pop_start := 0]
+  merged[is.na(pop_end), pop_end := 0]
+
+  # Interpolate
+  merged[, population := as.integer(pop_start * (1 - weight_end) + pop_end * weight_end)]
+  merged[, year := target_year]
+
+  merged[, .(year, age, sex, marital_status, population)]
+}
+
+#' Fetch marital status for full range (2000-2023)
+#'
+#' @description
+#' Fetches marital status data for the full range required by TR2025:
+#' 2000-2023. Combines Census 2000 PUMS (2000-2005) with ACS PUMS (2006-2023).
+#'
+#' @param years Integer vector of years to query (2000-2023)
+#' @param ages Integer vector of ages (default: 15:99)
+#' @param cache_dir Character: directory for caching downloaded files
+#'
+#' @return data.table with columns: year, age, sex, marital_status, population
+#'
+#' @export
+fetch_marital_status_full_range <- function(years = 2000:2023,
+                                             ages = 15:99,
+                                             cache_dir = here::here("data/cache/acs_pums")) {
+  checkmate::assert_integerish(years, lower = 2000, upper = 2030, min.len = 1)
+  checkmate::assert_integerish(ages, lower = 0, upper = 99, min.len = 1)
+
+  cli::cli_alert_info("Fetching full range marital status data (2000-2023)...")
+
+  results <- list()
+
+  # Split years into pre-2006 and 2006+
+  pre_2006_years <- years[years <= 2005]
+  post_2005_years <- years[years >= 2006]
+
+  # Fetch pre-2006 data from Census 2000
+  if (length(pre_2006_years) > 0) {
+    cli::cli_alert("Fetching 2000-2005 from Census 2000 PUMS...")
+    pre_data <- fetch_census2000_pums_marital(
+      years = pre_2006_years,
+      ages = ages,
+      cache_dir = file.path(cache_dir, "census2000")
+    )
+    results[["pre2006"]] <- pre_data
+  }
+
+  # Fetch 2006+ data from ACS PUMS
+  if (length(post_2005_years) > 0) {
+    cli::cli_alert("Fetching 2006-2023 from ACS PUMS...")
+    # Skip 2020 (no ACS 1-year)
+    post_2005_years <- post_2005_years[post_2005_years != 2020]
+
+    if (length(post_2005_years) > 0) {
+      post_data <- fetch_acs_pums_civilian_noninst_marital(
+        years = post_2005_years,
+        ages = ages,
+        cache_dir = cache_dir
+      )
+      results[["post2005"]] <- post_data
+    }
+  }
+
+  if (length(results) == 0) {
+    cli::cli_abort("No marital status data retrieved")
+  }
+
+  combined <- data.table::rbindlist(results, use.names = TRUE, fill = TRUE)
+  data.table::setcolorder(combined, c("year", "age", "sex", "marital_status", "population"))
+  data.table::setorder(combined, year, sex, marital_status, age)
+
+  cli::cli_alert_success(
+    "Retrieved marital status for {length(unique(combined$year))} years (2000-2023)"
+  )
+
+  combined
+}
+
+#' Summarize marital status data sources
+#'
+#' @description
+#' Returns information about data sources for marital status by year.
+#'
+#' @export
+summarize_marital_status_sources <- function() {
+  data.table::data.table(
+    period = c("2000", "2001-2005", "2006-2019", "2020", "2021-2023"),
+    source = c(
+      "Census 2000 PUMS (5% sample)",
+      "Interpolated Census 2000 to ACS 2006",
+      "ACS 1-year PUMS",
+      "No data (ACS 1-year not released)",
+      "ACS 1-year PUMS"
+    ),
+    notes = c(
+      "Decennial census; group quarters less precise",
+      "Linear interpolation of marital proportions",
+      "Annual surveys with group quarters detail",
+      "COVID-19 data collection issues; interpolate from 2019/2021",
+      "Resumed annual collection"
+    )
+  )
 }

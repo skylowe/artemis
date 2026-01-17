@@ -71,7 +71,11 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - DHS unauthorized estimates: `fetch_dhs_unauthorized_estimates()` - 8.5M (2000) → 11M (2022)
 - Census undercount factors: `fetch_census_undercount_factors()` - by age/sex (1940-2020)
 - Historical static data: territory populations, pre-1950 armed forces, tab years
-- Key files: `R/data_acquisition/ssa_beneficiaries_abroad.R`, `opm_federal_employees.R`, `dhs_unauthorized.R`, `census_undercount.R`, `historical_static.R`
+- ACS foreign-born flows: `fetch_acs_foreign_born_flows()` - by year of entry (2006-2023)
+- Census net immigration: `fetch_census_net_immigration()` - by age/sex (2000-2023)
+- NSFG same-sex marriage: `fetch_nsfg_same_sex_marriage()` - marital adjustments post-2013
+- Pre-2006 marital status: `fetch_census2000_pums_marital()` - extends coverage to 2000-2005
+- Key files: `R/data_acquisition/ssa_beneficiaries_abroad.R`, `opm_federal_employees.R`, `dhs_unauthorized.R`, `census_undercount.R`, `historical_static.R`, `census_net_immigration.R`, `nsfg_same_sex_marriage.R`
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)

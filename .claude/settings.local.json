@@ -60,7 +60,8 @@
       "Bash(__NEW_LINE_3abb3c5f7ee05c15__ echo \"\")",
       "WebFetch(domain:dwp.dmdc.osd.mil)",
       "WebFetch(domain:download.militaryonesource.mil)",
-      "WebFetch(domain:www.ssa.gov)"
+      "WebFetch(domain:www.ssa.gov)",
+      "Bash(grep:*)"
     ]
   }
 }

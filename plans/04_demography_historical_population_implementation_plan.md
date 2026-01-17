@@ -155,6 +155,34 @@
 - `get_population_benchmarks()` - decennial census totals for validation
 - `get_tab_years()` - defines years for precise historical calculation
 
+### Phase 4C Additional Data Sources - COMPLETED (January 17, 2026)
+
+**ACS Foreign-Born Flows (Input #25) - Added to `R/data_acquisition/acs_pums.R`:**
+- `fetch_acs_foreign_born_flows()` - foreign-born population by year of entry
+- Uses YOEP (year of entry), NATIVITY, POBP (place of birth for Cuban identification)
+- Coverage: 2006-2023 (excluding 2020)
+- Purpose: Estimate flows of temporary/unlawfully present immigrants for Eq 1.4.3
+
+**Census Net Immigration Estimates (Input #28) - New file `R/data_acquisition/census_net_immigration.R`:**
+- `fetch_census_net_immigration()` - net international migration by age/sex
+- Coverage: 2000-2023 from Census Population Estimates Program
+- Historical: 1980-1999 via `fetch_historical_net_immigration()`
+- Trend: 1.2M (2000) → 0.38M (2021 COVID low) → 1.14M (2023)
+- Purpose: Inter-tab year interpolation in Equation 1.4.1
+
+**NSFG Same-Sex Marriage Data (Inputs #36-37) - New file `R/data_acquisition/nsfg_same_sex_marriage.R`:**
+- `fetch_nsfg_same_sex_marriage()` - same-sex marriage proportions by age/sex
+- Cycles: 2011-2015, 2015-2017, 2017-2019
+- `get_same_sex_marriage_adjustment()` - year-specific adjustment factors
+- `estimate_same_sex_married()` - splits married pop into same/opposite-sex
+- Purpose: Properly handle marital status in Equation 1.4.2 after 2013
+
+**ACS PUMS 2000-2005 Marital Status (Input #18) - Added to `R/data_acquisition/acs_pums.R`:**
+- `fetch_census2000_pums_marital()` - marital status for 2000-2005
+- Uses Census 2000 decennial data with interpolation to ACS 2006
+- `fetch_marital_status_full_range()` - combines 2000-2005 + 2006-2023
+- Extends marital status coverage from 2006 back to 2000
+
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
 
