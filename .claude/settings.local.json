@@ -66,7 +66,12 @@
       "Bash(pdftotext:*)",
       "WebFetch(domain:www.pewresearch.org)",
       "WebFetch(domain:www.nationalww2museum.org)",
-      "WebFetch(domain:en.wikipedia.org)"
+      "WebFetch(domain:en.wikipedia.org)",
+      "WebFetch(domain:www.opm.gov)",
+      "WebFetch(domain:data.opm.gov)",
+      "WebFetch(domain:www.fedscope.opm.gov)",
+      "WebFetch(domain:sgp.fas.org)",
+      "WebFetch(domain:www.everycrsreport.com)"
     ]
   }
 }
