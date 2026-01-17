@@ -63,7 +63,8 @@
       "WebFetch(domain:www.ssa.gov)",
       "Bash(grep:*)",
       "WebFetch(domain:govinfo.library.unt.edu)",
-      "Bash(pdftotext:*)"
+      "Bash(pdftotext:*)",
+      "WebFetch(domain:www.pewresearch.org)"
     ]
   }
 }
