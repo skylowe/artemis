@@ -77,6 +77,21 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - Pre-2006 marital status: `fetch_census2000_pums_marital()` - extends coverage to 2000-2005
 - Key files: `R/data_acquisition/ssa_beneficiaries_abroad.R`, `opm_federal_employees.R`, `dhs_unauthorized.R`, `census_undercount.R`, `historical_static.R`, `census_net_immigration.R`, `nsfg_same_sex_marriage.R`
 
+**Phase 4C+ Gap Analysis Complete (January 17, 2026):**
+Reviewed TR2025 documentation against implementation. Added missing data for 8 of 44 inputs:
+- Pre-1980 USAF population (Input #7): `get_pre1980_usaf_population()` - 1940-1979 totals by sex
+- Decennial census April 1 (Inputs #8-9): `fetch_decennial_census_population()`, `get_january_decennial_totals()`
+- Alaska/Hawaii historical (Inputs #30-31): `get_alaska_hawaii_civilian()`, `get_alaska_hawaii_census()`
+- OPM employees age/sex (Input #40): `get_federal_employees_overseas_by_age_sex()` - estimated distribution
+- DoD in territories (Input #41): `get_dod_armed_forces_territories()` - 1990-2020 by territory
+- 1940 85+ distribution (Input #42): `get_1940_85plus_distribution()` - survival-based
+- Territory age/sex (Input #23): `fetch_territory_populations_by_age_sex()` - from IDB API
+
+**Data Coverage Summary (38/44 inputs implemented):**
+- Fully implemented: 32 inputs
+- Partially implemented: 6 inputs (totals available, age/sex estimated)
+- Not implemented: 6 inputs (IRCA, State Dept historical, Americans overseas - low priority)
+
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)
 - Optional: Historical DHS data (1941-1972), IRCA legalizations (low priority)

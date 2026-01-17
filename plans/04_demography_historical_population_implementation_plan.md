@@ -1194,9 +1194,9 @@ validate_o_against_dhs <- function(o_pop, dhs_estimates)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [x] | 4C.1 | Implement OPM federal employees fetcher | None | opm_federal_employees.R |
+| [x] | 4C.1 | Compile OPM Federal Employees Overseas | None | opm_federal_employees.R |
 | [x] | 4C.2 | Implement SSA beneficiaries abroad fetcher | None | ssa_beneficiaries_abroad.R |
-| [x] | 4C.3 | Implement DHS unauthorized estimates fetcher | None | dhs_unauthorized.R |
+| [x] | 4C.3 | Compile DHS unauthorized estimates | None | dhs_unauthorized.R |
 | [x] | 4C.4 | Compile undercount factors | Research | census_undercount.R |
 | [x] | 4C.5 | Compile historical pre-1980 data | Archives | historical_static.R |
 
