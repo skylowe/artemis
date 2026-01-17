@@ -53,7 +53,10 @@
       "Bash(du:*)",
       "WebFetch(domain:www.mortality.org)",
       "WebFetch(domain:cran.r-project.org)",
-      "WebFetch(domain:rdrr.io)"
+      "WebFetch(domain:rdrr.io)",
+      "WebFetch(domain:www.dhs.gov)",
+      "WebFetch(domain:ohss.dhs.gov)",
+      "Bash(wget:*)"
     ]
   }
 }

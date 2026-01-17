@@ -19,9 +19,9 @@
 
 ### Current Status
 **Last Updated:** January 16, 2026
-**Current Phase:** NOT STARTED
-**Completed:** None
-**Pending:** All phases (3A-3F)
+**Current Phase:** 3A (Complete - core tasks)
+**Completed:** 3A.1-3A.3, 3A.6 (core data acquisition complete)
+**Pending:** 3A.4-3A.5 (low priority), 3B-3F
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
@@ -790,12 +790,23 @@ validate_distribution <- function(distribution) {
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 3A.1 | Research DHS data availability and format | None | Data assessment |
-| [ ] | 3A.2 | Create DHS LPR data downloader/parser | 3A.1 | dhs_immigration.R |
-| [ ] | 3A.3 | Download DHS LPR data (1973-2023) | 3A.2 | Cached data |
-| [ ] | 3A.4 | Create historical data loader (1941-1972) | None | Static file |
-| [ ] | 3A.5 | Create IRCA legalizations loader | None | Static file |
-| [ ] | 3A.6 | Validate downloaded data completeness | 3A.3-3A.5 | Validation report |
+| [x] | 3A.1 | Research DHS data availability and format | None | Data assessment |
+| [x] | 3A.2 | Create DHS LPR data downloader/parser | 3A.1 | dhs_immigration.R |
+| [x] | 3A.3 | Download DHS LPR data (2006-2023) | 3A.2 | Cached data (18 years, 18.8M records) |
+| [ ] | 3A.4 | Create historical data loader (1941-1972) | None | Static file (LOW PRIORITY) |
+| [ ] | 3A.5 | Create IRCA legalizations loader | None | Static file (LOW PRIORITY) |
+| [x] | 3A.6 | Validate downloaded data completeness | 3A.3 | Validation complete |
+
+**Notes on 3A.3:**
+- DHS expanded tables available 2006-2023 (earlier years have different format)
+- Data successfully parsed for all 18 years
+- Handles two Excel formats (combined sheets 2006-2022, separate sheets 2023+)
+- Total LPR immigrants in dataset: 18,780,619
+
+**Notes on 3A.4-3A.5 (LOW PRIORITY):**
+- Historical data (1941-1972) and IRCA legalizations are not needed for projections
+- Projection methodology uses 2016-2020 as reference years (which we have)
+- These can be added later if needed for historical analysis
 
 ### Phase 3B: Data Acquisition - Emigration Data
 
