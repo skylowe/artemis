@@ -1256,6 +1256,203 @@ convert_mx_to_qx <- function(mx, max_age = 119) {
 }
 
 # =============================================================================
+# HMD-Based Calibration for Ages 85+
+# =============================================================================
+
+#' Get HMD elderly mortality ratios
+#'
+#' @description
+#' Calculates qx(age)/qx(84) ratios from HMD for ages 85+.
+#' These ratios represent the well-researched mortality progression
+#' at oldest ages from the Human Mortality Database.
+#'
+#' @param max_age Integer: maximum age (default: 110, HMD's max)
+#' @param reference_year Integer: year to use for ratios (default: 2019)
+#'
+#' @return data.table with columns: age, sex, qx_ratio (relative to age 84)
+#'
+#' @keywords internal
+get_hmd_elderly_qx_ratios <- function(max_age = 110, reference_year = 2019) {
+  # Load HMD life tables
+  hmd_lt <- fetch_hmd_life_tables(sex = "both")
+
+  # Use reference year, or most recent available
+  available_years <- unique(hmd_lt$year)
+  if (!reference_year %in% available_years) {
+    reference_year <- max(available_years)
+    cli::cli_alert_info("Using HMD reference year {reference_year}")
+  }
+
+  # Get qx for reference year
+  hmd_qx <- hmd_lt[year == reference_year, .(age, sex, qx)]
+
+  # Calculate ratios relative to age 84
+  ratios <- hmd_qx[age >= 84 & age <= max_age]
+  q84_lookup <- ratios[age == 84, .(sex, q84 = qx)]
+  ratios <- merge(ratios, q84_lookup, by = "sex")
+  ratios[, qx_ratio := qx / q84]
+  ratios[, q84 := NULL]
+
+  # Keep only ages 85+
+  ratios <- ratios[age >= 85]
+
+  cli::cli_alert_success(
+    "Calculated HMD qx ratios for ages 85-{max_age} from year {reference_year}"
+  )
+
+  ratios[, .(age, sex, qx_ratio)]
+}
+
+#' Adjust qx for ages 85+ using HMD calibration
+#'
+#' @description
+#' Adjusts death probabilities for ages 85+ using mortality ratios
+#' derived from the Human Mortality Database. This corrects the
+#' underestimation that occurs with simple extrapolation methods.
+#'
+#' @param qx data.table with qx values (year, age, sex, qx)
+#' @param hmd_ratios data.table from get_hmd_elderly_qx_ratios(), or NULL to fetch
+#' @param transition_age Integer: age at which to start HMD adjustment (default: 85)
+#' @param max_age Integer: maximum age to extend to (default: 119)
+#'
+#' @return data.table with adjusted qx values
+#'
+#' @details
+#' The adjustment works by:
+#' 1. For ages 0-84: keep our calculated qx unchanged
+#' 2. For ages 85+: use q84 * HMD_ratio(age)
+#'
+#' This preserves our historical trends while using HMD's well-researched
+#' mortality pattern at oldest ages.
+#'
+#' For ages beyond HMD's max (110), extrapolates using the ratio
+#' progression from ages 105-110.
+#'
+#' @export
+adjust_qx_with_hmd <- function(qx,
+                                hmd_ratios = NULL,
+                                transition_age = 85,
+                                max_age = 119) {
+  checkmate::assert_data_table(qx)
+  checkmate::assert_int(transition_age, lower = 80, upper = 100)
+  checkmate::assert_int(max_age, lower = 100, upper = 130)
+
+  dt <- data.table::copy(qx)
+  has_year <- "year" %in% names(dt)
+
+  # Get HMD ratios if not provided
+  if (is.null(hmd_ratios)) {
+    hmd_ratios <- get_hmd_elderly_qx_ratios(max_age = min(max_age, 110))
+  }
+
+  # Get our q84 values for each year/sex
+  ref_age <- transition_age - 1  # age 84
+  if (has_year) {
+    q_ref <- dt[age == ref_age, .(year, sex, q_ref = qx)]
+  } else {
+    q_ref <- dt[age == ref_age, .(sex, q_ref = qx)]
+  }
+
+  # Remove ages >= transition_age from our data
+  dt_young <- dt[age < transition_age]
+
+  # Create adjusted elderly qx using HMD ratios
+  results_list <- list()
+
+  if (has_year) {
+    years <- unique(q_ref$year)
+  } else {
+    years <- NA
+  }
+
+  for (sex_val in c("male", "female")) {
+    # Get HMD ratios for this sex
+    sex_ratios <- hmd_ratios[sex == sex_val]
+
+    # Extend ratios beyond HMD's max age if needed
+    hmd_max <- max(sex_ratios$age)
+    if (max_age > hmd_max) {
+      # Calculate growth rate from last few ages
+      last_ratios <- sex_ratios[age >= (hmd_max - 5)]
+      if (nrow(last_ratios) >= 2) {
+        # Use geometric mean of growth rates
+        growth_rates <- last_ratios$qx_ratio[-1] / last_ratios$qx_ratio[-nrow(last_ratios)]
+        avg_growth <- exp(mean(log(growth_rates)))
+      } else {
+        avg_growth <- 1.05  # fallback
+      }
+
+      # Extend ratios
+      last_ratio <- sex_ratios[age == hmd_max, qx_ratio]
+      extended_ages <- (hmd_max + 1):max_age
+      extended_ratios <- data.table::data.table(
+        age = extended_ages,
+        sex = sex_val,
+        qx_ratio = last_ratio * avg_growth^(seq_along(extended_ages))
+      )
+      sex_ratios <- data.table::rbindlist(list(sex_ratios, extended_ratios))
+    }
+
+    for (yr in years) {
+      # Get our q84 for this year/sex
+      if (has_year && !is.na(yr)) {
+        q84_val <- q_ref[sex == sex_val & year == yr, q_ref]
+      } else {
+        q84_val <- q_ref[sex == sex_val, q_ref]
+      }
+
+      if (length(q84_val) == 0 || is.na(q84_val)) next
+
+      # Calculate adjusted qx for ages 85+
+      elderly_qx <- data.table::copy(sex_ratios[age >= transition_age & age <= max_age])
+      elderly_qx[, qx := pmin(q84_val * qx_ratio, 1.0)]
+      elderly_qx[, qx_ratio := NULL]
+
+      if (has_year && !is.na(yr)) {
+        elderly_qx[, year := yr]
+      }
+
+      results_list[[length(results_list) + 1]] <- elderly_qx
+    }
+  }
+
+  # Combine young ages with adjusted elderly
+  dt_elderly <- data.table::rbindlist(results_list, fill = TRUE)
+
+  # Add any missing columns
+  for (col in setdiff(names(dt_young), names(dt_elderly))) {
+    dt_elderly[, (col) := NA]
+  }
+
+  result <- data.table::rbindlist(list(dt_young, dt_elderly), fill = TRUE)
+
+  # Ensure female qx doesn't exceed male qx at oldest ages
+  if (has_year) {
+    male_lookup <- result[sex == "male", .(year, age, male_qx = qx)]
+    result <- merge(result, male_lookup, by = c("year", "age"), all.x = TRUE)
+  } else {
+    male_lookup <- result[sex == "male", .(age, male_qx = qx)]
+    result <- merge(result, male_lookup, by = "age", all.x = TRUE)
+  }
+  result[sex == "female" & !is.na(male_qx), qx := pmin(qx, male_qx)]
+  result[, male_qx := NULL]
+
+  # Sort
+  if (has_year) {
+    data.table::setorder(result, year, sex, age)
+  } else {
+    data.table::setorder(result, sex, age)
+  }
+
+  n_adjusted <- nrow(result[age >= transition_age])
+  cli::cli_alert_success(
+    "Adjusted {n_adjusted} qx values for ages {transition_age}+ using HMD calibration"
+  )
+
+  result
+}
+
+# =============================================================================
 # Phase 2D: Life Tables and Summary Statistics
 # =============================================================================
 

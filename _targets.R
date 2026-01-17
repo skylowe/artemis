@@ -357,18 +357,20 @@ list(
   ),
 
   # Step 6: Calculate qx from mx (including q0 using births)
+  # Note: Limited to 1980+ because Census population data starts in 1980
   tar_target(
-    mortality_qx_historical,
+    mortality_qx_unadjusted,
     {
-      # Get years with population data
+      # Get years with population data (1980+)
       pop_years <- unique(census_population_both$year)
       mx_filtered <- mortality_mx_total[year %in% pop_years]
 
       # Calculate qx for ages 1+ from mx
       qx_from_mx <- convert_mx_to_qx(mx_filtered, max_age = 119)
 
-      # Calculate q0 using deaths/births
-      infant_deaths <- nchs_deaths_raw[age == 0, .(deaths = sum(deaths)), by = .(year, sex)]
+      # Calculate q0 using deaths/births (also filter to pop_years)
+      infant_deaths <- nchs_deaths_raw[age == 0 & year %in% pop_years,
+                                       .(deaths = sum(deaths)), by = .(year, sex)]
       q0 <- merge(infant_deaths, nchs_births_total, by = "year", all.x = TRUE)
       q0 <- q0[!is.na(births)]  # Only years with births data
       # Use 51.2% male assumption until sex-specific births available
@@ -383,6 +385,17 @@ list(
       data.table::setorder(result, year, sex, age)
       result
     }
+  ),
+
+  # Step 6b: Adjust qx for ages 85+ using HMD calibration
+  # HMD provides well-researched mortality patterns at oldest ages
+  tar_target(
+    mortality_qx_historical,
+    adjust_qx_with_hmd(
+      qx = mortality_qx_unadjusted,
+      transition_age = 85,
+      max_age = 119
+    )
   ),
 
   # Step 7: Calculate life tables from qx
