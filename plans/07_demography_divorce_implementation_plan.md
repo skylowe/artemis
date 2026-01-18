@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 7B - COMPLETE
-**Subprocess Status:** IN PROGRESS (Phase 7C next)
+**Current Phase:** Phase 7C - COMPLETE
+**Subprocess Status:** IN PROGRESS (Phase 7D/7E next)
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
@@ -895,12 +895,23 @@ validate_divorce_comprehensive <- function(divorce_projection, config)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 7C.1 | Implement divorce rate calculation | None | divorce.R |
-| [ ] | 7C.2 | Implement 2D Beers interpolation (reuse from marriage) | Phase 6 | beers_interpolate_2d() |
-| [ ] | 7C.3 | Implement 2D Whittaker-Henderson (reuse from marriage) | Phase 6 | whittaker_henderson_2d() |
-| [ ] | 7C.4 | Build base DivGrid from 1979-1988 average | 7A.3, 7B.1, 7C.1-7C.3 | Base DivGrid |
-| [ ] | 7C.5 | Implement DivGrid scaling function | 7C.4 | scale_divgrid_to_total() |
-| [ ] | 7C.6 | Validate base DivGrid | 7C.4 | Validation report |
+| [x] | 7C.1 | Implement divorce rate calculation | None | divorce.R |
+| [x] | 7C.2 | Implement 2D Beers interpolation (reuse from marriage) | Phase 6 | Not needed - data already single-year |
+| [x] | 7C.3 | Implement 2D Whittaker-Henderson (reuse from marriage) | Phase 6 | graduate_divgrid() |
+| [x] | 7C.4 | Build base DivGrid from 1979-1988 average | 7A.3, 7B.1, 7C.1-7C.3 | Base DivGrid |
+| [x] | 7C.5 | Implement DivGrid scaling function | 7C.4 | scale_divgrid_to_total(), scale_divgrid_to_adr() |
+| [x] | 7C.6 | Validate base DivGrid | 7C.4 | validate_divgrid() - 6/6 checks pass |
+
+**Phase 7C Notes (January 18, 2026):**
+- Base DivGrid built from 1979-1988 NCHS DRA data (10-year average)
+- NCHS data has single-year ages, so Beers interpolation not needed
+- 2D Whittaker-Henderson graduation applied for smoothing
+- Key results:
+  - Dimensions: 87×87 (ages 14-100+)
+  - Peak rate: 342.2 per 100,000 at husband age 25, wife age 23
+  - Base ADR: 1,749.4 per 100,000 (very close to TR2025 ultimate of 1,700)
+- Cached to `data/cache/divorce/base_divgrid_1979_1988.rds`
+- Key functions: `build_base_divgrid()`, `fetch_base_divgrid()`, `validate_divgrid()`
 
 ### Phase 7D: State Data & DivGrid Adjustment
 
