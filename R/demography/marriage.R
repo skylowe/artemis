@@ -1627,3 +1627,299 @@ calculate_historical_period <- function(base_margrid,
 
   result
 }
+
+# =============================================================================
+# PHASE 6E: AMR PROJECTION (2023-2099)
+# =============================================================================
+
+#' Calculate starting AMR for projection
+#'
+#' @description
+#' Per TR2025: The starting AMR is the 5-year weighted average of the most
+#' recent historical AMR values. This provides a stable starting point for
+#' projection that smooths out year-to-year volatility.
+#'
+#' Default uses 2018-2022 (excluding 2020 if not available).
+#'
+#' @param historical_amr data.table with year and amr columns
+#' @param n_years Integer: number of years to average (default: 5)
+#' @param weights Numeric vector: weights for averaging (default: equal weights)
+#'
+#' @return Numeric: starting AMR value
+#'
+#' @export
+calculate_starting_amr <- function(historical_amr, n_years = 5, weights = NULL) {
+  checkmate::assert_data_table(historical_amr)
+  checkmate::assert_names(names(historical_amr), must.include = c("year", "amr"))
+
+  # Get most recent n_years
+  data.table::setorder(historical_amr, -year)
+  recent <- historical_amr[1:min(n_years, nrow(historical_amr))]
+
+  if (nrow(recent) == 0) {
+    cli::cli_abort("No historical AMR data available")
+  }
+
+  # Default to equal weights
+  if (is.null(weights)) {
+    weights <- rep(1 / nrow(recent), nrow(recent))
+  } else {
+    # Normalize weights
+    weights <- weights[1:nrow(recent)]
+    weights <- weights / sum(weights)
+  }
+
+  # Calculate weighted average
+  starting_amr <- sum(recent$amr * weights, na.rm = TRUE)
+
+  cli::cli_alert_info(
+    "Starting AMR: {round(starting_amr, 1)} (weighted average of {min(recent$year)}-{max(recent$year)})"
+  )
+
+  starting_amr
+}
+
+#' Project AMR from starting value to ultimate
+#'
+#' @description
+#' Per TR2025: "The annual rate of change decreases in absolute value as the
+#' ultimate year approaches."
+#'
+#' This implements a decreasing rate of change projection where the AMR
+#' converges from the starting value to the ultimate value by the ultimate
+#' year. The rate of change is highest in early years and decreases as the
+#' ultimate year approaches.
+#'
+#' The projection formula uses:
+#'   AMR(t) = ultimate + (starting - ultimate) * (1 - progress(t))^exponent
+#'
+#' where progress(t) = (t - start_year) / (ultimate_year - start_year)
+#'
+#' @param starting_amr Numeric: starting AMR value
+#' @param ultimate_amr Numeric: ultimate AMR value (default: 4000)
+#' @param start_year Integer: first projection year (default: 2023)
+#' @param ultimate_year Integer: year when ultimate is reached (default: 2047)
+#' @param end_year Integer: final projection year (default: 2099)
+#' @param convergence_exp Numeric: exponent for convergence curve (default: 2)
+#'   Higher values = more gradual early change, faster late change
+#'
+#' @return data.table with year and projected_amr columns
+#'
+#' @export
+project_amr <- function(starting_amr,
+                        ultimate_amr = 4000,
+                        start_year = 2023,
+                        ultimate_year = 2047,
+                        end_year = 2099,
+                        convergence_exp = 2) {
+  checkmate::assert_number(starting_amr, lower = 0)
+  checkmate::assert_number(ultimate_amr, lower = 0)
+  checkmate::assert_integerish(start_year)
+  checkmate::assert_integerish(ultimate_year)
+  checkmate::assert_integerish(end_year)
+  checkmate::assert_number(convergence_exp, lower = 0.1)
+
+  cli::cli_h2("Projecting AMR ({start_year} to {end_year})")
+  cli::cli_alert_info("Starting: {round(starting_amr, 1)}, Ultimate: {ultimate_amr}, Ultimate year: {ultimate_year}")
+
+  years <- start_year:end_year
+  n_convergence <- ultimate_year - start_year
+
+  projected_amr <- sapply(years, function(yr) {
+    if (yr >= ultimate_year) {
+      # At or past ultimate year: hold at ultimate
+      return(ultimate_amr)
+    }
+
+    # Calculate progress toward ultimate (0 to 1)
+    progress <- (yr - start_year) / n_convergence
+
+    # Apply convergence formula with decreasing rate of change
+    # Uses complement: remaining_gap * (1 - progress)^exp
+    # Higher exponent = more gradual start, faster finish
+    remaining_factor <- (1 - progress)^convergence_exp
+
+    # Linear interpolation with non-linear progress
+    amr <- ultimate_amr + (starting_amr - ultimate_amr) * remaining_factor
+
+    amr
+  })
+
+  result <- data.table::data.table(
+    year = years,
+    projected_amr = projected_amr
+  )
+
+  # Add rate of change for validation
+  result[, amr_change := c(NA, diff(projected_amr))]
+
+  cli::cli_alert_success(
+    "Projected {length(years)} years, AMR: {round(starting_amr, 1)} → {ultimate_amr}"
+  )
+
+  result
+}
+
+#' Scale MarGrid to target AMR
+#'
+#' @description
+#' Scales all rates in a MarGrid proportionally so that the resulting
+#' AMR matches a target value.
+#'
+#' @param base_margrid Matrix: base marriage rate grid
+#' @param target_amr Numeric: target AMR value
+#' @param standard_pop_grid Matrix: standard population grid for AMR calculation
+#'
+#' @return Scaled MarGrid matrix
+#'
+#' @export
+scale_margrid_to_target_amr <- function(base_margrid, target_amr, standard_pop_grid) {
+  checkmate::assert_matrix(base_margrid, mode = "numeric")
+  checkmate::assert_number(target_amr, lower = 0)
+  checkmate::assert_matrix(standard_pop_grid, mode = "numeric")
+
+  # Calculate current AMR
+
+  current_amr <- calculate_amr_from_matrix(base_margrid, standard_pop_grid)
+
+  if (current_amr == 0) {
+    cli::cli_warn("Current AMR is 0, cannot scale")
+    return(base_margrid)
+  }
+
+  # Calculate scale factor
+  scale_factor <- target_amr / current_amr
+
+  # Apply scaling
+  scaled_grid <- base_margrid * scale_factor
+
+  scaled_grid
+}
+
+#' Project marriage rates for future years
+#'
+#' @description
+#' Main Phase 6E function. Projects marriage rate grids from the last
+#' historical year to the end of the projection period (2099).
+#'
+#' Per TR2025:
+#' 1. Calculate starting AMR from recent historical data
+#' 2. Project AMR to ultimate value (4,000) by ultimate year (2047)
+#' 3. Scale base MarGrid to match projected AMR for each year
+#'
+#' Results are cached to disk for performance.
+#'
+#' @param base_margrid Matrix: base MarGrid to scale
+#' @param historical_amr data.table: historical AMR values for starting calculation
+#' @param standard_pop_grid Matrix: 2010 standard population for AMR calculation
+#' @param ultimate_amr Numeric: ultimate AMR target (default: 4000)
+#' @param start_year Integer: first projection year (default: 2023)
+#' @param ultimate_year Integer: year when ultimate is reached (default: 2047)
+#' @param end_year Integer: final projection year (default: 2099)
+#' @param convergence_exp Numeric: convergence exponent (default: 2)
+#' @param cache_dir Character: directory for caching results
+#' @param force_recompute Logical: force recomputation even if cache exists
+#'
+#' @return list with:
+#'   - rates: List of rate matrices by year (2023-2099)
+#'   - amr: data.table with projected AMR values by year
+#'   - starting_amr: The calculated starting AMR
+#'
+#' @export
+project_marriage_rates <- function(base_margrid,
+                                    historical_amr,
+                                    standard_pop_grid,
+                                    ultimate_amr = 4000,
+                                    start_year = 2023,
+                                    ultimate_year = 2047,
+                                    end_year = 2099,
+                                    convergence_exp = 2,
+                                    cache_dir = here::here("data/cache/marriage"),
+                                    force_recompute = FALSE) {
+  # Check for cached results
+  cache_file <- file.path(cache_dir, "projected_rates_2023_2099.rds")
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+
+  if (file.exists(cache_file) && !force_recompute) {
+    cli::cli_alert_success("Loading cached projected rates (2023-2099)")
+    cached <- readRDS(cache_file)
+
+    # Verify cache integrity
+    if (all(c("rates", "amr", "starting_amr") %in% names(cached))) {
+      cli::cli_alert_info(
+        "Cached projection: AMR {round(cached$starting_amr, 1)} → {ultimate_amr}"
+      )
+      return(cached)
+    }
+    cli::cli_warn("Cache file corrupt, recomputing...")
+  }
+
+  cli::cli_h1("Phase 6E: AMR Projection (2023-2099)")
+
+  # =========================================================================
+  # STEP 1: Calculate starting AMR
+  # =========================================================================
+  starting_amr <- calculate_starting_amr(historical_amr, n_years = 5)
+
+  # =========================================================================
+  # STEP 2: Project AMR to ultimate
+  # =========================================================================
+  amr_projection <- project_amr(
+    starting_amr = starting_amr,
+    ultimate_amr = ultimate_amr,
+    start_year = start_year,
+    ultimate_year = ultimate_year,
+    end_year = end_year,
+    convergence_exp = convergence_exp
+  )
+
+  # =========================================================================
+  # STEP 3: Scale MarGrid for each year
+  # =========================================================================
+  cli::cli_h2("Scaling MarGrid to Projected AMR")
+
+  rates <- list()
+  years <- start_year:end_year
+
+  for (i in seq_along(years)) {
+    yr <- years[i]
+    target_amr <- amr_projection[year == yr, projected_amr]
+
+    # Scale base grid to target AMR
+    scaled_grid <- scale_margrid_to_target_amr(
+      base_margrid,
+      target_amr,
+      standard_pop_grid
+    )
+
+    rates[[as.character(yr)]] <- scaled_grid
+
+    # Progress indicator every 10 years
+    if (yr %% 10 == 0 || yr == start_year || yr == end_year) {
+      cli::cli_alert("{yr}: AMR = {round(target_amr, 1)}")
+    }
+  }
+
+  # =========================================================================
+  # SUMMARY
+  # =========================================================================
+  cli::cli_h2("Projection Summary")
+  cli::cli_alert_success("Projected {length(years)} years ({start_year}-{end_year})")
+  cli::cli_alert_info("Starting AMR: {round(starting_amr, 1)}")
+  cli::cli_alert_info("Ultimate AMR: {ultimate_amr} (reached by {ultimate_year})")
+  cli::cli_alert_info("Years to ultimate: {ultimate_year - start_year}")
+
+  result <- list(
+    rates = rates,
+    amr = amr_projection,
+    starting_amr = starting_amr,
+    ultimate_amr = ultimate_amr,
+    ultimate_year = ultimate_year
+  )
+
+  # Cache results
+  saveRDS(result, cache_file)
+  cli::cli_alert_success("Cached projected rates to {cache_file}")
+
+  result
+}

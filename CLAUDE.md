@@ -5,8 +5,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ## Current Status
 **Phase:** 6 - Marriage Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 6D - Historical Period (January 18, 2026)
-**Next Step:** Phase 6E - AMR Projection
+**Most Recent Completion:** Phase 6E - AMR Projection (January 18, 2026)
+**Next Step:** Phase 6F - Marriage Rate Projection (Pipeline Integration)
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -137,7 +137,7 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - AMR^z - Age-adjusted central marriage rate (Eq 1.6.2)
   - MarGrid: 87×87 matrix of marriage rates
 - **TR2025 Assumptions:** Ultimate AMR 4,000 per 100,000 unmarried couples by year 25
-- **Completed Phases:** 6A (ACS Data), 6B (NCHS Historical Data), 6C (MarGrid Development), 6D (Historical Period)
+- **Completed Phases:** 6A (ACS Data), 6B (NCHS Historical Data), 6C (MarGrid Development), 6D (Historical Period), 6E (AMR Projection)
 - **Key files:**
   - `R/demography/marriage.R` - Core MarGrid and AMR calculation functions
   - `R/data_acquisition/acs_marriage.R` - ACS new marriages (2007-2022), 2010 standard population
@@ -161,7 +161,16 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - AMR values consistent with TR2025 ultimate target (4,000)
 - Results cached to `data/cache/marriage/historical_rates_1989_2022.rds`
 - Key functions: `calculate_historical_period()`, `calculate_amr_from_matrix()`
-- Next: Phase 6E (AMR Projection)
+
+**Phase 6E Implementation (January 18, 2026):**
+- AMR projection 2023-2099 per TR2025 methodology:
+  - Starting AMR: 3,476.5 (5-year weighted average of 2017-2022)
+  - Ultimate AMR: 4,000 (reached by year 25 = 2047)
+  - Rate of change decreases as ultimate year approaches (37→18→5 per year)
+- MarGrid scaled proportionally to match projected AMR for each year
+- Results cached to `data/cache/marriage/projected_rates_2023_2099.rds`
+- Key functions: `calculate_starting_amr()`, `project_amr()`, `project_marriage_rates()`
+- Validation: Rate of change decreases properly, scaled grids match target AMR exactly
 
 **Phase 6A Implementation (January 18, 2026):**
 - ACS new marriages fetched for 2007-2022 (2007 extrapolated from 2008, 2020 skipped)
