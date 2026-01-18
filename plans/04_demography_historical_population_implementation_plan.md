@@ -1402,13 +1402,21 @@ validate_o_against_dhs <- function(o_pop, dhs_estimates)
 | [x] | 4G.2 | Calculate C_x_s_m (Eq 1.4.4) | 4G.1 | Civ noninst population |
 | [x] | 4G.3 | Validate C against Census | 4G.2 | 0.18% mean diff |
 
-### Phase 4H: Targets Integration
+### Phase 4H: Targets Integration - COMPLETED (January 18, 2026)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 4H.1 | Add historical population targets to _targets.R | All | Pipeline targets |
-| [ ] | 4H.2 | Test full pipeline execution | 4H.1 | Working pipeline |
-| [ ] | 4H.3 | Documentation and cleanup | All | Documented code |
+| [x] | 4H.1 | Add historical population targets to _targets.R | All | 6 new targets |
+| [x] | 4H.2 | Test pipeline configuration | 4H.1 | Valid pipeline |
+| [x] | 4H.3 | Test all targets with cache | 4H.2 | All targets passing |
+
+**Targets Added:**
+- `historical_population` - P^z_{x,s} (Eq 1.4.1): 16,766 rows
+- `historical_population_marital` - P^z_{x,s,m} (Eq 1.4.2): 64,728 rows
+- `historical_temp_unlawful` - O^z_{x,s} (Eq 1.4.3): 16,600 rows
+- `historical_civilian_noninst` - C^z_{x,s,m} (Eq 1.4.4): 17,747 rows
+- `tr2025_population_dec` - TR2025 validation data loader
+- `historical_population_validation` - Validation against TR2025
 
 ---
 

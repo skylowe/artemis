@@ -5,8 +5,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ## Current Status
 **Phase:** 4 - Historical Population Subprocess (COMPLETE)
-**Most Recent Completion:** Phase 4G - Civilian Noninstitutionalized (January 18, 2026)
-**Next Step:** Phase 4H - Targets Integration or Phase 5 - Immigration Projections
+**Most Recent Completion:** Phase 4H - Targets Integration (January 18, 2026)
+**Next Step:** Phase 5 - Immigration Projections or Phase 6 - Projected Population
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -180,6 +180,18 @@ Reviewed TR2025 documentation against implementation. Added missing data for 8 o
   - Married: 39.7%, Never married: 46%, Divorced: 8.5%
   - 17,747 rows output (year × age × sex × marital_status × orientation)
 - Key output: C^z_{x,s,m} cached in `civilian_noninst_marital_2010_2022.rds`
+
+**Phase 4H Complete (January 18, 2026):**
+- Targets integration: All 4 historical population outputs added to `_targets.R`
+- New targets:
+  - `historical_population` - P^z_{x,s} (Eq 1.4.1): 16,766 rows
+  - `historical_population_marital` - P^z_{x,s,m} (Eq 1.4.2): 64,728 rows
+  - `historical_temp_unlawful` - O^z_{x,s} (Eq 1.4.3): 16,600 rows
+  - `historical_civilian_noninst` - C^z_{x,s,m} (Eq 1.4.4): 17,747 rows
+  - `tr2025_population_dec` - TR2025 validation data loader
+  - `historical_population_validation` - Validation against TR2025
+- Pipeline validated: All targets execute successfully with cached data
+- Dependencies properly configured (marital depends on total population)
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)

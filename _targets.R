@@ -672,10 +672,118 @@ list(
   ),
 
   # ===========================================================================
+  # HISTORICAL POPULATION SUBPROCESS TARGETS (Phase 4)
+  # ===========================================================================
+  # Implements Equations 1.4.1 - 1.4.4 from TR2025 Documentation
+  # Produces: P_x_s, P_x_s_m, O_x_s, C_x_s_m
+
+  # Step 1: Calculate Historical Population by Age and Sex (Eq 1.4.1)
+  # P^z_{x,s} = USAF + UC + TERR + FED + DEP + BEN + OTH
+  tar_target(
+    historical_population,
+    calculate_historical_population(
+      start_year = 1940,
+      end_year = 2022,
+      ages = 0:100,
+      config = config_assumptions,
+      use_cache = TRUE
+    )
+  ),
+
+  # Step 2: Calculate Historical Population by Marital Status (Eq 1.4.2)
+  # P^z_{x,s,m} = P^z_{x,s} × MaritalPct^z_{x,s,m}
+  tar_target(
+    historical_population_marital,
+    calculate_historical_population_marital(
+      total_pop = historical_population,
+      start_year = 1940,
+      end_year = 2022,
+      ages = 14:100,
+      use_cache = TRUE,
+      include_same_sex = TRUE
+    )
+  ),
+
+  # Step 3: Calculate Temporary/Unlawfully Present Population (Eq 1.4.3)
+  # O^z_{x,s} from TR2025 V.A2 flows
+  tar_target(
+    historical_temp_unlawful,
+    calculate_historical_temp_unlawful(
+      start_year = 1940,
+      end_year = 2022,
+      ages = 0:99,
+      use_cache = TRUE
+    )
+  ),
+
+  # Step 4: Calculate Civilian Noninstitutionalized Population (Eq 1.4.4)
+  # C^z_{x,s,m} = CivNonInst^z_{x,s} × MaritalPct^z_{x,s,m}
+  tar_target(
+    historical_civilian_noninst,
+    calculate_historical_civilian_noninst(
+      start_year = 2010,
+      end_year = 2022,
+      ages = 0:99,
+      include_orientation = TRUE,
+      use_cache = TRUE
+    )
+  ),
+
+  # ===========================================================================
+  # HISTORICAL POPULATION VALIDATION TARGETS
+  # ===========================================================================
+
+  # Load TR2025 December 31 population for validation
+  tar_target(
+    tr2025_population_dec,
+    {
+      file_path <- here::here("data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv")
+      if (file.exists(file_path)) {
+        data.table::fread(file_path)
+      } else {
+        cli::cli_warn("TR2025 population file not found: {file_path}")
+        NULL
+      }
+    }
+  ),
+
+  # Validate historical population against TR2025
+  tar_target(
+    historical_population_validation,
+    {
+      if (is.null(tr2025_population_dec)) {
+        cli::cli_warn("Skipping validation - TR2025 data not available")
+        return(list(validated = FALSE, reason = "TR2025 data not available"))
+      }
+
+      # Calculate totals by year from our data
+      calc_totals <- historical_population[, .(calculated = sum(population)), by = year]
+
+      # Calculate totals from TR2025
+      tr_totals <- tr2025_population_dec[, .(tr2025 = sum(Total)), by = Year]
+      data.table::setnames(tr_totals, "Year", "year")
+
+      # Merge and compare
+      comparison <- merge(calc_totals, tr_totals, by = "year", all.x = TRUE)
+      comparison[, diff_pct := (calculated - tr2025) / tr2025 * 100]
+
+      # Summary statistics
+      valid_rows <- comparison[!is.na(tr2025)]
+      list(
+        validated = TRUE,
+        mean_abs_error = mean(abs(valid_rows$diff_pct)),
+        max_abs_error = max(abs(valid_rows$diff_pct)),
+        within_1pct = sum(abs(valid_rows$diff_pct) < 1),
+        within_2pct = sum(abs(valid_rows$diff_pct) < 2),
+        total_years = nrow(valid_rows),
+        comparison = comparison
+      )
+    }
+  ),
+
+  # ===========================================================================
   # PLACEHOLDER: Future process targets will be added here
   # ===========================================================================
-  # - Temporary/unlawful immigration subprocess targets
-  # - Historical population targets
   # - Marriage/Divorce targets
   # - Projected population targets
   # - Economics process targets
