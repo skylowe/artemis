@@ -19,8 +19,79 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 5E - Core Projection Functions (COMPLETE)
-**Next Phase:** Phase 5F - DACA Projection
+**Current Phase:** Phase 5F - DACA Projection (COMPLETE)
+**Next Phase:** Phase 5G - Validation
+
+### Phase 5F Progress Notes - COMPLETED (January 18, 2026)
+
+**Files Created:**
+- `R/demography/daca_projection.R` - DACA population projection functions
+
+**Functions Implemented (Eligibility Estimation):**
+- `estimate_daca_eligible_population()` - Estimates DACA-eligible population from ACS 2012 or internal estimates
+- `get_daca_criteria()` - Returns 2012 DACA eligibility criteria parameters
+- `get_default_daca_eligible()` - Internally developed eligibility estimates (~1.1M total)
+- `process_mpi_daca_estimates()` - Process Migration Policy Institute estimates
+
+**Functions Implemented (Attainment Rates):**
+- `calculate_daca_attainment_rates()` - Calculates rates for converting eligible → recipients
+- `get_daca_rate_params()` - Returns attainment rate parameters
+- `get_default_attainment_rates()` - Default rates by age/sex
+- `calibrate_attainment_to_grants()` - Calibrate rates to DHS grant data
+
+**Functions Implemented (Population Projection):**
+- `project_daca_population()` - Main projection function with cohort aging
+- `get_daca_projection_params()` - Returns projection parameters (decline rates, floor)
+- `build_historical_daca()` - Builds historical DACA population (2012-2022)
+- `build_daca_year()` - Builds DACA population for a single year
+- `project_daca_forward()` - Projects DACA population forward with attrition
+
+**Functions Implemented (Calibration):**
+- `calibrate_daca_to_dhs()` - Calibrates projection to DHS stock estimates
+- `get_daca_for_rate_adjustment()` - Extracts DACA for O emigration rate adjustment
+- `calculate_daca_share_of_unauthorized()` - Calculates DACA share of N population
+
+**Functions Implemented (Main Entry & Validation):**
+- `run_daca_projection()` - Main entry point orchestrating full projection
+- `generate_daca_summary()` - Generates summary statistics by year
+- `validate_daca_projection()` - Validates projection against DHS and expected patterns
+
+**TR2025 Methodology Implemented:**
+1. **Eligibility Estimation:** Based on 2012 ACS criteria (age, residency, education)
+2. **Attainment Rates:** First year (~43%), second year (~15%), ultimate (~66%)
+3. **Population Projection:** Cohort aging with no new grants after 2017
+4. **DHS Calibration:** Adjusted to match DHS stock (2013-2019)
+
+**Key Assumptions (per TR2025):**
+- DAPA and 2014 DACA expansion are no longer applied
+- No significant new 2012 DACA grants for 2019-20 and 2022-23
+- DACA recipients have lower departure rates than non-DACA
+- Population declines to ~30% floor as cohort ages out
+
+**Hardcoded Values with Sources:**
+| Value | Source | Notes |
+|-------|--------|-------|
+| Total eligible (~1.1M) | MPI, Pew Research | 2012 estimate |
+| Sex split (54% M/46% F) | USCIS characteristics | Published data |
+| First year rate (~43%) | USCIS 472K grants / 1.1M | FY 2013 |
+| Annual decline (5.3%) | 800K→580K (2017-2023) | Observed trend |
+| Criminal exclusion (10%) | Professional judgment | Cannot observe in ACS |
+
+**Test Results (7/7 passed):**
+1. Eligibility Estimation: 1.1M total eligible (expected range)
+2. Attainment Rates: All rates in [0,1] range
+3. DHS Stock: Peak 800K in 2017, decline to 580K in 2023
+4. Population Projection: Shows expected declining trend
+5. DHS Calibration: Within 0.01% of targets for 2013-2019
+6. Full Integration: All components present and functioning
+7. Validation: 4/4 validation checks passed
+
+**Key Results:**
+- 2013: 472K recipients (calibrated to DHS)
+- 2017: 800K recipients (peak)
+- 2020: 640K recipients
+- 2030: 422K recipients
+- 2040: 220K recipients (aging cohort)
 
 ### Phase 5C Progress Notes - UPDATED (January 18, 2026)
 
@@ -1234,14 +1305,14 @@ validate_o_distribution <- function(distribution)
 | [x] | 5E.5 | Implement project_o_population_stock (Eq 1.5.4) | 5E.1-5E.4 | temp_unlawful_stock.R |
 | [x] | 5E.6 | Implement run_full_o_projection | All above | temp_unlawful_stock.R |
 
-### Phase 5F: DACA Projection
+### Phase 5F: DACA Projection - COMPLETED (January 18, 2026)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 5F.1 | Implement estimate_daca_eligible | 5B | daca_projection.R |
-| [ ] | 5F.2 | Implement DACA attainment rate estimation | 5F.1, 5A | daca_projection.R |
-| [ ] | 5F.3 | Implement project_daca_population | 5F.1, 5F.2 | daca_projection.R |
-| [ ] | 5F.4 | Calibrate DACA to DHS stock | 5F.3 | daca_projection.R |
+| [x] | 5F.1 | Implement estimate_daca_eligible | 5B | daca_projection.R |
+| [x] | 5F.2 | Implement DACA attainment rate estimation | 5F.1, 5A | daca_projection.R |
+| [x] | 5F.3 | Implement project_daca_population | 5F.1, 5F.2 | daca_projection.R |
+| [x] | 5F.4 | Calibrate DACA to DHS stock | 5F.3 | daca_projection.R |
 
 ### Phase 5G: Validation
 

@@ -5,8 +5,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ## Current Status
 **Phase:** 5 - Temporary/Unlawfully Present Immigration Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 5E - Core Projection Functions (January 18, 2026)
-**Current Step:** Phase 5F - DACA Projection
+**Most Recent Completion:** Phase 5F - DACA Projection (January 18, 2026)
+**Current Step:** Phase 5G - Validation
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -67,8 +67,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - OP^z_{x,s,t} - O population stock (Eq 1.5.4)
   - DACA population by age/sex
 - **TR2025 Assumptions:** Ultimate 1,350,000/year starting 2026
-- **Current Phase:** 5F - DACA Projection
-- **Completed Phases:** 5A (DHS Data), 5B (ACS Data), 5C (Distribution), 5D (Departure Rates), 5E (Core Projection)
+- **Current Phase:** 5G - Validation
+- **Completed Phases:** 5A (DHS Data), 5B (ACS Data), 5C (Distribution), 5D (Departure Rates), 5E (Core Projection), 5F (DACA Projection)
 - **Key files:**
   - `R/data_acquisition/dhs_nonimmigrant.R` - Nonimmigrant stock/admissions
   - `R/data_acquisition/dhs_daca.R` - DACA grants and stock
@@ -76,6 +76,7 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - `R/demography/temp_unlawful_immigration.R` - ODIST calculation, O immigration projection
   - `R/demography/temp_unlawful_emigration.R` - Departure rates, cohort-tracking emigration
   - `R/demography/temp_unlawful_stock.R` - Net O, population stock, main entry point
+  - `R/demography/daca_projection.R` - DACA eligibility, attainment, and population projection
 
 **Phase 5E Implementation (January 18, 2026):**
 - All TR2025 equations implemented: 1.5.1 (OI), 1.5.2 (OE), 1.5.3 (NO), 1.5.4 (OP)
@@ -83,6 +84,19 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - Cohort-tracking for recent never-authorized arrivals (2× departure rate)
 - Historical type interpolation per TR2025 (1963→2010→2015 anchor points)
 - 5/5 tests passed, 4/4 validation checks passed
+
+**Phase 5F Implementation (January 18, 2026):**
+- DACA population projection per TR2025 Section 1.5.c
+- `run_daca_projection()` orchestrates eligibility → attainment → projection → calibration
+- Key features:
+  - Eligibility estimation from 2012 ACS or internally developed ~1.1M estimates
+  - Attainment rates: first year (~43%), second year (~15%), ultimate (~66%)
+  - Cohort aging with no new grants after 2017
+  - Annual decline (~5.3%) matching observed 2017-2023 trend
+  - DHS stock calibration (2013-2019)
+- TR2025 assumptions: DAPA/2014 DACA not applied, no new 2012 grants for 2019-23
+- 7/7 tests passed, 4/4 validation checks passed
+- Key results: 800K peak (2017), 580K (2023), declining to ~220K by 2040
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)
