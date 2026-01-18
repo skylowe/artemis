@@ -5,8 +5,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ## Current Status
 **Phase:** 4 - Historical Population Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 4E - Marital Status Calculations (January 17, 2026)
-**Next Step:** Phase 4F - Temporary/Unlawful Population (Eq 1.4.3) or Phase 4G - Civilian Noninstitutionalized (Eq 1.4.4)
+**Most Recent Completion:** Phase 4F - Temporary/Unlawful Population (January 17, 2026)
+**Next Step:** Phase 4G - Civilian Noninstitutionalized (Eq 1.4.4)
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -27,14 +27,20 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ### LPR Immigration Subprocess Status (COMPLETE)
 - Core projection functions in `R/demography/lpr_immigration.R` and `R/demography/legal_emigration.R`
-- Data acquisition: DHS expanded tables (2006-2023), CBO migration data (2021-2099)
-- Age-sex distributions calculated from DHS 2016-2020 reference years
+- Data acquisition: DHS expanded tables (2006-2023), CBO migration data (2021-2099), TR2025 Table V.A2
+- Age-sex distributions calculated from CBO 2021-2024 reference years
 - Beers interpolation converts 5-year age groups to single years
 - LPR immigration matches TR2025 assumptions: 1,213,000 (2025-26), 1,050,000 (2027+)
-- Emigration = 25% of LPR immigration per TR methodology
-- Net LPR immigration: 909,750 (2025-26), 787,500 (2027+)
+- Net LPR immigration: 910,000 (2025-26), 788,000 (2027+) from V.A2
 - 11 targets integrated into pipeline, all passing validation
-- Key files: `R/demography/lpr_immigration.R`, `R/demography/legal_emigration.R`, `R/data_acquisition/dhs_immigration.R`, `R/data_acquisition/cbo_migration.R`
+- Key files: `R/demography/lpr_immigration.R`, `R/demography/legal_emigration.R`, `R/data_acquisition/dhs_immigration.R`, `R/data_acquisition/cbo_migration.R`, `R/data_acquisition/tr2025_data.R`
+
+**V.A2 Integration (January 18, 2026):**
+- `get_tr2025_lpr_assumptions()` now loads from Table V.A2 instead of hardcoded values
+- Provides actual emigration values from V.A2 (not estimated 25% rule)
+- NEW vs AOS breakdown available: Total LPR = NEW arrivals + Adjustments of Status
+- Historical LPR data available (1940-2024) for validation
+- Fallback to hardcoded values if V.A2 file unavailable
 
 **Methodology Deviations from TR2025:**
 1. Emigration distribution uses CBO 2021-2024 data instead of unpublished Census 1980-1990 estimates
@@ -124,6 +130,34 @@ Reviewed TR2025 documentation against implementation. Added missing data for 8 o
   - 64,728 rows output (year × age × sex × marital_status × orientation)
   - Married % trend: 56.7% (1940) → 61.9% (1960 peak) → 47.6% (2022)
 - Key output: P^z_{x,s,m} cached in `ss_population_marital_1940_2022.rds`
+
+**Phase 4F Complete (January 17, 2026):**
+- Temporary/unlawfully present population: `R/demography/historical_temp_unlawful.R`
+- Implements Equation 1.4.3: O^z_{x,s} = built from TR2025 V.A2 immigration flows
+- Data source: TR2025 Table V.A2 provides official OCACT immigration assumptions (1940-2100)
+- New V.A2 loader functions in `R/data_acquisition/tr2025_data.R`:
+  - `load_tr2025_immigration_assumptions()` - parses V.A2 sheet
+  - `get_tr2025_historical_lpr()` - LPR flows (inflow, outflow, AOS, net)
+  - `get_tr2025_historical_o_flows()` - O flows (inflow, outflow, AOS, net)
+- Key functions:
+  - `calculate_historical_temp_unlawful()` - main entry point
+  - `get_o_age_sex_distribution()` - distributes flows by age/sex (57% male, working-age concentration)
+  - `build_o_stock_from_flows()` - builds stock from annual net flows with mortality
+  - `adjust_o_to_dhs()` - forces totals to DHS estimates for 2000+
+- Methodology:
+  1. Load TR2025 V.A2 O net flows (o_net) by year
+  2. Distribute by age-sex using DHS-based distribution
+  3. Build stock by accumulating flows with mortality and aging
+  4. Adjust to DHS unauthorized estimates for years 2000+
+- Validation:
+  - 2000+ years: 0% difference to DHS estimates (exact match)
+  - Pre-2000 trajectory: Reasonable buildup from 203K (1980) to 5.4M (1999)
+  - 1989-1991 dip reflects IRCA legalizations (negative O net flows in V.A2)
+- Results:
+  - 83 years processed (1940-2022)
+  - 16,600 rows output (year × age × sex)
+  - Peak: 12.2M (2007), Current: 11M (2022)
+- Key output: O^z_{x,s} cached in `o_population_1940_2022.rds`
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)

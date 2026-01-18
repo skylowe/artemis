@@ -248,15 +248,137 @@ calculate_new_aos_ratio <- function(dhs_data,
 # TR2025 ASSUMPTIONS
 # ===========================================================================
 
-#' Get TR2025 LPR immigration assumptions
+#' Get TR2025 LPR immigration assumptions from Table V.A2
+#'
+#' @description
+#' Loads LPR immigration assumptions from TR2025 Table V.A2. This provides
+#' official OCACT immigration assumptions for both historical (1940-2024)
+#' and projected (2025-2100) years.
 #'
 #' @param years Integer vector: years to get assumptions for (default: 2025:2099)
-#' @return data.table with columns: year, total_lpr, total_emigration
+#' @param alternative Character: which alternative to use for projections
+#'   ("intermediate", "low-cost", or "high-cost"). Default: "intermediate"
+#' @param data_dir Character: directory containing TR2025 files
+#'
+#' @return data.table with columns: year, total_lpr, total_emigration, net_lpr_total,
+#'   lpr_aos (if available), data_type
+#'
+#' @details
+#' For historical years (1940-2024), returns actual recorded values.
+#' For projected years (2025+), returns the selected alternative assumptions.
+#'
+#' V.A2 provides:
+#' - LPR Inflow: Total LPR immigration
+#' - LPR Outflow: Legal emigration
+#' - LPR AOS: Adjustments of status (included in inflow)
+#' - LPR Net: Net LPR change
+#'
 #' @export
-get_tr2025_lpr_assumptions <- function(years = 2025:2099) {
+get_tr2025_lpr_assumptions <- function(years = 2025:2099,
+                                        alternative = c("intermediate", "low-cost", "high-cost"),
+                                        data_dir = "data/raw/SSA_TR2025") {
+  alternative <- match.arg(alternative)
+
+ # Try to load from V.A2
+  va2_available <- tryCatch({
+    # Check if the loader function exists
+    if (!exists("load_tr2025_immigration_assumptions", mode = "function")) {
+      source(here::here("R/data_acquisition/tr2025_data.R"))
+    }
+    TRUE
+  }, error = function(e) FALSE)
+
+  if (va2_available) {
+    result <- get_tr2025_lpr_assumptions_va2(years, alternative, data_dir)
+  } else {
+    # Fallback to hardcoded values
+    cli::cli_alert_warning("V.A2 data not available, using hardcoded assumptions")
+    result <- get_tr2025_lpr_assumptions_hardcoded(years)
+  }
+
+  result
+}
+
+#' Get LPR assumptions from V.A2 data
+#'
+#' @keywords internal
+get_tr2025_lpr_assumptions_va2 <- function(years,
+                                            alternative = "intermediate",
+                                            data_dir = "data/raw/SSA_TR2025") {
+  # Load V.A2 immigration assumptions
+  imm <- load_tr2025_immigration_assumptions(data_dir = data_dir, cache = TRUE)
+
+  # For projected years, V.A2 has duplicates for different alternatives
+
+  # Historical years (data_type == "historical") are unique
+  # Projected years appear 3 times (Intermediate, Low-cost, High-cost)
+
+  # Filter to requested years
+  result <- imm[year %in% years]
+
+  if (nrow(result) == 0) {
+    cli::cli_abort("No V.A2 data found for years {min(years)}-{max(years)}")
+  }
+
+  # Handle duplicates for projected years by keeping first occurrence (Intermediate)
+  # V.A2 structure: Historical first, then Intermediate, then Low-cost, then High-cost
+  # For now, we take the first occurrence which is Intermediate for projected years
+  if (alternative == "intermediate") {
+    result <- result[!duplicated(year)]
+  } else {
+    # For other alternatives, would need to parse the section headers
+    # For now, use the default (Intermediate)
+    cli::cli_alert_warning("Alternative '{alternative}' not yet implemented, using intermediate")
+    result <- result[!duplicated(year)]
+  }
+
+  # Rename columns to match expected format
+  # NOTE: In V.A2, LPR Inflow = NEW arrivals only, LPR AOS = Adjustments of Status
+  # Total LPR Immigration = NEW + AOS (per TR2025 methodology)
+  result <- result[, .(
+    year = year,
+    total_lpr = (lpr_inflow + lpr_aos) * 1000,  # Total = NEW + AOS, convert to persons
+    lpr_new = lpr_inflow * 1000,                 # NEW arrivals only
+    lpr_aos = lpr_aos * 1000,                    # AOS only
+    total_emigration = lpr_outflow * 1000,
+    net_lpr_total = lpr_net * 1000,
+    data_type = data_type
+  )]
+
+  # Handle NAs (early years may have missing data)
+  result[is.na(lpr_new), lpr_new := 0]
+  result[is.na(lpr_aos), lpr_aos := 0]
+  result[is.na(total_lpr), total_lpr := lpr_new + lpr_aos]
+  result[is.na(total_emigration), total_emigration := 0]
+  result[is.na(net_lpr_total), net_lpr_total := total_lpr - total_emigration]
+
+  # Report what we loaded
+  n_hist <- sum(result$data_type == "historical")
+  n_proj <- sum(result$data_type %in% c("projected", "estimated"))
+  cli::cli_alert_success("Loaded LPR assumptions from V.A2: {n_hist} historical, {n_proj} projected years")
+
+  # Sample validation
+  if (2025 %in% result$year) {
+    lpr_2025 <- result[year == 2025, total_lpr]
+    cli::cli_alert_info("2025 LPR total: {format(lpr_2025, big.mark = ',')}")
+  }
+  if (2027 %in% result$year) {
+    lpr_2027 <- result[year == 2027, total_lpr]
+    cli::cli_alert_info("2027 LPR total: {format(lpr_2027, big.mark = ',')}")
+  }
+
+  data.table::setorder(result, year)
+  result
+}
+
+#' Fallback hardcoded LPR assumptions
+#'
+#' @keywords internal
+get_tr2025_lpr_assumptions_hardcoded <- function(years) {
   result <- data.table::data.table(year = years)
 
   # Set LPR immigration levels per TR2025 intermediate assumptions
+  # Total LPR = NEW + AOS
   result[, total_lpr := data.table::fcase(
     year == 2024, 1263000L,
     year %in% 2025:2026, 1213000L,
@@ -264,11 +386,18 @@ get_tr2025_lpr_assumptions <- function(years = 2025:2099) {
     default = 1050000L
   )]
 
+  # Approximate NEW/AOS split (~60% NEW, ~40% AOS based on historical patterns)
+  result[, lpr_new := round(total_lpr * 0.60)]
+  result[, lpr_aos := total_lpr - lpr_new]
+
   # Emigration = 25% of LPR
   result[, total_emigration := round(total_lpr * 0.25)]
 
   # Net LPR
   result[, net_lpr_total := total_lpr - total_emigration]
+
+  # Mark as hardcoded
+  result[, data_type := "hardcoded"]
 
   result
 }
