@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 6B - NCHS Historical Data (COMPLETE)
-**Subprocess Status:** IN PROGRESS - Ready for Phase 6C (MarGrid Development)
+**Current Phase:** Phase 6C - MarGrid Development (COMPLETE)
+**Subprocess Status:** IN PROGRESS - Ready for Phase 6D (Historical Period 1989-2022)
 
 ### Phase 6B Results (COMPLETE)
 
@@ -58,6 +58,12 @@
 - 1989-1995: 20,805 rows with single-year ages (12-94)
   - Cached to `data/cache/nber_marriage/nchs_mra_marriages_detailed_1989_1995.rds`
 - 1978-1988: Available via `fetch_nchs_mra_marriages_detailed_1978_1988()`
+
+**Item 5 (MRA unmarried population):** Using CPS as proxy
+- NCHS marriage files contain event records only, not population counts
+- National CPS unmarried population (Item 14) used as denominator for rate calculations
+- CPS covers 1978-1988 with 8 age groups × 2 sexes
+- MRA covers ~80% of U.S. population with similar demographics, so national proxy is acceptable
 
 **Key file:** `R/data_acquisition/nchs_marriage.R`
 
@@ -984,7 +990,7 @@ validate_marriage_type_split <- function(total_rates, opposite_sex, same_sex)
 | [x] | 6B.1 | Research NCHS MRA data availability (1978-1988) | None | NBER data assessed |
 | [x] | 6B.2 | Implement NCHS marriage data loader | 6B.1 | nchs_marriage.R |
 | [x] | 6B.3 | Load/digitize NCHS marriage grids (1978-1988) | 6B.2 | 792 rows (incl. 1980) |
-| [~] | 6B.4 | Load NCHS MRA unmarried population | 6B.2 | Optional: from CPS |
+| [x] | 6B.4 | Load NCHS MRA unmarried population | 6B.2 | Using CPS as proxy (Item 14) |
 | [x] | 6B.5 | Load NCHS subset data (1989-1995) | 6B.2 | cpmarr.dat parsed |
 | [x] | 6B.6 | Load NCHS total U.S. marriages (1989-2022) | 6B.2 | Annual totals |
 | [x] | 6B.7 | Load NCHS marriages by prior marital status | 6B.2 | 1978-1988 + 1989-1995 |
@@ -1000,12 +1006,31 @@ validate_marriage_type_split <- function(total_rates, opposite_sex, same_sex)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 6C.1 | Implement marriage rate calculation | None | marriage.R |
-| [ ] | 6C.2 | Implement two-dimensional Whittaker-Henderson | None | marriage.R |
-| [ ] | 6C.3 | Build base MarGrid from 1978-1988 average | 6B.3, 6B.4, 6C.1, 6C.2 | Base MarGrid |
-| [ ] | 6C.4 | Implement MarGrid adjustment function | 6C.3 | adjust_margrid_to_groups() |
-| [ ] | 6C.5 | Implement MarGrid scaling function | 6C.3 | scale_margrid_to_total() |
-| [ ] | 6C.6 | Validate base MarGrid | 6C.3 | Validation report |
+| [x] | 6C.1 | Implement marriage rate calculation | None | marriage.R |
+| [x] | 6C.2 | Implement two-dimensional Whittaker-Henderson | None | marriage.R |
+| [x] | 6C.3 | Build base MarGrid from 1978-1988 average | 6B.3, 6B.4, 6C.1, 6C.2 | Base MarGrid |
+| [x] | 6C.4 | Implement MarGrid adjustment function | 6C.3 | adjust_margrid_to_groups() |
+| [x] | 6C.5 | Implement MarGrid scaling function | 6C.3 | scale_margrid_to_total() |
+| [x] | 6C.6 | Validate base MarGrid | 6C.3 | Validation report |
+
+**Phase 6C Results:**
+- **Key file created:** `R/demography/marriage.R`
+- **MarGrid:** 87×87 matrix (ages 14-100+) built from 1978-1988 average rates
+- **Smoothing:** 2D Whittaker-Henderson applied iteratively
+- **Peak rate:** 3,101 per 100,000 at husband age 26, wife age 24
+- **Historical AMR (1978-1988):** 4,439 (1988) to 6,263 (1980), declining trend
+  - Note: 1980 appears to be an outlier (explains TR2025 exclusion recommendation)
+  - Mean AMR (excl. 1980): ~4,830 per 100,000
+- **TR2025 Ultimate AMR target:** 4,000 per 100,000 (consistent with declining trend)
+- **Functions implemented:**
+  - `calculate_marriage_rates()` - Compute rates from marriages/population
+  - `build_base_margrid()` - Build 87×87 MarGrid from NCHS/CPS data
+  - `whittaker_henderson_2d()` - 2D smoothing
+  - `calculate_amr()` - Age-adjusted marriage rate (Eq 1.6.2)
+  - `scale_margrid_to_total()` - Scale rates to match total marriages
+  - `scale_margrid_to_amr()` - Scale rates to target AMR
+  - `adjust_margrid_to_groups()` - Adjust MarGrid within age groups
+  - `beers_interpolate_2d()` - Expand age groups to single years
 
 ### Phase 6D: Historical Period Calculation (1989-2022)
 
