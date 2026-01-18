@@ -67,8 +67,13 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - OP^z_{x,s,t} - O population stock (Eq 1.5.4)
   - DACA population by age/sex
 - **TR2025 Assumptions:** Ultimate 1,350,000/year starting 2026
-- **Current Phase:** 5A - DHS Data Acquisition
-- **Key files:** `R/demography/temp_unlawful_immigration.R` (to be created)
+- **Current Phase:** 5C - Distribution Development
+- **Completed Phases:** 5A (DHS Data), 5B (ACS Data)
+- **Key files:**
+  - `R/data_acquisition/dhs_nonimmigrant.R` - Nonimmigrant stock/admissions
+  - `R/data_acquisition/dhs_daca.R` - DACA grants and stock
+  - `R/data_acquisition/acs_foreign_born.R` - New arrivals, DACA eligibility, undercount
+  - `R/demography/temp_unlawful_immigration.R` (to be created)
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)

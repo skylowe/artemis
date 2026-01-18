@@ -19,8 +19,37 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 5A - DHS Data Acquisition (COMPLETE)
-**Next Phase:** Phase 5B - ACS Data Acquisition
+**Current Phase:** Phase 5B - ACS Data Acquisition (COMPLETE)
+**Next Phase:** Phase 5C - Distribution Development
+
+### Phase 5B Progress Notes - COMPLETED (January 18, 2026)
+
+**Files Created:**
+- `R/data_acquisition/acs_foreign_born.R` - New arrivals calculation, DACA eligibility, undercount factors
+
+**Functions Implemented:**
+- `calculate_acs_new_arrivals()` - Extracts new foreign-born arrivals from PUMS data
+- `calculate_new_arrivals_distribution()` - Calculates ODIST input from 2015-2019 average
+- `fetch_acs_2012_daca_eligible()` - Fetches 2012 ACS with education/citizenship for DACA
+- `estimate_daca_eligible_2012()` - Applies DACA eligibility criteria
+- `calculate_acs_undercount_factors()` - DHS-based undercount factors by age
+- `apply_undercount_correction()` - Adjusts new arrivals for undercount
+
+**Data Fetched and Cached:**
+- Foreign-born flows: 2006-2023 (17 years, 2020 excluded due to COVID)
+- 2012 ACS DACA-eligible population: 2,611 rows by age/sex/entry/education
+- All data from Census PUMS API (api.census.gov)
+
+**Key Values:**
+- New arrivals (2015-2019 avg): 2.47M/year (uncorrected), 2.74M/year (undercount-corrected)
+- DACA-eligible estimate (2012): 1.84M (ages 15-30, meeting entry/education criteria)
+- Foreign-born population: 44.8M (2019) → 47.8M (2023)
+- Age distribution of arrivals: 21% ages 0-17, 35% ages 18-30, 25% ages 31-45
+
+**Note on Undercount Factors:**
+- Uses DHS methodology-based factors (not API data)
+- Working-age adults (18-49): 12-15% undercount
+- Children and elderly: 3-5% undercount
 
 ### Phase 5A Progress Notes - COMPLETED (January 18, 2026)
 
@@ -998,10 +1027,10 @@ validate_o_distribution <- function(distribution)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 5B.1 | Implement ACS foreign-born flows fetcher | None | acs_foreign_born.R |
-| [ ] | 5B.2 | Implement ACS 2012 special populations fetcher | None | acs_foreign_born.R |
-| [ ] | 5B.3 | Implement undercount factor calculation | ACS data | acs_foreign_born.R |
-| [ ] | 5B.4 | Fetch and cache ACS data (2000-2022) | 5B.1-5B.3 | Cached data |
+| [x] | 5B.1 | Implement ACS foreign-born flows fetcher | None | acs_pums.R (existing) |
+| [x] | 5B.2 | Implement ACS 2012 special populations fetcher | None | acs_foreign_born.R |
+| [x] | 5B.3 | Implement undercount factor calculation | ACS data | acs_foreign_born.R |
+| [x] | 5B.4 | Fetch and cache ACS data (2006-2023) | 5B.1-5B.3 | Cached data |
 
 ### Phase 5C: Distribution Development
 
