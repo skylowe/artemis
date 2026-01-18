@@ -712,14 +712,23 @@ calculate_amr <- function(rates_by_group, std_pop_by_group) {
   amr
 }
 
-#' Calculate AMR from single-year rate matrix (with proper weighting)
+#' Calculate AMR from single-year rate matrix
 #'
 #' @description
-#' For single-year expanded matrices, calculates AMR with proper weighting
-#' to avoid over-counting from group expansion.
+#' Calculates the age-adjusted central marriage rate per TR2025 Equation 1.6.2:
 #'
-#' @param rates Matrix of marriage rates (husband_age × wife_age)
-#' @param standard_pop_grid Matrix of P_{x,y}^S values
+#' AMR = (Σ P_{x,y}^S × m̂_{x,y}^z / 100,000) / sqrt(Σ male × Σ female) × 100,000
+#'
+#' Where:
+#' - P_{x,y}^S = sqrt(male_x × female_y) is the standard population
+#' - m̂_{x,y}^z are rates per 100,000
+#'
+#' Note: The standard_pop_grid should have an attribute "total_male" and "total_female"
+#' containing the total unmarried population by sex. If not present, the function
+#' will estimate using the grid values.
+#'
+#' @param rates Matrix of marriage rates (husband_age × wife_age), per 100,000
+#' @param standard_pop_grid Matrix of P_{x,y}^S values (geometric means)
 #'
 #' @return Numeric AMR value (per 100,000)
 #'
@@ -732,14 +741,36 @@ calculate_amr_from_matrix <- function(rates, standard_pop_grid) {
     cli::cli_abort("Rate matrix and standard population must have same dimensions")
   }
 
-  # Numerator: Σ P × m (rates already per 100,000)
-  numerator <- sum(standard_pop_grid * rates, na.rm = TRUE)
+  # Expected marriages = Σ P_{x,y}^S × m̂_{x,y}^z / 100,000
+  # (rates are per 100,000, so divide to get actual expected marriages)
+  expected_marriages <- sum(standard_pop_grid * rates, na.rm = TRUE) / 100000
 
-  # Denominator: Σ P
-  denominator <- sum(standard_pop_grid, na.rm = TRUE)
+  # Get total male and female from attributes if available
+  total_male <- attr(standard_pop_grid, "total_male")
+  total_female <- attr(standard_pop_grid, "total_female")
 
-  # AMR
-  numerator / denominator
+  if (!is.null(total_male) && !is.null(total_female)) {
+    # Use exact denominator: sqrt(total_male × total_female)
+    denominator <- sqrt(total_male * total_female)
+  } else {
+    # Estimate from the grid
+    # P_{x,y}^S = sqrt(male_x × female_y)
+    # Row marginal: Σ_y P_{x,y} = sqrt(male_x) × Σ_y sqrt(female_y)
+    # Column marginal: Σ_x P_{x,y} = Σ_x sqrt(male_x) × sqrt(female_y)
+
+    # For uniform-ish populations:
+    # Σ P_{x,y} ≈ n × sqrt(avg_male × avg_female)
+    # sqrt(total_male × total_female) = sqrt(n × avg_male × n × avg_female)
+    #                                 = n × sqrt(avg_male × avg_female)
+    #                                 ≈ Σ P_{x,y} / n
+
+    n_ages <- nrow(rates)
+    total_P <- sum(standard_pop_grid, na.rm = TRUE)
+    denominator <- total_P / n_ages
+  }
+
+  amr <- (expected_marriages / denominator) * 100000
+  amr
 }
 
 #' Calculate simple AMR from marriages and population
@@ -886,6 +917,20 @@ build_standard_population_grid <- function(unmarried_pop,
     }
   }
 
+  # Calculate total unmarried population by sex for AMR calculation
+  # Sum across all age groups
+  total_male <- sum(sapply(names(male_lookup), function(g) {
+    if (is.na(male_lookup[g])) 0 else male_lookup[g]
+  }))
+  total_female <- sum(sapply(names(female_lookup), function(g) {
+    if (is.na(female_lookup[g])) 0 else female_lookup[g]
+  }))
+
+  # Add as attributes for AMR calculation
+  attr(grid, "total_male") <- total_male
+  attr(grid, "total_female") <- total_female
+  attr(grid, "standard_year") <- std_year
+
   grid
 }
 
@@ -1024,4 +1069,561 @@ adjust_margrid_to_groups <- function(margrid, group_totals, unmarried_pop) {
   }
 
   adjusted
+}
+
+# =============================================================================
+# PHASE 6D: HISTORICAL PERIOD (1989-2022)
+# =============================================================================
+
+#' Calculate historical marriage rates for 1989-1995
+#'
+#' @description
+#' Per TR2025: For 1989-1995, NCHS provided data by age-group-of-husband crossed
+#' with age-group-of-wife. These data are used to change the distribution of
+#' MarGrid by these age groups.
+#'
+#' Steps:
+#' 1. Use base MarGrid from 1978-1988
+#' 2. Adjust within-group rates to match NCHS subset distributions
+#' 3. Scale to NCHS U.S. totals (adjusted for SS area)
+#' 4. Graduate using 2D Whittaker-Henderson
+#'
+#' @param base_margrid Matrix: base MarGrid from build_base_margrid()
+#' @param nchs_subset data.table: NCHS MRA subset marriages (1989-1995)
+#'   From fetch_nchs_mra_marriages_1989_1995()
+#' @param nchs_us_totals data.table: NCHS U.S. total marriages
+#'   From fetch_nchs_us_total_marriages()
+#' @param unmarried_pop_grid Matrix: unmarried population geometric means
+#' @param ss_area_factor Numeric: SS area adjustment factor (default: 1.003)
+#' @param smooth Logical: apply graduation after adjustment (default: TRUE)
+#'
+#' @return list with:
+#'   - rates: List of rate matrices by year
+#'   - amr: data.table with AMR values by year
+#'
+#' @export
+calculate_historical_rates_1989_1995 <- function(base_margrid,
+                                                   nchs_subset,
+                                                   nchs_us_totals,
+                                                   unmarried_pop_grid,
+                                                   ss_area_factor = 1.003,
+                                                   smooth = TRUE) {
+  checkmate::assert_matrix(base_margrid, mode = "numeric")
+  checkmate::assert_data_table(nchs_subset)
+  checkmate::assert_data_table(nchs_us_totals)
+  checkmate::assert_matrix(unmarried_pop_grid, mode = "numeric")
+
+  cli::cli_h2("Calculating Historical Rates (1989-1995)")
+
+  years <- sort(unique(nchs_subset$year))
+  cli::cli_alert_info("Processing {length(years)} years: {min(years)}-{max(years)}")
+
+  rates <- list()
+  amr_values <- list()
+
+  for (yr in years) {
+    cli::cli_alert("Processing {yr}...")
+
+    # Get NCHS subset data for this year
+    yr_data <- nchs_subset[year == yr]
+
+    # Align age groups from NCHS 9-category to our 8-category
+    yr_data <- align_nchs_subset_age_groups(yr_data)
+
+    # Adjust MarGrid distribution to match NCHS subset
+    adjusted_grid <- adjust_margrid_to_groups(
+      base_margrid,
+      yr_data,
+      unmarried_pop_grid
+    )
+
+    # Get NCHS U.S. total for this year
+    nchs_total <- nchs_us_totals[year == yr, total_marriages]
+    if (length(nchs_total) == 0 || is.na(nchs_total)) {
+      cli::cli_warn("No NCHS total for {yr}, using MRA sum")
+      nchs_total <- sum(yr_data$marriages, na.rm = TRUE)
+    }
+
+    # Scale to SS area total (U.S. total × adjustment factor)
+    ss_total <- nchs_total * ss_area_factor
+
+    # Scale rates to match total marriages
+    scaled_grid <- scale_margrid_to_total(adjusted_grid, unmarried_pop_grid, ss_total)
+
+    # Apply graduation if requested
+    if (smooth) {
+      scaled_grid <- whittaker_henderson_2d(scaled_grid, h_param = 0.5, w_param = 0.5)
+    }
+
+    rates[[as.character(yr)]] <- scaled_grid
+
+    # Calculate AMR for this year
+    amr <- calculate_amr_from_matrix(scaled_grid, unmarried_pop_grid)
+    amr_values[[as.character(yr)]] <- data.table::data.table(
+      year = yr,
+      amr = amr,
+      total_marriages = ss_total,
+      source = "NCHS_subset"
+    )
+  }
+
+  cli::cli_alert_success("Completed 1989-1995 historical rates")
+
+  list(
+    rates = rates,
+    amr = data.table::rbindlist(amr_values)
+  )
+}
+
+#' Align NCHS subset age groups to standard 8-category
+#'
+#' @description
+#' NCHS subset uses 15-19 but our base uses 14-19. Combine groups as needed.
+#'
+#' @param nchs_data data.table with NCHS subset data
+#' @return data.table with aligned age groups
+#' @keywords internal
+align_nchs_subset_age_groups <- function(nchs_data) {
+  dt <- data.table::copy(nchs_data)
+
+  # Map NCHS groups to standard groups
+  # NCHS subset uses: 12-17, 18-19, 20-24, 25-29, 30-34, 35-44, 45-54, 55-64, 65+
+  # We need: 14-19, 20-24, 25-29, 30-34, 35-44, 45-54, 55-64, 65+
+  group_map <- c(
+    "12-17" = "14-19",
+    "15-19" = "14-19",
+    "18-19" = "14-19",
+    "20-24" = "20-24",
+    "25-29" = "25-29",
+    "30-34" = "30-34",
+    "35-44" = "35-44",
+    "45-54" = "45-54",
+    "55-64" = "55-64",
+    "65+"   = "65+"
+  )
+
+  # Map both husband and wife age groups
+  dt[, husband_age_group := group_map[husband_age_group]]
+  dt[, wife_age_group := group_map[wife_age_group]]
+
+  # Aggregate any combined groups
+  dt <- dt[!is.na(husband_age_group) & !is.na(wife_age_group),
+           .(marriages = sum(marriages, na.rm = TRUE)),
+           by = .(year, husband_age_group, wife_age_group)]
+
+  dt
+}
+
+#' Interpolate marriage rate grids between two years
+#'
+#' @description
+#' Per TR2025: For years 1996-2007, marriage grids were linearly interpolated
+#' between 1995 and 2008.
+#'
+#' @param grid_start Matrix: marriage rate grid for start year (e.g., 1995)
+#' @param grid_end Matrix: marriage rate grid for end year (e.g., 2008)
+#' @param year_start Integer: start year
+#' @param year_end Integer: end year
+#' @param years Integer vector: years to interpolate (between start and end)
+#' @param nchs_us_totals data.table: NCHS U.S. total marriages for scaling
+#' @param unmarried_pop_grid Matrix: unmarried population for scaling
+#' @param ss_area_factor Numeric: SS area adjustment factor
+#'
+#' @return list of interpolated rate matrices by year
+#'
+#' @export
+interpolate_marriage_grids <- function(grid_start,
+                                         grid_end,
+                                         year_start,
+                                         year_end,
+                                         years,
+                                         nchs_us_totals = NULL,
+                                         unmarried_pop_grid = NULL,
+                                         ss_area_factor = 1.003) {
+  checkmate::assert_matrix(grid_start, mode = "numeric")
+  checkmate::assert_matrix(grid_end, mode = "numeric")
+  checkmate::assert_integerish(years)
+
+  cli::cli_h2("Interpolating Marriage Grids ({year_start} to {year_end})")
+
+  # Calculate interpolation weights for each year
+  year_range <- year_end - year_start
+
+  results <- list()
+  amr_values <- list()
+
+  for (yr in years) {
+    # Linear interpolation weight (0 = start year, 1 = end year)
+    weight <- (yr - year_start) / year_range
+
+    # Interpolate rate grids
+    interpolated_grid <- grid_start * (1 - weight) + grid_end * weight
+
+    # Scale to NCHS total if provided
+    if (!is.null(nchs_us_totals) && !is.null(unmarried_pop_grid)) {
+      nchs_total <- nchs_us_totals[year == yr, total_marriages]
+      if (length(nchs_total) > 0 && !is.na(nchs_total)) {
+        ss_total <- nchs_total * ss_area_factor
+        interpolated_grid <- scale_margrid_to_total(
+          interpolated_grid, unmarried_pop_grid, ss_total
+        )
+      }
+    }
+
+    results[[as.character(yr)]] <- interpolated_grid
+
+    # Calculate AMR
+    if (!is.null(unmarried_pop_grid)) {
+      amr <- calculate_amr_from_matrix(interpolated_grid, unmarried_pop_grid)
+
+      # Get total marriages for this year
+      total_mar <- NA_real_
+      if (!is.null(nchs_us_totals)) {
+        nchs_total <- nchs_us_totals[year == yr, total_marriages]
+        if (length(nchs_total) > 0 && !is.na(nchs_total)) {
+          total_mar <- nchs_total * ss_area_factor
+        }
+      }
+
+      amr_values[[as.character(yr)]] <- data.table::data.table(
+        year = yr,
+        amr = amr,
+        total_marriages = total_mar,
+        source = "interpolated"
+      )
+    }
+
+    cli::cli_alert_success("Interpolated {yr} (weight: {round(weight, 3)})")
+  }
+
+  list(
+    rates = results,
+    amr = data.table::rbindlist(amr_values)
+  )
+}
+
+#' Calculate historical marriage rates from ACS (2008-2022)
+#'
+#' @description
+#' Per TR2025: Starting with 2007, ACS provides data on marriages by
+#' age-of-husband crossed with age-of-wife. These data are used to change
+#' the distribution of MarGrid by age groups.
+#'
+#' @param base_margrid Matrix: base MarGrid
+#' @param acs_grids List of ACS marriage grid matrices by year
+#' @param nchs_us_totals data.table: NCHS U.S. total marriages
+#' @param unmarried_pop_grid Matrix: unmarried population geometric means
+#' @param ss_area_factor Numeric: SS area adjustment factor
+#' @param smooth Logical: apply graduation after adjustment
+#'
+#' @return list with rates and AMR values
+#'
+#' @export
+calculate_historical_rates_2008_2022 <- function(base_margrid,
+                                                   acs_grids,
+                                                   nchs_us_totals,
+                                                   unmarried_pop_grid,
+                                                   ss_area_factor = 1.003,
+                                                   smooth = TRUE) {
+  checkmate::assert_matrix(base_margrid, mode = "numeric")
+  checkmate::assert_list(acs_grids)
+  checkmate::assert_data_table(nchs_us_totals)
+  checkmate::assert_matrix(unmarried_pop_grid, mode = "numeric")
+
+  cli::cli_h2("Calculating Historical Rates from ACS (2008-2022)")
+
+  years <- sort(as.integer(names(acs_grids)))
+  cli::cli_alert_info("Processing {length(years)} years")
+
+  rates <- list()
+  amr_values <- list()
+
+  for (yr in years) {
+    cli::cli_alert("Processing {yr}...")
+
+    acs_grid <- acs_grids[[as.character(yr)]]
+
+    # Convert ACS grid to age groups for MarGrid adjustment
+    acs_by_group <- aggregate_grid_to_age_groups(acs_grid)
+
+    # Adjust MarGrid distribution to match ACS
+    adjusted_grid <- adjust_margrid_to_groups(
+      base_margrid,
+      acs_by_group,
+      unmarried_pop_grid
+    )
+
+    # Get NCHS U.S. total for this year
+    nchs_total <- nchs_us_totals[year == yr, total_marriages]
+    if (length(nchs_total) == 0 || is.na(nchs_total)) {
+      # Use ACS total if NCHS not available
+      cli::cli_warn("No NCHS total for {yr}, using ACS sum")
+      nchs_total <- sum(acs_grid, na.rm = TRUE)
+    }
+
+    # Scale to SS area total
+    ss_total <- nchs_total * ss_area_factor
+
+    # Scale rates to match total marriages
+    scaled_grid <- scale_margrid_to_total(adjusted_grid, unmarried_pop_grid, ss_total)
+
+    # Apply graduation if requested
+    if (smooth) {
+      scaled_grid <- whittaker_henderson_2d(scaled_grid, h_param = 0.5, w_param = 0.5)
+    }
+
+    rates[[as.character(yr)]] <- scaled_grid
+
+    # Calculate AMR
+    amr <- calculate_amr_from_matrix(scaled_grid, unmarried_pop_grid)
+    amr_values[[as.character(yr)]] <- data.table::data.table(
+      year = yr,
+      amr = amr,
+      total_marriages = ss_total,
+      source = "ACS"
+    )
+  }
+
+  cli::cli_alert_success("Completed ACS-based historical rates")
+
+  list(
+    rates = rates,
+    amr = data.table::rbindlist(amr_values)
+  )
+}
+
+#' Aggregate single-year grid to age groups
+#'
+#' @description
+#' Aggregates a single-year age grid to TR2025 8-category age groups
+#' for use in MarGrid adjustment.
+#'
+#' @param grid Matrix: marriage grid with single-year ages
+#'
+#' @return data.table with husband_age_group, wife_age_group, marriages
+#'
+#' @keywords internal
+aggregate_grid_to_age_groups <- function(grid) {
+  ages <- as.integer(rownames(grid))
+  if (is.null(ages)) {
+    ages <- as.integer(colnames(grid))
+  }
+  if (is.null(ages)) {
+    ages <- seq_len(nrow(grid)) + 14  # Assume starting at 15 if no names
+  }
+
+  # Define age group mapping
+  age_group_defs <- list(
+    "14-19" = 14:19,
+    "20-24" = 20:24,
+    "25-29" = 25:29,
+    "30-34" = 30:34,
+    "35-44" = 35:44,
+    "45-54" = 45:54,
+    "55-64" = 55:64,
+    "65+"   = 65:120
+  )
+
+  results <- list()
+
+  for (h_group in names(age_group_defs)) {
+    h_ages <- age_group_defs[[h_group]]
+    h_idx <- which(ages %in% h_ages)
+
+    if (length(h_idx) == 0) next
+
+    for (w_group in names(age_group_defs)) {
+      w_ages <- age_group_defs[[w_group]]
+      w_idx <- which(ages %in% w_ages)
+
+      if (length(w_idx) == 0) next
+
+      marriages <- sum(grid[h_idx, w_idx], na.rm = TRUE)
+
+      results[[length(results) + 1]] <- data.table::data.table(
+        husband_age_group = h_group,
+        wife_age_group = w_group,
+        marriages = marriages
+      )
+    }
+  }
+
+  data.table::rbindlist(results)
+}
+
+#' Calculate complete historical period (1989-2022)
+#'
+#' @description
+#' Main orchestration function for Phase 6D. Calculates historical marriage
+#' rates for the entire 1989-2022 period per TR2025 methodology:
+#' - 1989-1995: NCHS subset data adjusted MarGrid
+#' - 1996-2007: Linear interpolation
+#' - 2008-2022: ACS data adjusted MarGrid
+#'
+#' Results are cached to disk for performance. Use `force_recompute = TRUE`
+#' to regenerate cached results.
+#'
+#' @param base_margrid Matrix: base MarGrid from build_base_margrid()
+#' @param nchs_subset data.table: NCHS MRA subset marriages (1989-1995)
+#' @param acs_grids List of ACS marriage grids (2008-2022)
+#' @param nchs_us_totals data.table: NCHS U.S. total marriages
+#' @param unmarried_pop_grid Matrix: 2010 standard population geometric means
+#' @param ss_area_factor Numeric: SS area adjustment factor (default: 1.003)
+#' @param smooth Logical: apply graduation after adjustment (default: TRUE)
+#' @param cache_dir Character: directory for caching results
+#' @param force_recompute Logical: force recomputation even if cache exists
+#'
+#' @return list with:
+#'   - rates: List of rate matrices by year (1989-2022)
+#'   - amr: data.table with AMR values by year
+#'   - summary: Summary statistics
+#'
+#' @export
+calculate_historical_period <- function(base_margrid,
+                                          nchs_subset,
+                                          acs_grids,
+                                          nchs_us_totals,
+                                          unmarried_pop_grid,
+                                          ss_area_factor = 1.003,
+                                          smooth = TRUE,
+                                          cache_dir = here::here("data/cache/marriage"),
+                                          force_recompute = FALSE) {
+  # Check for cached results
+  cache_file <- file.path(cache_dir, "historical_rates_1989_2022.rds")
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+
+  if (file.exists(cache_file) && !force_recompute) {
+    cli::cli_alert_success("Loading cached historical rates (1989-2022)")
+    cached <- readRDS(cache_file)
+
+    # Verify cache integrity
+    if (all(c("rates", "amr", "summary") %in% names(cached))) {
+      cli::cli_alert_info(
+        "Cached AMR range: {round(min(cached$amr$amr))} - {round(max(cached$amr$amr))}"
+      )
+      return(cached)
+    }
+    cli::cli_warn("Cache file corrupt, recomputing...")
+  }
+
+  cli::cli_h1("Phase 6D: Historical Period (1989-2022)")
+
+  # =========================================================================
+  # STEP 1: 1989-1995 from NCHS subset
+  # =========================================================================
+  result_1989_1995 <- calculate_historical_rates_1989_1995(
+    base_margrid = base_margrid,
+    nchs_subset = nchs_subset,
+    nchs_us_totals = nchs_us_totals,
+    unmarried_pop_grid = unmarried_pop_grid,
+    ss_area_factor = ss_area_factor,
+    smooth = smooth
+  )
+
+  # =========================================================================
+  # STEP 2: 2008-2022 from ACS
+  # =========================================================================
+  # Filter ACS grids to 2008+
+  acs_grids_2008 <- acs_grids[as.integer(names(acs_grids)) >= 2008]
+
+  result_2008_2022 <- calculate_historical_rates_2008_2022(
+    base_margrid = base_margrid,
+    acs_grids = acs_grids_2008,
+    nchs_us_totals = nchs_us_totals,
+    unmarried_pop_grid = unmarried_pop_grid,
+    ss_area_factor = ss_area_factor,
+    smooth = smooth
+  )
+
+  # =========================================================================
+  # STEP 3: 1996-2007 interpolation
+  # =========================================================================
+  # Get 1995 grid from step 1 and 2008 grid from step 2
+  grid_1995 <- result_1989_1995$rates[["1995"]]
+  grid_2008 <- result_2008_2022$rates[["2008"]]
+
+  if (is.null(grid_1995) || is.null(grid_2008)) {
+    cli::cli_abort("Need both 1995 and 2008 grids for interpolation")
+  }
+
+  result_interpolated <- interpolate_marriage_grids(
+    grid_start = grid_1995,
+    grid_end = grid_2008,
+    year_start = 1995,
+    year_end = 2008,
+    years = 1996:2007,
+    nchs_us_totals = nchs_us_totals,
+    unmarried_pop_grid = unmarried_pop_grid,
+    ss_area_factor = ss_area_factor
+  )
+
+  # =========================================================================
+  # COMBINE ALL RESULTS
+  # =========================================================================
+  all_rates <- c(
+    result_1989_1995$rates,
+    result_interpolated$rates,
+    result_2008_2022$rates
+  )
+
+  # Sort by year
+  year_order <- order(as.integer(names(all_rates)))
+  all_rates <- all_rates[year_order]
+
+  all_amr <- data.table::rbindlist(list(
+    result_1989_1995$amr,
+    result_interpolated$amr,
+    result_2008_2022$amr
+  ))
+  data.table::setorder(all_amr, year)
+
+  # =========================================================================
+  # SUMMARY
+  # =========================================================================
+  summary_stats <- data.table::data.table(
+    period = c("1989-1995", "1996-2007", "2008-2022", "Total"),
+    n_years = c(
+      length(result_1989_1995$rates),
+      length(result_interpolated$rates),
+      length(result_2008_2022$rates),
+      length(all_rates)
+    ),
+    mean_amr = c(
+      mean(result_1989_1995$amr$amr, na.rm = TRUE),
+      mean(result_interpolated$amr$amr, na.rm = TRUE),
+      mean(result_2008_2022$amr$amr, na.rm = TRUE),
+      mean(all_amr$amr, na.rm = TRUE)
+    ),
+    min_amr = c(
+      min(result_1989_1995$amr$amr, na.rm = TRUE),
+      min(result_interpolated$amr$amr, na.rm = TRUE),
+      min(result_2008_2022$amr$amr, na.rm = TRUE),
+      min(all_amr$amr, na.rm = TRUE)
+    ),
+    max_amr = c(
+      max(result_1989_1995$amr$amr, na.rm = TRUE),
+      max(result_interpolated$amr$amr, na.rm = TRUE),
+      max(result_2008_2022$amr$amr, na.rm = TRUE),
+      max(all_amr$amr, na.rm = TRUE)
+    )
+  )
+
+  cli::cli_h2("Historical Period Summary")
+  print(summary_stats)
+
+  cli::cli_alert_success(
+    "Completed historical period: {length(all_rates)} years, AMR range {round(min(all_amr$amr))} - {round(max(all_amr$amr))}"
+  )
+
+  result <- list(
+    rates = all_rates,
+    amr = all_amr,
+    summary = summary_stats
+  )
+
+  # Cache results for future use
+  saveRDS(result, cache_file)
+  cli::cli_alert_success("Cached historical rates to {cache_file}")
+
+  result
 }

@@ -19,8 +19,42 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 6C - MarGrid Development (COMPLETE)
-**Subprocess Status:** IN PROGRESS - Ready for Phase 6D (Historical Period 1989-2022)
+**Current Phase:** Phase 6D - Historical Period Calculation (COMPLETE)
+**Subprocess Status:** IN PROGRESS - Ready for Phase 6E (AMR Projection)
+
+### Phase 6D Results (COMPLETE)
+
+**Historical Rates 1989-1995:** ✓ COMPLETE
+- Adjusted base MarGrid distribution using NCHS subset data (8 age groups)
+- Scaled to NCHS U.S. totals (SS area factor 1.003)
+- Applied 2D Whittaker-Henderson graduation
+- AMR range: 3,778 - 3,952 per 100,000
+
+**Interpolated Rates 1996-2007:** ✓ COMPLETE
+- Linear interpolation between 1995 NCHS and 2008 ACS distributions
+- Scaled to NCHS U.S. totals for each year
+
+**ACS-based Rates 2008-2022:** ✓ COMPLETE
+- Adjusted MarGrid distribution using ACS marriage grids
+- Aligned ACS grids (85×85) to MarGrid dimensions (87×87)
+- Scaled to NCHS U.S. totals
+- AMR range: 3,311 - 3,722 per 100,000
+
+**Historical AMR Series:** ✓ COMPLETE
+- 1989: 3,885 | 1990: 3,952 | 1991: 3,837 | 1992: 3,824 | 1993: 3,778
+- 1994: 3,825 | 1995: 3,785 | ... (declining trend)
+- 2016: 3,722 | 2017: 3,708 | 2018: 3,545 | 2019: 3,355
+- 2021: 3,311 | 2022: 3,463
+- TR2025 Ultimate AMR target: 4,000 per 100,000 (consistent with historical range)
+
+**Key Functions Implemented:**
+- `calculate_historical_rates_1989_1995()` - NCHS subset adjustment
+- `interpolate_marriage_grids()` - Linear interpolation
+- `calculate_historical_rates_2008_2022()` - ACS-based adjustment
+- `calculate_historical_period()` - Main orchestration
+- `calculate_amr_from_matrix()` - AMR calculation with correct TR2025 formula
+
+**Key File:** `R/demography/marriage.R`
 
 ### Phase 6B Results (COMPLETE)
 
@@ -1036,12 +1070,12 @@ validate_marriage_type_split <- function(total_rates, opposite_sex, same_sex)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 6D.1 | Calculate historical marriage rates (1989-1995) | 6B.5, 6C.4 | Historical rates |
-| [ ] | 6D.2 | Interpolate rates (1996-2007) | 6D.1, 6A.3 | Interpolated rates |
-| [ ] | 6D.3 | Calculate rates from ACS (2008-2022) | 6A.3, 6C.4 | ACS-based rates |
-| [ ] | 6D.4 | Scale to NCHS U.S. totals | 6D.1-6D.3, 6B.6 | Scaled rates |
-| [ ] | 6D.5 | Calculate historical AMR series | 6D.4 | Historical AMR |
-| [ ] | 6D.6 | Validate historical AMR | 6D.5 | Validation report |
+| [x] | 6D.1 | Calculate historical marriage rates (1989-1995) | 6B.5, 6C.4 | Historical rates |
+| [x] | 6D.2 | Interpolate rates (1996-2007) | 6D.1, 6A.3 | Interpolated rates |
+| [x] | 6D.3 | Calculate rates from ACS (2008-2022) | 6A.3, 6C.4 | ACS-based rates |
+| [x] | 6D.4 | Scale to NCHS U.S. totals | 6D.1-6D.3, 6B.6 | Scaled rates |
+| [x] | 6D.5 | Calculate historical AMR series | 6D.4 | Historical AMR |
+| [x] | 6D.6 | Validate historical AMR | 6D.5 | Validation report |
 
 ### Phase 6E: AMR Projection
 

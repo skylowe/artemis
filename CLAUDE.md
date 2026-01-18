@@ -5,8 +5,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ## Current Status
 **Phase:** 6 - Marriage Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 6B - NCHS Historical Data (January 18, 2026)
-**Next Step:** Phase 6C - MarGrid Development
+**Most Recent Completion:** Phase 6D - Historical Period (January 18, 2026)
+**Next Step:** Phase 6E - AMR Projection
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -137,12 +137,31 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - AMR^z - Age-adjusted central marriage rate (Eq 1.6.2)
   - MarGrid: 87×87 matrix of marriage rates
 - **TR2025 Assumptions:** Ultimate AMR 4,000 per 100,000 unmarried couples by year 25
-- **Completed Phases:** 6A (ACS Data), 6B (NCHS Historical Data)
+- **Completed Phases:** 6A (ACS Data), 6B (NCHS Historical Data), 6C (MarGrid Development), 6D (Historical Period)
 - **Key files:**
+  - `R/demography/marriage.R` - Core MarGrid and AMR calculation functions
   - `R/data_acquisition/acs_marriage.R` - ACS new marriages (2007-2022), 2010 standard population
   - `R/data_acquisition/ipums_cps.R` - CPS unmarried population (1962-1995)
   - `R/data_acquisition/nchs_marriage.R` - NCHS MRA marriages (1978-1995), U.S. totals (1989-2022)
 - **Plan document:** `plans/06_demography_marriage_implementation_plan.md`
+
+**Phase 6C Implementation (January 18, 2026):**
+- Built base MarGrid from 1978-1988 NCHS data: 87×87 matrix (ages 14-100+)
+- Implemented 2D Beers interpolation for age group → single year expansion
+- Implemented 2D Whittaker-Henderson graduation for smoothing
+- Peak rate: 3,101 per 100,000 at husband age 26, wife age 24
+- Key functions: `build_base_margrid()`, `whittaker_henderson_2d()`, `beers_interpolate_2d()`
+
+**Phase 6D Implementation (January 18, 2026):**
+- Historical period 1989-2022 calculated per TR2025 methodology:
+  - 1989-1995: NCHS subset data adjusted MarGrid, AMR: 3,778 - 3,952
+  - 1996-2007: Linear interpolation between 1995 and 2008
+  - 2008-2022: ACS data adjusted MarGrid, AMR: 3,311 - 3,722
+- All rates scaled to NCHS U.S. totals (SS area factor 1.003)
+- AMR values consistent with TR2025 ultimate target (4,000)
+- Results cached to `data/cache/marriage/historical_rates_1989_2022.rds`
+- Key functions: `calculate_historical_period()`, `calculate_amr_from_matrix()`
+- Next: Phase 6E (AMR Projection)
 
 **Phase 6A Implementation (January 18, 2026):**
 - ACS new marriages fetched for 2007-2022 (2007 extrapolated from 2008, 2020 skipped)
@@ -151,7 +170,6 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - Item 12 (ACS marriages): ✓ Complete - `fetch_acs_new_marriages()`
 - Item 13 (2010 standard population): ✓ Complete - `get_2010_standard_population()`
 - Item 14 (CPS 1962-1995): ✓ Complete - `fetch_cps_unmarried_population()` via IPUMS
-- Historical AMR: Mean 2,837 per 100,000 (2008-2019), Current 2,745 (2022)
 
 **Phase 6B Implementation (January 18, 2026):**
 - NCHS MRA data from NBER archive: https://www.nber.org/research/data/marriage-and-divorce-data-1968-1995
@@ -162,9 +180,6 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - Item 6 (MRA subset 1989-1995): ✓ Complete - cpmarr.dat parsed (1,357,710 records, 498 age groups)
 - Item 8 (U.S. totals 1989-2022): ✓ Complete - NCHS published data
 - Items 9-11 (Prior marital status): ✓ Complete - 1978-1988 and 1989-1995 available
-- MRA covers ~77% of U.S. marriages (1989-1995)
-- Detailed age grids: 20,805 rows (1989-1995), available for 1978-1988
-- Next: Phase 6C (MarGrid Development)
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)
