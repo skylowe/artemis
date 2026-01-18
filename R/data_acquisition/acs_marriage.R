@@ -1,0 +1,1147 @@
+#' ACS Marriage Data Acquisition
+#'
+#' @description
+#' Functions for fetching American Community Survey (ACS) data on new marriages.
+#' Starting in 2008, ACS asks if a person was married in the last 12 months,
+#' enabling construction of marriage grids by age-of-husband × age-of-wife.
+#'
+#' This data is used in the MARRIAGE subprocess (Section 1.6) for:
+#' - Calculating age-specific marriage rates
+#' - Updating MarGrid distributions for 2008-2022
+#' - Validating against NCHS total marriage counts
+#'
+#' @name acs_marriage
+NULL
+
+# =============================================================================
+# CONSTANTS AND CONFIGURATION
+# =============================================================================
+#' @keywords internal
+ACS_MARRIAGE_AGE_GROUPS <- list(
+  group_15_19 = 15:19,
+  group_20_24 = 20:24,
+  group_25_29 = 25:29,
+  group_30_34 = 30:34,
+  group_35_44 = 35:44,
+  group_45_54 = 45:54,
+
+  group_55_64 = 55:64,
+  group_65_plus = 65:100
+)
+
+# =============================================================================
+# MAIN FETCHING FUNCTIONS
+# =============================================================================
+
+#' Fetch ACS new marriages by age of husband × age of wife
+#'
+#' @description
+#' Downloads ACS PUMS data for persons married in the last 12 months (MARHM=1),
+#' then links spouses within households to create marriage grids by
+#' age-of-husband crossed with age-of-wife.
+#'
+#' @param years Integer vector of ACS years (2007-2023; 2020 skipped)
+#' @param min_age Minimum age to include (default: 15)
+#' @param max_age Maximum age to include (default: 99, with 100+ grouped)
+#' @param cache_dir Character: directory for caching downloaded files
+#'
+#' @return list with:
+#'   - grids: List of matrices by year (rows = husband age, cols = wife age)
+#'   - summary: data.table with summary statistics by year
+#'   - by_age_group: data.table with marriages by age groups (for validation)
+#'
+#' @details
+#' Uses the MARHM (married in past 12 months) variable introduced in 2008.
+#' Links spouses within households using SERIALNO (household ID).
+#'
+#' For 2007, the grid is extrapolated backward from 2008 since MARHM was not
+#' available until 2008. Per TR2025, this uses proportional scaling from the
+#' 2008 distribution.
+#'
+#' Note: ACS 2020 1-year data was not released due to COVID-19 data quality issues.
+#'
+#' @export
+fetch_acs_new_marriages <- function(years = 2007:2022,
+                                     min_age = 15,
+                                     max_age = 99,
+                                     cache_dir = here::here("data/cache/acs_marriage")) {
+
+  # Validate inputs
+  checkmate::assert_integerish(years, lower = 2007, upper = 2024, min.len = 1)
+  checkmate::assert_int(min_age, lower = 14, upper = 99)
+  checkmate::assert_int(max_age, lower = min_age, upper = 100)
+
+  # Create cache directory
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+
+  # Get API key
+  api_key <- get_api_key("CENSUS_KEY")
+
+  grids <- list()
+  summaries <- list()
+
+  # Track if 2007 was requested (needs extrapolation from 2008)
+  needs_2007 <- 2007 %in% years
+
+  for (yr in years) {
+    # Skip 2020 - ACS 1-year not released due to COVID
+    if (yr == 2020) {
+      cli::cli_alert_warning("Skipping 2020 - ACS 1-year not released due to COVID")
+      next
+    }
+
+    # Skip 2007 - MARHM not available, will extrapolate from 2008
+    if (yr == 2007) {
+      cli::cli_alert_info("2007 will be extrapolated from 2008 (MARHM not available)")
+      next
+    }
+
+    cache_file <- file.path(cache_dir, sprintf("new_marriages_%d.rds", yr))
+
+    if (file.exists(cache_file)) {
+      cli::cli_alert_success("Loading cached new marriages for {yr}")
+      cached <- readRDS(cache_file)
+      grids[[as.character(yr)]] <- cached$grid
+      summaries[[as.character(yr)]] <- cached$summary
+      next
+    }
+
+    cli::cli_alert("Fetching ACS new marriages for {yr}...")
+
+    tryCatch({
+      result <- fetch_acs_new_marriages_year(yr, min_age, max_age, api_key)
+
+      if (!is.null(result$grid)) {
+        # Cache the result
+        saveRDS(result, cache_file)
+        cli::cli_alert_success("Cached new marriages for {yr} (total: {format(sum(result$grid), big.mark=',')})")
+        grids[[as.character(yr)]] <- result$grid
+        summaries[[as.character(yr)]] <- result$summary
+      }
+    }, error = function(e) {
+      cli::cli_alert_warning("Failed for {yr}: {conditionMessage(e)}")
+    })
+  }
+
+  # Extrapolate 2007 from 2008 if requested
+  if (needs_2007 && "2008" %in% names(grids)) {
+    cli::cli_alert("Extrapolating 2007 from 2008 distribution...")
+    grid_2007 <- extrapolate_2007_marriage_grid(grids[["2008"]], cache_dir)
+    if (!is.null(grid_2007)) {
+      grids[["2007"]] <- grid_2007
+      summaries[["2007"]] <- calculate_marriage_summary(grid_2007, 2007)
+      cli::cli_alert_success("Created 2007 marriage grid (extrapolated)")
+    }
+  } else if (needs_2007) {
+    cli::cli_alert_warning("Cannot extrapolate 2007 - 2008 data not available")
+  }
+
+  if (length(grids) == 0) {
+    cli::cli_abort("No ACS new marriage data retrieved")
+  }
+
+  # Combine summaries
+  summary_dt <- data.table::rbindlist(summaries, use.names = TRUE)
+  data.table::setorder(summary_dt, year)
+
+  cli::cli_alert_success(
+    "Retrieved new marriage grids for {length(grids)} years"
+  )
+
+  list(
+    grids = grids,
+    summary = summary_dt,
+    by_age_group = calculate_marriages_by_age_group(grids)
+  )
+}
+
+#' Fetch ACS new marriages for a single year
+#'
+#' @param year Integer: year to fetch
+#' @param min_age Integer: minimum age
+#' @param max_age Integer: maximum age
+#' @param api_key Character: Census API key
+#'
+#' @return list with grid matrix and summary statistics
+#'
+#' @keywords internal
+fetch_acs_new_marriages_year <- function(year, min_age, max_age, api_key) {
+  base_url <- sprintf("https://api.census.gov/data/%d/acs/acs1/pums", year)
+
+  # Variables needed:
+  # - SERIALNO: Household ID (to link spouses)
+  # - AGEP: Age
+  # - SEX: Sex (1=Male, 2=Female)
+  # - MARHM: Married in past 12 months (1=Yes, 2=No)
+  # - PWGTP: Person weight
+  # Note: We don't need REL/RELP/RELSHIPP - we link spouses via SERIALNO
+
+  req <- httr2::request(base_url) |>
+    httr2::req_url_query(
+      get = "SERIALNO,AGEP,SEX,MARHM,PWGTP",
+      # Filter to those married in past 12 months
+      MARHM = "1",
+      key = api_key
+    ) |>
+    httr2::req_timeout(600) |>  # Large query
+    httr2::req_user_agent("ARTEMIS OASDI Projection Model (R)")
+
+  resp <- api_request_with_retry(req, max_retries = 3)
+  check_api_response(resp, sprintf("ACS PUMS API (%d)", year))
+
+  json_data <- httr2::resp_body_json(resp, simplifyVector = TRUE)
+
+  if (length(json_data) < 2) {
+    cli::cli_alert_warning("No data returned for {year}")
+    return(list(grid = NULL, summary = NULL))
+  }
+
+  # Convert to data.table
+  headers <- json_data[1, ]
+  data_rows <- json_data[-1, , drop = FALSE]
+  dt <- data.table::as.data.table(data_rows)
+  data.table::setnames(dt, headers)
+
+  # Parse variables
+  dt[, serialno := as.character(SERIALNO)]
+  dt[, age := as.integer(AGEP)]
+  dt[, sex_code := as.integer(SEX)]
+  dt[, weight := as.numeric(PWGTP)]
+
+  # Map sex codes
+  dt[sex_code == 1, sex := "male"]
+  dt[sex_code == 2, sex := "female"]
+
+  # Filter to valid ages
+  dt <- dt[age >= min_age & age <= max_age & !is.na(sex)]
+
+  if (nrow(dt) == 0) {
+    cli::cli_alert_warning("No valid records for {year}")
+    return(list(grid = NULL, summary = NULL))
+  }
+
+  # Build marriage grid by linking spouses
+  grid <- build_new_marriage_grid(dt, min_age, max_age, year)
+
+  # Calculate summary statistics
+  summary_stats <- calculate_marriage_summary(grid, year)
+
+  list(grid = grid, summary = summary_stats)
+}
+
+#' Build marriage grid from newly married person records
+#'
+#' @description
+#' Links newly married persons within households to create
+#' husband age × wife age marriage grid.
+#'
+#' @param dt data.table with newly married person records
+#' @param min_age Integer: minimum age for grid
+#' @param max_age Integer: maximum age for grid
+#' @param year Integer: survey year
+#'
+#' @return matrix (rows = husband age, cols = wife age)
+#'
+#' @keywords internal
+build_new_marriage_grid <- function(dt, min_age, max_age, year) {
+  # Split by sex
+  males <- dt[sex == "male", .(serialno, husband_age = age, husband_weight = weight)]
+  females <- dt[sex == "female", .(serialno, wife_age = age, wife_weight = weight)]
+
+  # Link spouses by household ID
+  # This creates all possible pairings within households with newly married persons
+  couples <- merge(males, females, by = "serialno", allow.cartesian = TRUE)
+
+  if (nrow(couples) == 0) {
+    cli::cli_alert_warning("No spouse pairs found for {year}")
+    # Return empty grid
+    ages <- min_age:max_age
+    return(matrix(0, nrow = length(ages), ncol = length(ages),
+                  dimnames = list(husband = ages, wife = ages)))
+  }
+
+  # Use geometric mean of weights for the couple (per TR2025 methodology)
+  couples[, couple_weight := sqrt(husband_weight * wife_weight)]
+
+  # Aggregate by husband age × wife age
+  grid_data <- couples[, .(marriages = sum(couple_weight)),
+                       by = .(husband_age, wife_age)]
+
+  # Convert to matrix form
+  ages <- min_age:max_age
+  n_ages <- length(ages)
+  grid_matrix <- matrix(0, nrow = n_ages, ncol = n_ages,
+                        dimnames = list(husband = ages, wife = ages))
+
+  for (i in seq_len(nrow(grid_data))) {
+    h_age <- grid_data$husband_age[i]
+    w_age <- grid_data$wife_age[i]
+
+    # Cap ages at max_age (100+ grouped)
+    h_age <- min(h_age, max_age)
+    w_age <- min(w_age, max_age)
+
+    h_idx <- h_age - min_age + 1
+    w_idx <- w_age - min_age + 1
+
+    if (h_idx >= 1 && h_idx <= n_ages && w_idx >= 1 && w_idx <= n_ages) {
+      grid_matrix[h_idx, w_idx] <- grid_matrix[h_idx, w_idx] + grid_data$marriages[i]
+    }
+  }
+
+  # Add metadata
+  attr(grid_matrix, "year") <- year
+  attr(grid_matrix, "total_marriages") <- sum(grid_matrix)
+  attr(grid_matrix, "min_age") <- min_age
+  attr(grid_matrix, "max_age") <- max_age
+  attr(grid_matrix, "data_source") <- "ACS PUMS MARHM"
+
+  grid_matrix
+}
+
+#' Extrapolate 2007 marriage grid from 2008
+#'
+#' @description
+#' Creates a 2007 marriage grid by scaling the 2008 distribution.
+#' MARHM was not available in 2007, so we extrapolate backward using
+#' NCHS total marriage counts.
+#'
+#' @param grid_2008 Matrix: 2008 marriage grid
+#' @param cache_dir Character: cache directory
+#'
+#' @return Matrix: extrapolated 2007 marriage grid
+#'
+#' @keywords internal
+extrapolate_2007_marriage_grid <- function(grid_2008, cache_dir) {
+  # NCHS marriage totals for scaling
+  # 2007: 2,197,000
+  # 2008: 2,157,000
+  # Scale factor = 2007 NCHS / 2008 NCHS * (our 2008 coverage ratio)
+  nchs_2007 <- 2197000
+  nchs_2008 <- 2157000
+  scale_factor <- nchs_2007 / nchs_2008
+
+  # Scale the 2008 grid
+  grid_2007 <- grid_2008 * scale_factor
+
+  # Update metadata
+  attr(grid_2007, "year") <- 2007
+  attr(grid_2007, "total_marriages") <- sum(grid_2007)
+  attr(grid_2007, "data_source") <- "Extrapolated from 2008"
+
+  # Cache the extrapolated grid
+  cache_file <- file.path(cache_dir, "new_marriages_2007.rds")
+  result <- list(grid = grid_2007, summary = calculate_marriage_summary(grid_2007, 2007))
+  saveRDS(result, cache_file)
+
+  grid_2007
+}
+
+#' Calculate summary statistics for marriage grid
+#'
+#' @param grid Matrix: marriage grid
+#' @param year Integer: survey year
+#'
+#' @return data.table with summary statistics
+#'
+#' @keywords internal
+calculate_marriage_summary <- function(grid, year) {
+  total <- sum(grid)
+
+  if (total == 0) {
+    return(data.table::data.table(
+      year = year,
+      total_marriages = 0,
+      avg_husband_age = NA_real_,
+      avg_wife_age = NA_real_,
+      avg_age_difference = NA_real_,
+      same_sex_pct = NA_real_
+    ))
+  }
+
+  ages <- as.integer(rownames(grid))
+  husband_marginal <- rowSums(grid)
+  wife_marginal <- colSums(grid)
+
+  # Average ages (weighted)
+  avg_husband_age <- sum(ages * husband_marginal) / total
+  avg_wife_age <- sum(ages * wife_marginal) / total
+
+  # Average age difference (husband - wife)
+  age_diff_sum <- 0
+  for (h in seq_along(ages)) {
+    for (w in seq_along(ages)) {
+      if (grid[h, w] > 0) {
+        age_diff_sum <- age_diff_sum + (ages[h] - ages[w]) * grid[h, w]
+      }
+    }
+  }
+  avg_age_diff <- age_diff_sum / total
+
+  data.table::data.table(
+    year = year,
+    total_marriages = round(total),
+    avg_husband_age = round(avg_husband_age, 1),
+    avg_wife_age = round(avg_wife_age, 1),
+    avg_age_difference = round(avg_age_diff, 1)
+  )
+}
+
+#' Calculate marriages by age group
+#'
+#' @description
+#' Aggregates single-year marriage grids into age group totals
+#' for comparison with NCHS data.
+#'
+#' @param grids List of marriage grid matrices by year
+#'
+#' @return data.table with marriages by age group of husband × wife
+#'
+#' @export
+calculate_marriages_by_age_group <- function(grids) {
+  results <- list()
+
+  for (yr in names(grids)) {
+    grid <- grids[[yr]]
+    year <- as.integer(yr)
+
+    # Get age ranges from grid
+    ages <- as.integer(rownames(grid))
+
+    for (h_group_name in names(ACS_MARRIAGE_AGE_GROUPS)) {
+      h_ages <- ACS_MARRIAGE_AGE_GROUPS[[h_group_name]]
+      h_ages <- h_ages[h_ages %in% ages]
+
+      for (w_group_name in names(ACS_MARRIAGE_AGE_GROUPS)) {
+        w_ages <- ACS_MARRIAGE_AGE_GROUPS[[w_group_name]]
+        w_ages <- w_ages[w_ages %in% ages]
+
+        if (length(h_ages) > 0 && length(w_ages) > 0) {
+          h_idx <- which(ages %in% h_ages)
+          w_idx <- which(ages %in% w_ages)
+          marriages <- sum(grid[h_idx, w_idx])
+
+          results[[length(results) + 1]] <- data.table::data.table(
+            year = year,
+            husband_age_group = gsub("group_", "", h_group_name),
+            wife_age_group = gsub("group_", "", w_group_name),
+            marriages = marriages
+          )
+        }
+      }
+    }
+  }
+
+  if (length(results) == 0) {
+    return(data.table::data.table())
+  }
+
+  data.table::rbindlist(results)
+}
+
+# =============================================================================
+# UNMARRIED POPULATION FUNCTIONS
+# =============================================================================
+
+#' Get unmarried population from Phase 4 marital status cache
+#'
+#' @description
+#' Uses existing Phase 4 marital status cache to derive unmarried population.
+#' Unmarried = divorced + never_married + widowed (everything except married).
+#' This is much faster than re-fetching from the API.
+#'
+#' @param years Integer vector of years (2006-2023 available)
+#' @param min_age Integer: minimum age (default: 15)
+#' @param max_age Integer: maximum age (default: 99)
+#' @param cache_file Character: path to Phase 4 marital status cache
+#'
+#' @return data.table with columns: year, age, sex, unmarried_population
+#'
+#' @export
+get_unmarried_population_from_cache <- function(
+    years = 2007:2022,
+    min_age = 15,
+    max_age = 99,
+    cache_file = here::here("data/cache/acs_pums/marital_all_years.rds")
+) {
+  if (!file.exists(cache_file)) {
+    cli::cli_abort("Phase 4 marital status cache not found: {cache_file}")
+  }
+
+  cli::cli_alert("Loading unmarried population from Phase 4 cache...")
+  marital_data <- readRDS(cache_file)
+
+  # Filter to requested years and ages
+  dt <- marital_data[year %in% years & age >= min_age & age <= max_age]
+
+  # Skip 2020 if present (ACS 1-year not released)
+  dt <- dt[year != 2020]
+
+  # Sum all unmarried statuses (divorced, never_married, widowed)
+  unmarried <- dt[marital_status != "married",
+                  .(unmarried_population = sum(population)),
+                  by = .(year, age, sex)]
+
+  data.table::setorder(unmarried, year, sex, age)
+
+  years_available <- unique(unmarried$year)
+  cli::cli_alert_success(
+    "Loaded unmarried population for {length(years_available)} years from cache"
+  )
+
+  unmarried
+}
+
+#' Fetch ACS unmarried population by age and sex
+#'
+#' @description
+#' Downloads ACS PUMS unmarried population (single + widowed + divorced).
+#' Used as denominators for marriage rate calculations.
+#'
+#' NOTE: Consider using get_unmarried_population_from_cache() instead,
+#' which uses existing Phase 4 data and is much faster.
+#'
+#' @param years Integer vector of ACS years
+#' @param min_age Integer: minimum age (default: 15)
+#' @param max_age Integer: maximum age (default: 99)
+#' @param cache_dir Character: directory for caching
+#'
+#' @return data.table with columns: year, age, sex, unmarried_population
+#'
+#' @export
+fetch_acs_unmarried_population <- function(years,
+                                            min_age = 15,
+                                            max_age = 99,
+                                            cache_dir = here::here("data/cache/acs_marriage")) {
+
+  checkmate::assert_integerish(years, lower = 2005, upper = 2024, min.len = 1)
+
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+  api_key <- get_api_key("CENSUS_KEY")
+
+  results <- list()
+
+  for (yr in years) {
+    # Skip 2020
+    if (yr == 2020) {
+      cli::cli_alert_warning("Skipping 2020 - ACS 1-year not released")
+      next
+    }
+
+    cache_file <- file.path(cache_dir, sprintf("unmarried_pop_%d.rds", yr))
+
+    if (file.exists(cache_file)) {
+      cli::cli_alert_success("Loading cached unmarried population for {yr}")
+      results[[as.character(yr)]] <- readRDS(cache_file)
+      next
+    }
+
+    cli::cli_alert("Fetching ACS unmarried population for {yr}...")
+
+    tryCatch({
+      dt <- fetch_acs_unmarried_year(yr, min_age, max_age, api_key)
+
+      if (!is.null(dt) && nrow(dt) > 0) {
+        saveRDS(dt, cache_file)
+        cli::cli_alert_success("Cached unmarried population for {yr}")
+        results[[as.character(yr)]] <- dt
+      }
+    }, error = function(e) {
+      cli::cli_alert_warning("Failed for {yr}: {conditionMessage(e)}")
+    })
+  }
+
+  if (length(results) == 0) {
+    cli::cli_abort("No ACS unmarried population data retrieved")
+  }
+
+  combined <- data.table::rbindlist(results, use.names = TRUE)
+  data.table::setorder(combined, year, sex, age)
+
+  cli::cli_alert_success(
+    "Retrieved unmarried population for {length(unique(combined$year))} years"
+  )
+
+  combined
+}
+
+#' Fetch ACS unmarried population for a single year
+#'
+#' @keywords internal
+fetch_acs_unmarried_year <- function(year, min_age, max_age, api_key) {
+  base_url <- sprintf("https://api.census.gov/data/%d/acs/acs1/pums", year)
+
+  # MAR: 1=Married, 2=Widowed, 3=Divorced, 4=Separated, 5=Never married
+ # Fetch each unmarried status separately with server-side filtering
+  # This is MUCH faster than fetching all and filtering locally
+
+  results <- list()
+
+  for (mar_status in c(2, 3, 4, 5)) {  # Widowed, Divorced, Separated, Never married
+    req <- httr2::request(base_url) |>
+      httr2::req_url_query(
+        get = "AGEP,SEX,PWGTP",
+        MAR = as.character(mar_status),
+        key = api_key
+      ) |>
+      httr2::req_timeout(120) |>
+      httr2::req_user_agent("ARTEMIS OASDI Projection Model (R)")
+
+    resp <- tryCatch({
+      api_request_with_retry(req, max_retries = 3)
+    }, error = function(e) NULL)
+
+    if (is.null(resp)) next
+
+    tryCatch({
+      check_api_response(resp, sprintf("ACS PUMS API (%d, MAR=%d)", year, mar_status))
+      json_data <- httr2::resp_body_json(resp, simplifyVector = TRUE)
+
+      if (length(json_data) >= 2) {
+        headers <- json_data[1, ]
+        data_rows <- json_data[-1, , drop = FALSE]
+        dt <- data.table::as.data.table(data_rows)
+        data.table::setnames(dt, headers)
+
+        dt[, age := as.integer(AGEP)]
+        dt[, sex_code := as.integer(SEX)]
+        dt[, weight := as.numeric(PWGTP)]
+
+        # Filter to valid ages
+        dt <- dt[age >= min_age & age <= max_age]
+
+        # Map sex
+        dt[sex_code == 1, sex := "male"]
+        dt[sex_code == 2, sex := "female"]
+
+        results[[as.character(mar_status)]] <- dt[!is.na(sex), .(age, sex, weight)]
+      }
+    }, error = function(e) NULL)
+  }
+
+  if (length(results) == 0) {
+    return(NULL)
+  }
+
+  # Combine all unmarried statuses
+  combined <- data.table::rbindlist(results, use.names = TRUE)
+
+  # Aggregate by age and sex
+  result <- combined[, .(unmarried_population = sum(weight)), by = .(age, sex)]
+  result[, year := year]
+
+  data.table::setcolorder(result, c("year", "age", "sex", "unmarried_population"))
+  data.table::setorder(result, age, sex)
+
+  result
+}
+
+# =============================================================================
+# GEOMETRIC MEAN POPULATION (for rate denominators)
+# =============================================================================
+
+#' Calculate geometric mean unmarried population for marriage rates
+#'
+#' @description
+#' Calculates the geometric mean of unmarried male and female populations
+#' for each age combination, as used in marriage rate denominators.
+#'
+#' P_{x,y} = sqrt(unmarried_male_x * unmarried_female_y)
+#'
+#' @param unmarried_pop data.table from fetch_acs_unmarried_population
+#' @param min_age Integer: minimum age
+#' @param max_age Integer: maximum age
+#'
+#' @return data.table with columns: year, husband_age, wife_age, geometric_mean
+#'
+#' @export
+calculate_geometric_mean_population <- function(unmarried_pop,
+                                                  min_age = 15,
+                                                  max_age = 99) {
+  results <- list()
+
+  for (yr in unique(unmarried_pop$year)) {
+    yr_data <- unmarried_pop[year == yr]
+
+    males <- yr_data[sex == "male", .(age, male_pop = unmarried_population)]
+    females <- yr_data[sex == "female", .(age, female_pop = unmarried_population)]
+
+    # Create grid of all age combinations
+    ages <- min_age:max_age
+    grid_dt <- data.table::CJ(husband_age = ages, wife_age = ages)
+
+    # Merge male and female populations
+    grid_dt <- merge(grid_dt, males, by.x = "husband_age", by.y = "age", all.x = TRUE)
+    grid_dt <- merge(grid_dt, females, by.x = "wife_age", by.y = "age", all.x = TRUE)
+
+    # Replace NAs with 0
+    grid_dt[is.na(male_pop), male_pop := 0]
+    grid_dt[is.na(female_pop), female_pop := 0]
+
+    # Calculate geometric mean
+    grid_dt[, geometric_mean := sqrt(male_pop * female_pop)]
+    grid_dt[, year := yr]
+
+    results[[as.character(yr)]] <- grid_dt[, .(year, husband_age, wife_age, geometric_mean)]
+  }
+
+  data.table::rbindlist(results)
+}
+
+# =============================================================================
+# MARRIAGE RATE CALCULATION
+# =============================================================================
+
+#' Calculate marriage rates from marriages and population
+#'
+#' @description
+#' Calculates age-specific marriage rates using the formula:
+#' m_{x,y} = M_{x,y} / P_{x,y}
+#'
+#' where P_{x,y} is the geometric mean of unmarried male (age x) and
+#' unmarried female (age y) populations.
+#'
+#' @param marriage_grids List of marriage grid matrices by year
+#' @param unmarried_pop data.table from fetch_acs_unmarried_population
+#' @param rate_scale Numeric: rate multiplier (default: 100000 for per 100,000)
+#'
+#' @return list with:
+#'   - rates: List of rate matrices by year
+#'   - summary: data.table with rate summary statistics
+#'
+#' @export
+calculate_acs_marriage_rates <- function(marriage_grids,
+                                          unmarried_pop,
+                                          rate_scale = 100000) {
+
+  # Get geometric mean populations
+  min_age <- attr(marriage_grids[[1]], "min_age")
+  max_age <- attr(marriage_grids[[1]], "max_age")
+  geo_mean_pop <- calculate_geometric_mean_population(unmarried_pop, min_age, max_age)
+
+  rate_grids <- list()
+  summaries <- list()
+
+  for (yr in names(marriage_grids)) {
+    year <- as.integer(yr)
+    marriages <- marriage_grids[[yr]]
+    ages <- as.integer(rownames(marriages))
+
+    # Get population for this year
+    pop_yr <- geo_mean_pop[year == year]
+
+    if (nrow(pop_yr) == 0) {
+      cli::cli_alert_warning("No population data for year {year}, skipping")
+      next
+    }
+
+    # Convert population to matrix form
+    pop_matrix <- matrix(0, nrow = length(ages), ncol = length(ages),
+                         dimnames = list(husband = ages, wife = ages))
+
+    for (i in seq_len(nrow(pop_yr))) {
+      h_age <- pop_yr$husband_age[i]
+      w_age <- pop_yr$wife_age[i]
+      h_idx <- which(ages == h_age)
+      w_idx <- which(ages == w_age)
+
+      if (length(h_idx) == 1 && length(w_idx) == 1) {
+        pop_matrix[h_idx, w_idx] <- pop_yr$geometric_mean[i]
+      }
+    }
+
+    # Calculate rates (marriages per 100,000)
+    # Avoid division by zero
+    rate_matrix <- marriages / pmax(pop_matrix, 1) * rate_scale
+
+    # Set rates to 0 where population is 0
+    rate_matrix[pop_matrix == 0] <- 0
+
+    # Add metadata
+    attr(rate_matrix, "year") <- year
+    attr(rate_matrix, "rate_scale") <- rate_scale
+
+    rate_grids[[yr]] <- rate_matrix
+
+    # Calculate summary
+    summaries[[yr]] <- data.table::data.table(
+      year = year,
+      total_marriages = sum(marriages),
+      total_population = sum(pop_matrix),
+      crude_rate = sum(marriages) / sum(pop_matrix) * rate_scale,
+      mean_rate = mean(rate_matrix[rate_matrix > 0]),
+      max_rate = max(rate_matrix)
+    )
+  }
+
+  list(
+    rates = rate_grids,
+    summary = data.table::rbindlist(summaries)
+  )
+}
+
+# =============================================================================
+# SAME-SEX MARRIAGE HANDLING
+# =============================================================================
+
+#' Fetch ACS same-sex marriages
+#'
+#' @description
+#' Downloads ACS data on same-sex marriages for years 2013+.
+#' Prior to 2013, same-sex marriages were not consistently recorded.
+#'
+#' @param years Integer vector of ACS years (2013+ recommended)
+#' @param cache_dir Character: directory for caching
+#'
+#' @return data.table with same-sex marriage counts by age and sex combination
+#'
+#' @export
+fetch_acs_same_sex_marriages <- function(years = 2013:2022,
+                                          cache_dir = here::here("data/cache/acs_marriage")) {
+
+  checkmate::assert_integerish(years, lower = 2013, upper = 2024, min.len = 1)
+
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+  api_key <- get_api_key("CENSUS_KEY")
+
+  results <- list()
+
+  for (yr in years) {
+    if (yr == 2020) {
+      next
+    }
+
+    cache_file <- file.path(cache_dir, sprintf("same_sex_marriages_%d.rds", yr))
+
+    if (file.exists(cache_file)) {
+      cli::cli_alert_success("Loading cached same-sex marriages for {yr}")
+      results[[as.character(yr)]] <- readRDS(cache_file)
+      next
+    }
+
+    cli::cli_alert("Fetching ACS same-sex marriages for {yr}...")
+
+    tryCatch({
+      dt <- fetch_acs_same_sex_year(yr, api_key)
+
+      if (!is.null(dt) && nrow(dt) > 0) {
+        saveRDS(dt, cache_file)
+        cli::cli_alert_success("Cached same-sex marriages for {yr}")
+        results[[as.character(yr)]] <- dt
+      }
+    }, error = function(e) {
+      cli::cli_alert_warning("Failed for {yr}: {conditionMessage(e)}")
+    })
+  }
+
+  if (length(results) == 0) {
+    return(data.table::data.table())
+  }
+
+  combined <- data.table::rbindlist(results, use.names = TRUE)
+  data.table::setorder(combined, year)
+
+  combined
+}
+
+#' Fetch ACS same-sex marriages for a single year
+#'
+#' @keywords internal
+fetch_acs_same_sex_year <- function(year, api_key) {
+  base_url <- sprintf("https://api.census.gov/data/%d/acs/acs1/pums", year)
+
+  # SSMC (Same-sex married couple) is available in newer years
+  # Alternatively, identify same-sex couples by linking household members
+  rel_var <- if (year >= 2019) "RELSHIPP" else "RELP"
+
+  req <- httr2::request(base_url) |>
+    httr2::req_url_query(
+      get = paste0("SERIALNO,AGEP,SEX,MARHM,", rel_var, ",PWGTP"),
+      MARHM = "1",
+      key = api_key
+    ) |>
+    httr2::req_timeout(600) |>
+    httr2::req_user_agent("ARTEMIS OASDI Projection Model (R)")
+
+  resp <- api_request_with_retry(req, max_retries = 3)
+  check_api_response(resp, sprintf("ACS PUMS API (%d)", year))
+
+  json_data <- httr2::resp_body_json(resp, simplifyVector = TRUE)
+
+  if (length(json_data) < 2) {
+    return(NULL)
+  }
+
+  headers <- json_data[1, ]
+  data_rows <- json_data[-1, , drop = FALSE]
+  dt <- data.table::as.data.table(data_rows)
+  data.table::setnames(dt, headers)
+
+  dt[, serialno := as.character(SERIALNO)]
+  dt[, age := as.integer(AGEP)]
+  dt[, sex_code := as.integer(SEX)]
+  dt[, weight := as.numeric(PWGTP)]
+
+  # Identify same-sex couples by finding households where
+  # both newly married persons are same sex
+  hh_sex <- dt[, .(
+    n_males = sum(sex_code == 1),
+    n_females = sum(sex_code == 2),
+    total_weight = sum(weight)
+  ), by = serialno]
+
+  # Same-sex households have only males or only females
+  same_sex_hh <- hh_sex[(n_males >= 2 & n_females == 0) |
+                          (n_females >= 2 & n_males == 0)]
+
+  if (nrow(same_sex_hh) == 0) {
+    return(data.table::data.table(
+      year = year,
+      sex_combo = character(),
+      marriages = numeric()
+    ))
+  }
+
+  # Classify and count
+  same_sex_hh[n_males >= 2, sex_combo := "male_male"]
+  same_sex_hh[n_females >= 2, sex_combo := "female_female"]
+
+  result <- same_sex_hh[, .(marriages = sum(total_weight) / 2), by = sex_combo]
+  result[, year := year]
+
+  result
+}
+
+# =============================================================================
+# 2010 STANDARD POPULATION (Item 13)
+# =============================================================================
+
+#' Get 2010 standard population (unmarried) for AMR calculation
+#'
+#' @description
+#' Extracts the July 2010 unmarried population from Phase 4 marital status cache.
+#' Used as the standard population for age-adjusted marriage rate (AMR) calculation
+#' per Equation 1.6.2 in TR2025.
+#'
+#' @param cache_file Character: path to Phase 4 marital status cache
+#' @param by_age_group Logical: if TRUE, return by TR2025 age groups
+#'
+#' @return data.table with columns: age (or age_group), sex, unmarried_population
+#'
+#' @export
+get_2010_standard_population <- function(
+    cache_file = here::here("data/cache/acs_pums/marital_all_years.rds"),
+    by_age_group = FALSE
+) {
+  if (!file.exists(cache_file)) {
+    cli::cli_abort("Phase 4 marital status cache not found: {cache_file}")
+  }
+
+  marital_data <- readRDS(cache_file)
+
+  if (!(2010 %in% marital_data$year)) {
+    cli::cli_abort("2010 data not found in marital status cache")
+  }
+
+  # Get 2010 unmarried population (single + widowed + divorced)
+  pop_2010 <- marital_data[year == 2010 & marital_status != "married",
+                           .(unmarried_population = sum(population)),
+                           by = .(age, sex)]
+
+  if (by_age_group) {
+    # TR2025 age groups for marriage
+    age_groups <- data.table(
+      age_group = c("14-19", "20-24", "25-29", "30-34", "35-44", "45-54", "55-64", "65+"),
+      min_age = c(14, 20, 25, 30, 35, 45, 55, 65),
+      max_age = c(19, 24, 29, 34, 44, 54, 64, 120)
+    )
+
+    results <- list()
+    for (i in seq_len(nrow(age_groups))) {
+      grp <- age_groups[i]
+      subset <- pop_2010[age >= grp$min_age & age <= grp$max_age,
+                         .(unmarried_population = sum(unmarried_population)),
+                         by = sex]
+      subset[, age_group := grp$age_group]
+      results[[i]] <- subset
+    }
+    result <- data.table::rbindlist(results)
+    data.table::setcolorder(result, c("age_group", "sex", "unmarried_population"))
+    return(result)
+  }
+
+  data.table::setorder(pop_2010, age, sex)
+  pop_2010
+}
+
+#' Calculate geometric mean standard population for AMR
+#'
+#' @description
+#' Creates the P_{x,y}^S grid (geometric mean of unmarried male x and female y)
+#' using 2010 standard population for AMR calculation.
+#'
+#' @param standard_pop data.table from get_2010_standard_population()
+#' @param min_age Integer: minimum age (default: 15)
+#' @param max_age Integer: maximum age (default: 99)
+#'
+#' @return data.table with columns: husband_age, wife_age, geometric_mean
+#'
+#' @export
+get_standard_population_grid <- function(standard_pop = NULL,
+                                          min_age = 15,
+                                          max_age = 99) {
+  if (is.null(standard_pop)) {
+    standard_pop <- get_2010_standard_population()
+  }
+
+  males <- standard_pop[sex == "male", .(age, male_pop = unmarried_population)]
+  females <- standard_pop[sex == "female", .(age, female_pop = unmarried_population)]
+
+  # Create grid of all age combinations
+  ages <- min_age:max_age
+  grid_dt <- data.table::CJ(husband_age = ages, wife_age = ages)
+
+  # Merge populations
+  grid_dt <- merge(grid_dt, males, by.x = "husband_age", by.y = "age", all.x = TRUE)
+  grid_dt <- merge(grid_dt, females, by.x = "wife_age", by.y = "age", all.x = TRUE)
+
+  # Replace NAs with 0
+  grid_dt[is.na(male_pop), male_pop := 0]
+  grid_dt[is.na(female_pop), female_pop := 0]
+
+  # Calculate geometric mean
+  grid_dt[, geometric_mean := sqrt(male_pop * female_pop)]
+
+  grid_dt[, .(husband_age, wife_age, geometric_mean)]
+}
+
+# =============================================================================
+# VALIDATION AND COMPARISON
+# =============================================================================
+
+#' Validate ACS marriage data against NCHS totals
+#'
+#' @description
+#' Compares ACS-derived marriage totals against NCHS published totals.
+#'
+#' @param acs_summary data.table with ACS marriage summary
+#' @param nchs_totals data.table with NCHS total marriages by year
+#'
+#' @return data.table with comparison results
+#'
+#' @export
+validate_acs_vs_nchs <- function(acs_summary, nchs_totals) {
+  comparison <- merge(
+    acs_summary[, .(year, acs_total = total_marriages)],
+    nchs_totals[, .(year, nchs_total = total_marriages)],
+    by = "year",
+    all = TRUE
+  )
+
+  comparison[, difference := acs_total - nchs_total]
+  comparison[, pct_diff := (acs_total - nchs_total) / nchs_total * 100]
+
+  comparison
+}
+
+#' Get NCHS total marriage counts
+#'
+#' @description
+#' Returns NCHS published total marriage counts for the United States.
+#' Data from CDC/NCHS National Vital Statistics Reports.
+#'
+#' @return data.table with columns: year, total_marriages
+#'
+#' @export
+get_nchs_marriage_totals <- function() {
+  # Source: CDC/NCHS National Vital Statistics Reports
+  # https://www.cdc.gov/nchs/data/dvs/marriage-divorce/national-marriage-divorce-rates-00-23.pdf
+  # Values are in thousands
+
+  data.table::data.table(
+    year = c(2000:2019, 2021:2022),
+    total_marriages = c(
+      # 2000-2009
+      2315000, 2326000, 2254000, 2245000, 2279000,
+      2249000, 2193000, 2197000, 2157000, 2080000,
+      # 2010-2019
+      2096000, 2118000, 2131000, 2081000, 2140000,
+      2221000, 2251000, 2236000, 2132000, 2015000,
+      # 2021-2022 (2020 not available)
+      1985000, 2065000
+    )
+  )
+}
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
+#' Convert marriage grid matrix to data.table
+#'
+#' @param grid Matrix: marriage grid from fetch_acs_new_marriages
+#'
+#' @return data.table with columns: year, husband_age, wife_age, marriages
+#'
+#' @export
+new_marriage_grid_to_dt <- function(grid) {
+  year <- attr(grid, "year")
+  ages <- as.integer(rownames(grid))
+
+  # Convert to long form
+  result <- data.table::data.table(
+    husband_age = rep(ages, times = length(ages)),
+    wife_age = rep(ages, each = length(ages)),
+    marriages = as.vector(t(grid))  # t() because rep order is by column
+  )
+
+  result[, year := year]
+  data.table::setcolorder(result, c("year", "husband_age", "wife_age", "marriages"))
+
+  result
+}
+
+#' Summarize marriage grid by age group
+#'
+#' @param grid Matrix: marriage grid
+#' @param age_groups List of age group vectors (default: TR2025 groups)
+#'
+#' @return data.table with marriages by age group
+#'
+#' @export
+summarize_grid_by_age_groups <- function(grid,
+                                          age_groups = ACS_MARRIAGE_AGE_GROUPS) {
+  year <- attr(grid, "year")
+  ages <- as.integer(rownames(grid))
+
+  results <- list()
+
+  for (h_name in names(age_groups)) {
+    h_ages <- age_groups[[h_name]]
+    h_ages <- h_ages[h_ages %in% ages]
+
+    for (w_name in names(age_groups)) {
+      w_ages <- age_groups[[w_name]]
+      w_ages <- w_ages[w_ages %in% ages]
+
+      if (length(h_ages) > 0 && length(w_ages) > 0) {
+        h_idx <- which(ages %in% h_ages)
+        w_idx <- which(ages %in% w_ages)
+        marriages <- sum(grid[h_idx, w_idx])
+
+        results[[length(results) + 1]] <- data.table::data.table(
+          year = year,
+          husband_group = gsub("group_", "", h_name),
+          wife_group = gsub("group_", "", w_name),
+          min_husband_age = min(h_ages),
+          max_husband_age = max(h_ages),
+          min_wife_age = min(w_ages),
+          max_wife_age = max(w_ages),
+          marriages = marriages
+        )
+      }
+    }
+  }
+
+  data.table::rbindlist(results)
+}

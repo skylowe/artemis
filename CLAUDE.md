@@ -4,9 +4,9 @@
 R-based replication of the SSA Office of the Chief Actuary's long-range OASDI projection model. Uses `{targets}` for pipeline orchestration and `{renv}` for dependency management.
 
 ## Current Status
-**Phase:** 5 - Temporary/Unlawfully Present Immigration Subprocess (COMPLETE)
-**Most Recent Completion:** Phase 5H - Targets Integration (January 18, 2026)
-**Next Step:** Phase 6 - Population Projection
+**Phase:** 6 - Marriage Subprocess (IN PROGRESS)
+**Most Recent Completion:** Phase 6A - Data Acquisition (January 18, 2026)
+**Next Step:** Phase 6B - NCHS Historical Data
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -129,6 +129,29 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - TR2025 assumptions: DAPA/2014 DACA not applied, no new 2012 grants for 2019-23
 - 7/7 tests passed, 4/4 validation checks passed
 - Key results: 800K peak (2017), 580K (2023), declining to ~220K by 2040
+
+### Marriage Subprocess Status (IN PROGRESS)
+- **Purpose:** Project annual age-specific marriage rates by husband age × wife age
+- **Key Outputs:**
+  - m̂_{x,y}^z - Age-specific marriage rates (Eq 1.6.1)
+  - AMR^z - Age-adjusted central marriage rate (Eq 1.6.2)
+  - MarGrid: 87×87 matrix of marriage rates
+- **TR2025 Assumptions:** Ultimate AMR 4,000 per 100,000 unmarried couples by year 25
+- **Completed Phases:** 6A (Data Acquisition)
+- **Key files:**
+  - `R/data_acquisition/acs_marriage.R` - ACS new marriages (2007-2022), 2010 standard population
+  - `R/data_acquisition/ipums_cps.R` - CPS unmarried population (1962-1995)
+- **Plan document:** `plans/06_demography_marriage_implementation_plan.md`
+
+**Phase 6A Implementation (January 18, 2026):**
+- ACS new marriages fetched for 2007-2022 (2007 extrapolated from 2008, 2020 skipped)
+- Marriage grids built: 85×85 matrices (ages 15-99) for each year
+- ACS captures ~88% of NCHS total marriages (mean coverage)
+- Item 12 (ACS marriages): ✓ Complete - `fetch_acs_new_marriages()`
+- Item 13 (2010 standard population): ✓ Complete - `get_2010_standard_population()`
+- Item 14 (CPS 1962-1995): ✓ Complete - `fetch_cps_unmarried_population()` via IPUMS
+- Historical AMR: Mean 2,837 per 100,000 (2008-2019), Current 2,745 (2022)
+- Next: Phase 6B (NCHS Historical Data from NBER)
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)

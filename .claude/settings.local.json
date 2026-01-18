@@ -73,7 +73,8 @@
       "WebFetch(domain:sgp.fas.org)",
       "WebFetch(domain:www.everycrsreport.com)",
       "Bash(xargs:*)",
-      "Bash(pgrep:*)"
+      "Bash(pgrep:*)",
+      "WebFetch(domain:www2.nber.org)"
     ]
   }
 }
