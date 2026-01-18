@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 17, 2026
-**Current Phase:** Phase 4D - Core Population Calculations (COMPLETED)
-**Next Step:** Phase 4E - Marital Status Calculations
+**Current Phase:** Phase 4E - Marital Status Calculations (COMPLETED)
+**Next Phase:** Phase 4F - Temporary/Unlawful Population or Phase 4G - Civilian Noninstitutionalized
 
 ### Phase 4A Progress Notes - COMPLETED (January 17, 2026)
 
@@ -221,6 +221,57 @@
 - Pre-1980 years use historical estimates with age distribution interpolation
 - Data caching reduces API calls on subsequent runs
 - Main bottleneck: ACS PUMS downloads for armed forces age/sex distribution
+
+**Enhanced Phase 4D (Post-Completion):**
+- Census vintage configurable via `config/assumptions/tr2025.yaml` (set to Vintage 2023)
+- Component caching added: `get_cached_components()` returns yearly breakdowns
+- Full validation against TR2025:
+  - Mean absolute error: 1.55%
+  - Within 1%: 44/83 years (53%)
+  - Within 2%: 53/83 years (64%)
+  - 2017-2018: Nearly perfect match (±0.02%)
+  - Early years (1940-1970): Underestimate by 2-4%
+  - 2019-2022: Slight overestimate (+0.3% to +0.6%) due to Census vintage differences
+
+### Phase 4E Progress Notes - COMPLETED (January 17, 2026)
+
+**Implementation:**
+- Created `R/demography/historical_marital_status.R` with 800+ lines
+- Implements Equation 1.4.2: P^z_{x,s,m} = P^z_{x,s} × MaritalPct^z_{x,s,m}
+
+**Key Functions:**
+1. `get_marital_status_proportions()` - Combines ACS/IPUMS data, fills missing age-sex combos
+2. `calculate_historical_population_marital()` - Main entry point for Equation 1.4.2
+3. `balance_married_populations()` - Enforces married males = married females (pre-2013)
+4. `incorporate_same_sex_marriage()` - Post-2013 adjustments (2.5% gay, 4.5% lesbian)
+5. `beers_interpolate()` / `beers_interpolate_2d()` - H.S. Beers interpolation for age groups
+
+**Data Sources:**
+- ACS PUMS (2006-2023): Single-year-of-age marital status proportions
+- IPUMS (1940-2000): Decennial census marital status distributions
+- Interpolation between census years for non-census years
+
+**Validation Results:**
+- Marital totals match P^z_{x,s} exactly (0% difference for all years)
+- 83 years processed (1940-2022)
+- 64,728 rows output (year × age × sex × marital_status × orientation)
+- Married percentage trend: 56.7% (1940) → 61.9% (1960 peak) → 47.6% (2022)
+
+**Marital Status Categories:**
+- Single (never married)
+- Married
+- Widowed
+- Divorced
+- (Separated combined with divorced per SSA methodology)
+
+**Same-Sex Marriage Modeling (post-2013):**
+- Gay population: 2.5% of males (~3.4-3.5M)
+- Lesbian population: 4.5% of females (~6.3-6.4M)
+- Separate orientation tracking: heterosexual, gay, lesbian
+
+**Cached Output:**
+- `data/cache/historical_population/ss_population_marital_1940_2022.rds`
+- `data/cache/historical_population/marital_proportions_1940_2022.rds`
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
@@ -1249,17 +1300,17 @@ validate_o_against_dhs <- function(o_pop, dhs_estimates)
 | [x] | 4D.4 | Calculate P_x_s (Eq 1.4.1) | 4D.1-4D.3 | Total population |
 | [x] | 4D.5 | Validate P_x_s against TR2025 | 4D.4, TR2025 | Validation report |
 
-### Phase 4E: Marital Status Calculations
+### Phase 4E: Marital Status Calculations - COMPLETED (January 17, 2026)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 4E.1 | Implement Beers interpolation | None | beers_interpolate_marital_status() |
-| [ ] | 4E.2 | Implement marriage grid interpolation | 4E.1 | beers_interpolate_2d() |
-| [ ] | 4E.3 | Implement marital status allocation | 4D.4, 4B | Preliminary P_x_s_m |
-| [ ] | 4E.4 | Implement marriage balancing | 4E.3 | Balanced populations |
-| [ ] | 4E.5 | Implement same-sex marriage model | 4E.4 | Post-2013 populations |
-| [ ] | 4E.6 | Calculate P_x_s_m (Eq 1.4.2) | 4E.1-4E.5 | Marital populations |
-| [ ] | 4E.7 | Validate marital status consistency | 4E.6 | Validation report |
+| [x] | 4E.1 | Implement Beers interpolation | None | beers_interpolate() |
+| [x] | 4E.2 | Implement marriage grid interpolation | 4E.1 | beers_interpolate_2d() |
+| [x] | 4E.3 | Implement marital status allocation | 4D.4, 4B | get_marital_status_proportions() |
+| [x] | 4E.4 | Implement marriage balancing | 4E.3 | balance_married_populations() |
+| [x] | 4E.5 | Implement same-sex marriage model | 4E.4 | incorporate_same_sex_marriage() |
+| [x] | 4E.6 | Calculate P_x_s_m (Eq 1.4.2) | 4E.1-4E.5 | calculate_historical_population_marital() |
+| [x] | 4E.7 | Validate marital status consistency | 4E.6 | 0% difference from P_x_s totals |
 
 ### Phase 4F: Temporary/Unlawful Population
 

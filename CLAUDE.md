@@ -5,8 +5,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ## Current Status
 **Phase:** 4 - Historical Population Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 4D - Core Population Calculations (January 17, 2026)
-**Next Step:** Phase 4E - Marital Status Calculations
+**Most Recent Completion:** Phase 4E - Marital Status Calculations (January 17, 2026)
+**Next Step:** Phase 4F - Temporary/Unlawful Population (Eq 1.4.3) or Phase 4G - Civilian Noninstitutionalized (Eq 1.4.4)
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -98,8 +98,32 @@ Reviewed TR2025 documentation against implementation. Added missing data for 8 o
 - Components: USAF + UC + TERR + FED + DEP + BEN + OTH
 - Tab year calculation for ages 0-84 with survival-based 85+ build-up
 - Inter-tab interpolation using Census data directly (1980+) or linear interpolation (pre-1980)
-- Validation: 2019-2022 within 0.2% mean absolute error of TR2025
+- Census vintage configurable via `config/assumptions/tr2025.yaml` (set to Vintage 2023)
+- Component caching: `get_cached_components()` returns yearly breakdowns
+- Validation against TR2025:
+  - Mean absolute error: 1.55%
+  - Within 1%: 44/83 years
+  - Within 2%: 53/83 years
+  - 2017-2018: Nearly perfect match (±0.02%)
+  - 2019-2022: Slight overestimate (+0.3% to +0.6%) due to Census vintage differences
 - Key output: P^z_{x,s} (population by age and sex for Dec 31, 1940-2022)
+
+**Phase 4E Complete (January 17, 2026):**
+- Marital status calculations: `R/demography/historical_marital_status.R`
+- Implements Equation 1.4.2: P^z_{x,s,m} = P^z_{x,s} × MaritalPct^z_{x,s,m}
+- Key functions implemented:
+  - `get_marital_status_proportions()` - combines ACS/IPUMS data by year
+  - `calculate_historical_population_marital()` - main entry point
+  - `balance_married_populations()` - married males ≈ married females (pre-2013)
+  - `incorporate_same_sex_marriage()` - post-2013 adjustments (2.5% gay, 4.5% lesbian)
+  - `beers_interpolate()` / `beers_interpolate_2d()` - H.S. Beers interpolation
+- Data sources: ACS PUMS (2006-2023), IPUMS (1940-2000)
+- Validation: Marital totals match P^z_{x,s} exactly (0% difference)
+- Results:
+  - 83 years processed (1940-2022)
+  - 64,728 rows output (year × age × sex × marital_status × orientation)
+  - Married % trend: 56.7% (1940) → 61.9% (1960 peak) → 47.6% (2022)
+- Key output: P^z_{x,s,m} cached in `ss_population_marital_1940_2022.rds`
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)
