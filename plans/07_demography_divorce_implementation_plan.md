@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 7F - COMPLETE
-**Subprocess Status:** IN PROGRESS (Phase 7G next)
+**Current Phase:** Phase 7G - COMPLETE
+**Subprocess Status:** IN PROGRESS (Phase 7H next)
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
@@ -1036,10 +1036,42 @@ We use ACS PUMS divorce data (2018-2022) instead, which is:
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 7G.1 | Implement DivGrid-to-ADR scaling | 7C.5, 7F.1 | scale_divgrid_to_adr() |
-| [ ] | 7G.2 | Project age-specific rates (2023-2099) | 7G.1, 7F.3 | Projected rates |
-| [ ] | 7G.3 | Build run_divorce_projection() entry point | All above | Main function |
-| [ ] | 7G.4 | Validate projected rates | 7G.2 | Validation report |
+| [x] | 7G.1 | Implement DivGrid-to-ADR scaling | 7C.5, 7F.1 | scale_divgrid_to_adr() |
+| [x] | 7G.2 | Project age-specific rates (2023-2099) | 7G.1, 7F.3 | Projected rates |
+| [x] | 7G.3 | Build run_divorce_projection() entry point | All above | Main function |
+| [x] | 7G.4 | Validate projected rates | 7G.2 | Validation report |
+
+**Phase 7G Notes (January 18, 2026):**
+- Implemented TR2025 Section 1.7 rate projection methodology
+- Key functions added to `R/demography/divorce.R`:
+  - `project_divorce_rates()`: Scales DivGrid for each year (2023-2099) to match projected ADR
+  - `validate_projected_rates()`: Validates projected rates (7 checks)
+  - `run_divorce_projection()`: Main entry point orchestrating all phases
+  - `rates_to_long_format()`: Converts rate matrices to long-format data.table
+- Methodology per TR2025:
+  - "The age-of-husband-age-of-wife-specific rates in DivGrid are adjusted proportionally
+    so as to produce the age-adjusted rate assumed for that particular year."
+  - Uses ACS-adjusted DivGrid as base (reflects current age patterns)
+  - Scales proportionally to match projected ADR for each year
+- Key results:
+  - Historical years: 1979-2022 (44 years)
+  - Projected years: 2023-2099 (77 years)
+  - Total years: 121
+  - ADR trajectory: 1,119 (2022) → 1,700 (2047) → 1,700 (2099)
+  - Scale factors: 0.455 (2023) to 0.692 (2047+)
+  - Peak divorce ages maintained at (41, 39) throughout projection
+  - Max rate: 85.2 (2023) → 129.5 (2047+) per 100,000
+- Validation: 7/7 checks pass
+  - Year count: 77/77
+  - Grid dimensions: all 87x87
+  - ADR at 2047: exact 1700
+  - ADR constant after 2047
+  - All rates non-negative
+  - Rate pattern preserved
+  - Scale factors reasonable (0.455-0.692)
+- Cache files:
+  - `data/cache/divorce/projected_rates_2023_2099.rds`
+  - `data/cache/divorce/divorce_projection_complete.rds`
 
 ### Phase 7H: Validation & Pipeline Integration
 

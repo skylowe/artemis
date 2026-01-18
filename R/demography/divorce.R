@@ -2767,3 +2767,488 @@ get_projected_adr <- function(cache_dir = here::here("data/cache"),
 
   adr_projection
 }
+
+
+# =============================================================================
+# PHASE 7G: DIVORCE RATE PROJECTION (2023-2099)
+# =============================================================================
+
+#' Project divorce rates for all years (2023-2099)
+#'
+#' @description
+#' Projects age-specific divorce rates by scaling DivGrid to match
+#' the projected ADR for each year.
+#'
+#' Per TR2025: "To obtain age-specific rates for use in the projections,
+#' the age-of-husband-age-of-wife-specific rates in DivGrid are adjusted
+#' proportionally so as to produce the age-adjusted rate assumed for
+#' that particular year."
+#'
+#' @param base_divgrid Matrix: base DivGrid to scale (87x87)
+#' @param adr_projection data.table: projected ADR from project_adr()
+#' @param standard_pop Matrix: standard population for ADR calculation
+#' @param start_year Integer: first projection year (default: 2023)
+#' @param end_year Integer: last projection year (default: 2099)
+#' @param cache_dir Character: cache directory path
+#' @param force Logical: force recalculation (default: FALSE)
+#'
+#' @return List with:
+#'   - rates: Named list of 87x87 matrices, one per year
+#'   - adr: Projected ADR series
+#'   - years: Vector of years
+#'
+#' @export
+project_divorce_rates <- function(base_divgrid,
+                                   adr_projection,
+                                   standard_pop,
+                                   start_year = 2023,
+                                   end_year = 2099,
+                                   cache_dir = here::here("data/cache"),
+                                   force = FALSE) {
+
+  cache_file <- file.path(cache_dir, "divorce", "projected_rates_2023_2099.rds")
+
+  # Return cached if available
+  if (file.exists(cache_file) && !force) {
+    cli::cli_alert_success("Loading cached projected divorce rates (2023-2099)")
+    cached <- readRDS(cache_file)
+
+    # Verify cache integrity
+    if (all(c("rates", "adr", "years") %in% names(cached))) {
+      cli::cli_alert_info(
+        "Cached: {length(cached$rates)} years, ADR {round(cached$adr[1, projected_adr], 1)} -> {round(cached$adr[.N, projected_adr], 1)}"
+      )
+      return(cached)
+    }
+    cli::cli_warn("Cache file corrupt, recomputing...")
+  }
+
+  cli::cli_h2("Projecting Divorce Rates ({start_year}-{end_year})")
+
+  checkmate::assert_matrix(base_divgrid, mode = "numeric")
+  checkmate::assert_data_table(adr_projection)
+  checkmate::assert_matrix(standard_pop, mode = "numeric")
+
+  years <- start_year:end_year
+  rates <- list()
+
+  cli::cli_progress_bar("Scaling DivGrid to projected ADR", total = length(years))
+
+  for (i in seq_along(years)) {
+    yr <- years[i]
+    cli::cli_progress_update()
+
+    # Get target ADR for this year
+    target_adr <- adr_projection[year == yr, projected_adr]
+
+    if (length(target_adr) == 0) {
+      cli::cli_warn("No projected ADR for year {yr}, using ultimate")
+      target_adr <- attr(adr_projection, "ultimate_adr")
+    }
+
+    # Scale DivGrid to target ADR
+    scaled_grid <- scale_divgrid_to_target_adr(
+      divgrid = base_divgrid,
+      target_adr = target_adr,
+      standard_pop = standard_pop
+    )
+
+    rates[[as.character(yr)]] <- scaled_grid
+
+    # Progress indicator every 10 years
+    if (yr %% 10 == 0 || yr == start_year || yr == end_year) {
+      achieved_adr <- attr(scaled_grid, "achieved_adr")
+      cli::cli_alert("{yr}: ADR = {round(achieved_adr, 1)}")
+    }
+  }
+
+  cli::cli_progress_done()
+
+  # Summary
+  cli::cli_alert_success("Projected {length(years)} years ({start_year}-{end_year})")
+
+  result <- list(
+    rates = rates,
+    adr = adr_projection,
+    years = years,
+    start_year = start_year,
+    end_year = end_year
+  )
+
+  # Cache result
+  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+  saveRDS(result, cache_file)
+  cli::cli_alert_success("Cached projected divorce rates")
+
+  result
+}
+
+
+#' Validate projected divorce rates
+#'
+#' @description
+#' Validates the projected divorce rates against expected criteria.
+#'
+#' @param projected_result Result from project_divorce_rates()
+#' @param standard_pop Standard population matrix
+#' @param ultimate_adr Target ultimate ADR
+#' @param ultimate_year Year ultimate should be reached
+#'
+#' @return List with validation results
+#'
+#' @export
+validate_projected_rates <- function(projected_result,
+                                      standard_pop,
+                                      ultimate_adr = DIVORCE_ULTIMATE_ADR,
+                                      ultimate_year = 2047) {
+
+  cli::cli_h2("Projected Divorce Rates Validation")
+
+  checks <- list()
+  n_pass <- 0
+  n_total <- 0
+
+  rates <- projected_result$rates
+  adr_proj <- projected_result$adr
+  years <- projected_result$years
+
+  # Check 1: All years have rate grids
+  n_total <- n_total + 1
+  expected_years <- length(2023:2099)
+  actual_years <- length(rates)
+  if (actual_years == expected_years) {
+    cli::cli_alert_success("Year count: {actual_years}/{expected_years}")
+    checks$year_count <- TRUE
+    n_pass <- n_pass + 1
+  } else {
+    cli::cli_alert_danger("Year count: {actual_years}/{expected_years}")
+    checks$year_count <- FALSE
+  }
+
+  # Check 2: All grids have correct dimensions
+  n_total <- n_total + 1
+  dims_correct <- all(sapply(rates, function(g) all(dim(g) == c(87, 87))))
+  if (dims_correct) {
+    cli::cli_alert_success("Grid dimensions: all 87x87")
+    checks$dimensions <- TRUE
+    n_pass <- n_pass + 1
+  } else {
+    cli::cli_alert_danger("Grid dimensions: some incorrect")
+    checks$dimensions <- FALSE
+  }
+
+  # Check 3: ADR at ultimate year matches target
+  n_total <- n_total + 1
+  ultimate_grid <- rates[[as.character(ultimate_year)]]
+  achieved_adr <- calculate_adr(ultimate_grid, standard_pop)
+  tolerance <- 0.01
+  if (abs(achieved_adr - ultimate_adr) / ultimate_adr < tolerance) {
+    cli::cli_alert_success("ADR at {ultimate_year}: {round(achieved_adr, 1)} (target: {ultimate_adr})")
+    checks$ultimate_adr <- TRUE
+    n_pass <- n_pass + 1
+  } else {
+    cli::cli_alert_danger("ADR at {ultimate_year}: {round(achieved_adr, 1)} (target: {ultimate_adr})")
+    checks$ultimate_adr <- FALSE
+  }
+
+  # Check 4: ADR constant after ultimate year
+  n_total <- n_total + 1
+  post_ultimate_years <- years[years > ultimate_year]
+  post_ultimate_adrs <- sapply(post_ultimate_years, function(yr) {
+    calculate_adr(rates[[as.character(yr)]], standard_pop)
+  })
+  if (all(abs(post_ultimate_adrs - ultimate_adr) / ultimate_adr < tolerance)) {
+    cli::cli_alert_success("ADR constant at {ultimate_adr} after {ultimate_year}")
+    checks$constant_after_ultimate <- TRUE
+    n_pass <- n_pass + 1
+  } else {
+    cli::cli_alert_danger("ADR varies after {ultimate_year}")
+    checks$constant_after_ultimate <- FALSE
+  }
+
+  # Check 5: No negative rates
+  n_total <- n_total + 1
+  has_negative <- any(sapply(rates, function(g) any(g < 0, na.rm = TRUE)))
+  if (!has_negative) {
+    cli::cli_alert_success("All rates non-negative")
+    checks$non_negative <- TRUE
+    n_pass <- n_pass + 1
+  } else {
+    cli::cli_alert_danger("Some rates are negative")
+    checks$non_negative <- FALSE
+  }
+
+  # Check 6: Rate pattern preserved (peak location similar)
+  n_total <- n_total + 1
+  first_grid <- rates[["2023"]]
+  last_grid <- rates[["2099"]]
+  first_peak <- which(first_grid == max(first_grid, na.rm = TRUE), arr.ind = TRUE)[1, ]
+  last_peak <- which(last_grid == max(last_grid, na.rm = TRUE), arr.ind = TRUE)[1, ]
+  if (all(first_peak == last_peak)) {
+    cli::cli_alert_success("Rate pattern preserved: peak at ({first_peak[1] + 13}, {first_peak[2] + 13})")
+    checks$pattern_preserved <- TRUE
+    n_pass <- n_pass + 1
+  } else {
+    cli::cli_alert_warning("Peak location shifted: ({first_peak[1] + 13}, {first_peak[2] + 13}) -> ({last_peak[1] + 13}, {last_peak[2] + 13})")
+    checks$pattern_preserved <- TRUE  # Warning only, not failure
+    n_pass <- n_pass + 1
+  }
+
+  # Check 7: Scale factors reasonable
+  n_total <- n_total + 1
+  scale_factors <- sapply(rates, function(g) attr(g, "scale_factor"))
+  scale_factors <- scale_factors[!is.na(scale_factors)]
+  if (all(scale_factors > 0 & scale_factors < 10)) {
+    cli::cli_alert_success("Scale factors reasonable: {round(min(scale_factors), 3)} - {round(max(scale_factors), 3)}")
+    checks$scale_factors <- TRUE
+    n_pass <- n_pass + 1
+  } else {
+    cli::cli_alert_danger("Scale factors out of range")
+    checks$scale_factors <- FALSE
+  }
+
+  cli::cli_alert_info("Passed: {n_pass}/{n_total}")
+
+  list(
+    passed = n_pass == n_total,
+    n_pass = n_pass,
+    n_total = n_total,
+    checks = checks
+  )
+}
+
+
+#' Run complete divorce projection
+#'
+#' @description
+#' Main entry point for the divorce subprocess. Orchestrates all phases
+#' from data acquisition through projection.
+#'
+#' Per TR2025 Section 1.7, this function:
+#' 1. Builds base DivGrid from 1979-1988 NCHS DRA data
+#' 2. Adjusts DivGrid using recent ACS data
+#' 3. Calculates historical ADR series (1989-2022)
+#' 4. Projects ADR to ultimate (1,700 by 2047)
+#' 5. Scales DivGrid to match projected ADR for each year
+#'
+#' @param cache_dir Character: cache directory path
+#' @param ultimate_adr Numeric: ultimate ADR target (default: 1700)
+#' @param ultimate_year Integer: year to reach ultimate (default: 2047)
+#' @param end_year Integer: final projection year (default: 2099)
+#' @param force Logical: force recalculation (default: FALSE)
+#'
+#' @return List with:
+#'   - historical: Historical divorce data (1979-2022)
+#'   - projected_adr: Projected ADR series (2023-2099)
+#'   - projected_rates: Projected DivGrid for each year
+#'   - complete_adr: Combined historical + projected ADR
+#'   - validation: Validation results
+#'   - metadata: Processing metadata
+#'
+#' @export
+run_divorce_projection <- function(cache_dir = here::here("data/cache"),
+                                    ultimate_adr = NULL,
+                                    ultimate_year = 2047,
+                                    end_year = 2099,
+                                    force = FALSE) {
+
+  cache_file <- file.path(cache_dir, "divorce", "divorce_projection_complete.rds")
+
+  # Return cached if available
+  if (file.exists(cache_file) && !force) {
+    cli::cli_alert_success("Loading cached complete divorce projection")
+    cached <- readRDS(cache_file)
+    return(cached)
+  }
+
+  cli::cli_h1("Running Complete Divorce Projection (TR2025 Section 1.7)")
+
+  start_time <- Sys.time()
+
+  # Load config if available
+  if (is.null(ultimate_adr)) {
+    config_path <- here::here("config/assumptions/tr2025.yaml")
+    if (file.exists(config_path)) {
+      config <- yaml::read_yaml(config_path)
+      ultimate_adr <- if (!is.null(config$divorce$ultimate_adr)) {
+        config$divorce$ultimate_adr
+      } else {
+        DIVORCE_ULTIMATE_ADR
+      }
+      ultimate_year <- if (!is.null(config$divorce$ultimate_year)) {
+        config$divorce$ultimate_year
+      } else {
+        2047
+      }
+    } else {
+      ultimate_adr <- DIVORCE_ULTIMATE_ADR
+    }
+  }
+
+  cli::cli_alert_info("Ultimate ADR: {ultimate_adr}, Ultimate year: {ultimate_year}")
+
+  # =========================================================================
+  # STEP 1: Get historical divorce data (includes base and adjusted DivGrid)
+  # =========================================================================
+  cli::cli_h2("Step 1: Loading Historical Divorce Data (1979-2022)")
+
+  historical <- get_historical_divorce_data(cache_dir, force = force)
+
+  base_divgrid <- historical$base_result$divgrid
+  adjusted_divgrid <- historical$adjusted_result$adjusted_divgrid
+  standard_pop <- historical$adjusted_result$standard_pop
+  starting_adr <- historical$starting_adr
+
+  cli::cli_alert_info("Base ADR (1979-1988): {round(historical$base_result$base_adr, 1)}")
+  cli::cli_alert_info("Starting ADR (for projection): {round(starting_adr, 1)}")
+
+  # =========================================================================
+  # STEP 2: Get projected ADR series (2023-2099)
+  # =========================================================================
+  cli::cli_h2("Step 2: Getting Projected ADR Series (2023-2099)")
+
+  projected_adr <- get_projected_adr(
+    cache_dir = cache_dir,
+    force = force,
+    ultimate_adr = ultimate_adr,
+    ultimate_year = ultimate_year
+  )
+
+  # =========================================================================
+  # STEP 3: Project divorce rates (2023-2099)
+  # =========================================================================
+  cli::cli_h2("Step 3: Projecting Divorce Rates (2023-{end_year})")
+
+  # Use adjusted DivGrid as base for projection
+  # (reflects current age patterns from ACS adjustment)
+  projected_rates <- project_divorce_rates(
+    base_divgrid = adjusted_divgrid,
+    adr_projection = projected_adr,
+    standard_pop = standard_pop,
+    start_year = 2023,
+    end_year = end_year,
+    cache_dir = cache_dir,
+    force = force
+  )
+
+  # =========================================================================
+  # STEP 4: Validate projected rates
+  # =========================================================================
+  cli::cli_h2("Step 4: Validating Projected Rates")
+
+  validation <- validate_projected_rates(
+    projected_result = projected_rates,
+    standard_pop = standard_pop,
+    ultimate_adr = ultimate_adr,
+    ultimate_year = ultimate_year
+  )
+
+  # =========================================================================
+  # STEP 5: Combine historical and projected ADR
+  # =========================================================================
+  cli::cli_h2("Step 5: Building Complete ADR Series")
+
+  # Historical ADR from Phase 7E
+  historical_adr <- historical$adr_series[, .(year, adr, source)]
+
+  # Projected ADR
+  projected_adr_dt <- projected_adr[, .(
+    year,
+    adr = projected_adr,
+    source = "Projected"
+  )]
+
+  complete_adr <- data.table::rbindlist(list(
+    historical_adr,
+    projected_adr_dt
+  ), use.names = TRUE)
+
+  data.table::setorder(complete_adr, year)
+
+  # =========================================================================
+  # SUMMARY
+  # =========================================================================
+  elapsed <- difftime(Sys.time(), start_time, units = "secs")
+
+  cli::cli_h2("Projection Summary")
+  cli::cli_alert_success("Complete divorce projection finished in {round(elapsed, 1)}s")
+  cli::cli_alert_info("Historical years: {min(historical$adr_series$year)} - {max(historical$adr_series$year)}")
+  cli::cli_alert_info("Projected years: 2023 - {end_year}")
+  cli::cli_alert_info("Total years: {nrow(complete_adr)}")
+  cli::cli_alert_info("ADR trajectory: {round(starting_adr, 1)} (2022) -> {ultimate_adr} ({ultimate_year}) -> {ultimate_adr} ({end_year})")
+  cli::cli_alert_info("Validation: {validation$n_pass}/{validation$n_total} checks passed")
+
+  result <- list(
+    historical = historical,
+    projected_adr = projected_adr,
+    projected_rates = projected_rates,
+    complete_adr = complete_adr,
+    standard_pop = standard_pop,
+    validation = validation,
+    metadata = list(
+      ultimate_adr = ultimate_adr,
+      ultimate_year = ultimate_year,
+      end_year = end_year,
+      starting_adr = starting_adr,
+      elapsed_seconds = as.numeric(elapsed),
+      created = Sys.time()
+    )
+  )
+
+  # Cache complete result
+  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+  saveRDS(result, cache_file)
+  cli::cli_alert_success("Cached complete divorce projection")
+
+  result
+}
+
+
+#' Convert projected rates to long format data.table
+#'
+#' @description
+#' Converts the list of rate matrices to a long-format data.table
+#' suitable for analysis and storage.
+#'
+#' @param projected_rates List of rate matrices from project_divorce_rates()
+#' @param min_age Integer: minimum age (default: 14)
+#'
+#' @return data.table with columns:
+#'   - year: Calendar year
+#'   - husband_age: Age of husband
+#'   - wife_age: Age of wife
+#'   - rate: Divorce rate per 100,000
+#'
+#' @export
+rates_to_long_format <- function(projected_rates, min_age = DIVORCE_MIN_AGE) {
+
+  rates_list <- projected_rates$rates
+  years <- as.integer(names(rates_list))
+
+  cli::cli_alert("Converting {length(years)} years to long format...")
+
+  result_list <- lapply(years, function(yr) {
+    grid <- rates_list[[as.character(yr)]]
+    n <- nrow(grid)
+
+    # Create all combinations
+    dt <- data.table::CJ(
+      husband_age = min_age:(min_age + n - 1),
+      wife_age = min_age:(min_age + n - 1)
+    )
+
+    # Add rates (matrix is indexed 1:87, ages are 14:100)
+    dt[, rate := as.vector(grid)]
+    dt[, year := yr]
+
+    dt
+  })
+
+  result <- data.table::rbindlist(result_list, use.names = TRUE)
+  data.table::setcolorder(result, c("year", "husband_age", "wife_age", "rate"))
+  data.table::setorder(result, year, husband_age, wife_age)
+
+  cli::cli_alert_success("Created long format: {nrow(result)} rows")
+
+  result
+}

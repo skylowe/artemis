@@ -106,7 +106,7 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
    - Guarantees mathematical consistency: opposite_sex + same_sex = total at every cell
 2. Dynamic SS Area factor from population data (~1.02) vs simplified 1.003 assumption
 
-### Divorce Subprocess Status (IN PROGRESS - Phase 7F Complete)
+### Divorce Subprocess Status (IN PROGRESS - Phase 7G Complete)
 - **Purpose:** Project annual age-specific divorce rates by husband age × wife age
 - **Key Outputs:**
   - d̂_{x,y}^z - Age-specific divorce rates (Eq 1.7.1)
@@ -123,14 +123,16 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - Phase 7D: ACS-based DivGrid adjustment (deviation from TR2025)
   - Phase 7E: Historical period calculation (1989-2022) - ADR series
   - Phase 7F: ADR projection (2023-2099) - asymptotic convergence to ultimate
+  - Phase 7G: Divorce rate projection (2023-2099) - DivGrid scaled to ADR
 - **Key results:**
   - Base ADR (1979-1988): 1,749.4 per 100,000
   - ACS-adjusted ADR (2018-2022): 2,457.4 per 100,000
   - Historical ADR range: 1,033.6 (2020) to 1,814.8 (1992)
   - Starting ADR (2018-2022 weighted): 1,119 per 100,000
   - Projected ADR: 1,119 (2023) → 1,700 (2047) → 1,700 (2099)
-  - Peak divorce ages shifted from (26, 25) to (41, 39) - reflects demographic shift
-- **Remaining phases:** 7G (Rate Projection), 7H (Validation)
+  - 121 years total (44 historical, 77 projected)
+  - Peak divorce ages maintained at (41, 39) throughout projection
+- **Remaining phases:** 7H (Validation & Pipeline Integration)
 - **Key differences from Marriage:**
   - Uses married couples as denominator (not unmarried)
   - DRA coverage ~48% (vs MRA ~80%)
