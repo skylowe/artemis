@@ -5,8 +5,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ## Current Status
 **Phase:** 6 - Marriage Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 6E - AMR Projection (January 18, 2026)
-**Next Step:** Phase 6F - Marriage Rate Projection (Pipeline Integration)
+**Most Recent Completion:** Phase 6F - Marriage Rate Projection (January 18, 2026)
+**Next Step:** Phase 6H - Validation & Pipeline Integration
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -137,7 +137,7 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - AMR^z - Age-adjusted central marriage rate (Eq 1.6.2)
   - MarGrid: 87×87 matrix of marriage rates
 - **TR2025 Assumptions:** Ultimate AMR 4,000 per 100,000 unmarried couples by year 25
-- **Completed Phases:** 6A (ACS Data), 6B (NCHS Historical Data), 6C (MarGrid Development), 6D (Historical Period), 6E (AMR Projection)
+- **Completed Phases:** 6A (ACS Data), 6B (NCHS Historical Data), 6C (MarGrid Development), 6D (Historical Period), 6E (AMR Projection), 6F (Marriage Rate Projection)
 - **Key files:**
   - `R/demography/marriage.R` - Core MarGrid and AMR calculation functions
   - `R/data_acquisition/acs_marriage.R` - ACS new marriages (2007-2022), 2010 standard population
@@ -171,6 +171,19 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - Results cached to `data/cache/marriage/projected_rates_2023_2099.rds`
 - Key functions: `calculate_starting_amr()`, `project_amr()`, `project_marriage_rates()`
 - Validation: Rate of change decreases properly, scaled grids match target AMR exactly
+
+**Phase 6F Implementation (January 18, 2026):**
+- Prior marital status differentials calculated from 1979, 1981-88 data per TR2025
+  - New data function: `fetch_nchs_marriages_by_prior_status_1978_1988()` in nchs_marriage.R
+  - Single: highest relative rate at young ages (2.97 at 12-17), decreasing with age
+  - Divorced: highest at middle ages (2.28 at 35-44)
+  - Widowed: highest at older ages (2.34 at 65+)
+- Same-sex/opposite-sex separation (simplified 2% fraction)
+  - Full implementation requires state-level same-sex marriage data (2004-2012)
+- Main entry point: `run_marriage_projection()` orchestrates complete workflow
+- Complete projection cached to `data/cache/marriage/marriage_projection_complete.rds`
+- Key functions: `calculate_prior_status_differentials()`, `apply_prior_status_rates()`, `separate_marriage_types()`
+- Output: 110 years total (33 historical 1989-2022, 77 projected 2023-2099)
 
 **Phase 6A Implementation (January 18, 2026):**
 - ACS new marriages fetched for 2007-2022 (2007 extrapolated from 2008, 2020 skipped)

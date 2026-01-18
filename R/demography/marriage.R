@@ -1923,3 +1923,516 @@ project_marriage_rates <- function(base_margrid,
 
   result
 }
+
+# =============================================================================
+# PHASE 6F: MARRIAGE RATE PROJECTION (PRIOR STATUS & MAIN ENTRY POINT)
+# =============================================================================
+
+#' Calculate prior marital status differentials
+#'
+#' @description
+#' Per TR2025: "Future relative differences in marriage rates by prior marital
+#' status are assumed to be the same as the average of those experienced during
+#' 1979 and 1981-88."
+#'
+#' Calculates relative marriage rate differentials by prior marital status
+#' (single, widowed, divorced) using NCHS 1979, 1981-1988 data.
+#'
+#' The differential is the ratio of marriage rate for each status to the
+#' overall marriage rate within each age group and sex.
+#'
+#' @param marriages_by_status data.table with prior status marriage counts
+#'   From fetch_nchs_marriages_by_prior_status_1978_1988()
+#'   Required columns: year, age_group, sex, prior_status, marriages
+#' @param years Years to use for averaging (default: c(1979, 1981:1988) per TR2025)
+#'
+#' @return data.table with columns: age_group, sex, prior_status, relative_rate
+#'   where relative_rate is the multiplicative factor to apply to base rates
+#'
+#' @export
+calculate_prior_status_differentials <- function(marriages_by_status,
+                                                   years = c(1979, 1981:1988)) {
+  checkmate::assert_data_table(marriages_by_status)
+  checkmate::assert_names(names(marriages_by_status),
+                          must.include = c("year", "age_group", "sex", "prior_status", "marriages"))
+
+  cli::cli_h2("Calculating Prior Marital Status Differentials")
+
+  # Filter to specified years
+  dt <- marriages_by_status[year %in% years]
+  cli::cli_alert_info("Using {length(unique(dt$year))} years: {paste(unique(dt$year), collapse=', ')}")
+
+  # Calculate total marriages by age group, sex, and year (across all statuses)
+  totals_by_group <- dt[, .(total_marriages = sum(marriages, na.rm = TRUE)),
+                         by = .(year, age_group, sex)]
+
+  # Calculate marriages by age group, sex, year, and prior status
+  by_status <- dt[, .(status_marriages = sum(marriages, na.rm = TRUE)),
+                   by = .(year, age_group, sex, prior_status)]
+
+  # Merge to get proportion of each status
+  merged <- merge(by_status, totals_by_group, by = c("year", "age_group", "sex"))
+  merged[, proportion := status_marriages / total_marriages]
+
+  # Average proportions across years
+  avg_proportions <- merged[, .(
+    avg_proportion = mean(proportion, na.rm = TRUE),
+    n_years = .N
+  ), by = .(age_group, sex, prior_status)]
+
+  # Calculate relative rates
+
+  # The relative rate is: status_proportion / (1/3)
+  # This means if a status has 50% of marriages, relative_rate = 1.5
+  # And sum of (relative_rate × base_rate × population_share) ≈ base_rate
+
+  # Actually, per TR2025, we want rates to reflect actual likelihood differences
+  # The relative rate should be normalized so weighted sum = 1
+  # relative_rate = proportion / (1/n_statuses) = proportion × n_statuses
+
+  n_statuses <- 3  # single, widowed, divorced
+  avg_proportions[, relative_rate := avg_proportion * n_statuses]
+
+  # Normalize within each age_group × sex so sum = n_statuses
+  # (This ensures weighted average of relative rates = 1)
+  avg_proportions[, sum_relative := sum(relative_rate), by = .(age_group, sex)]
+  avg_proportions[, relative_rate := relative_rate * n_statuses / sum_relative]
+
+  result <- avg_proportions[, .(age_group, sex, prior_status, relative_rate,
+                                 avg_proportion)]
+
+  # Order properly
+  age_order <- c("12-17", "14-19", "18-19", "20-24", "25-29", "30-34",
+                 "35-44", "45-54", "55-64", "65+")
+  result[, age_group := factor(age_group, levels = age_order)]
+  data.table::setorder(result, sex, age_group, prior_status)
+  result[, age_group := as.character(age_group)]
+
+  cli::cli_alert_success("Calculated differentials for {nrow(result)} age×sex×status combinations")
+
+  # Show summary
+  summary_rates <- result[, .(
+    min_rate = round(min(relative_rate), 3),
+    max_rate = round(max(relative_rate), 3),
+    mean_rate = round(mean(relative_rate), 3)
+  ), by = prior_status]
+  cli::cli_alert_info("Relative rate ranges by status:")
+  for (i in seq_len(nrow(summary_rates))) {
+    cli::cli_alert("  {summary_rates$prior_status[i]}: {summary_rates$min_rate[i]} - {summary_rates$max_rate[i]} (mean: {summary_rates$mean_rate[i]})")
+  }
+
+  result
+}
+
+#' Apply prior marital status differentials to marriage rates
+#'
+#' @description
+#' Creates marriage rate variants by prior marital status by applying
+#' historical differentials to projected rates.
+#'
+#' @param marriage_rates List of marriage rate matrices by year
+#'   From project_marriage_rates() or calculate_historical_period()
+#' @param status_differentials data.table of relative rates by status
+#'   From calculate_prior_status_differentials()
+#' @param years Years to process (default: all years in marriage_rates)
+#'
+#' @return List with:
+#'   - rates_by_status: List of rate matrices by year and prior_status
+#'   - summary: Summary of rates by status
+#'
+#' @export
+apply_prior_status_rates <- function(marriage_rates,
+                                      status_differentials,
+                                      years = NULL) {
+  checkmate::assert_list(marriage_rates)
+  checkmate::assert_data_table(status_differentials)
+
+  if (is.null(years)) {
+    years <- as.integer(names(marriage_rates))
+  }
+
+  cli::cli_h2("Applying Prior Marital Status Differentials")
+
+  statuses <- unique(status_differentials$prior_status)
+  cli::cli_alert_info("Statuses: {paste(statuses, collapse=', ')}")
+
+  # Create lookup for relative rates by age group and sex
+  # Map age groups to MarGrid age ranges
+  age_group_ranges <- list(
+    "12-17" = 12:17,
+    "14-19" = 14:19,
+    "18-19" = 18:19,
+    "20-24" = 20:24,
+    "25-29" = 25:29,
+    "30-34" = 30:34,
+    "35-44" = 35:44,
+    "45-54" = 45:54,
+    "55-64" = 55:64,
+    "65+"   = 65:100
+  )
+
+  # Build lookup matrices for each status (husband dimension = male, wife = female)
+  status_factors <- list()
+
+  for (status in statuses) {
+    # Get factors for this status
+    male_factors <- status_differentials[sex == "male" & prior_status == status]
+    female_factors <- status_differentials[sex == "female" & prior_status == status]
+
+    # Create factor matrix matching MarGrid dimensions
+    n_ages <- MARGRID_SIZE
+    ages <- MARGRID_MIN_AGE:MARGRID_MAX_AGE
+
+    factor_matrix <- matrix(1, nrow = n_ages, ncol = n_ages)
+    rownames(factor_matrix) <- ages
+    colnames(factor_matrix) <- ages
+
+    # Apply husband (row) factors
+    for (i in seq_len(nrow(male_factors))) {
+      grp <- male_factors$age_group[i]
+      if (grp %in% names(age_group_ranges)) {
+        age_range <- age_group_ranges[[grp]]
+        row_idx <- which(ages %in% age_range)
+        # Scale rows by male factor
+        factor_matrix[row_idx, ] <- factor_matrix[row_idx, ] * sqrt(male_factors$relative_rate[i])
+      }
+    }
+
+    # Apply wife (column) factors
+    for (i in seq_len(nrow(female_factors))) {
+      grp <- female_factors$age_group[i]
+      if (grp %in% names(age_group_ranges)) {
+        age_range <- age_group_ranges[[grp]]
+        col_idx <- which(ages %in% age_range)
+        # Scale columns by female factor
+        factor_matrix[, col_idx] <- factor_matrix[, col_idx] * sqrt(female_factors$relative_rate[i])
+      }
+    }
+
+    status_factors[[status]] <- factor_matrix
+  }
+
+  # Apply factors to each year's rates
+  rates_by_status <- list()
+
+  for (yr in years) {
+    yr_char <- as.character(yr)
+    if (!(yr_char %in% names(marriage_rates))) next
+
+    base_rates <- marriage_rates[[yr_char]]
+    rates_by_status[[yr_char]] <- list()
+
+    for (status in statuses) {
+      # Apply status factor matrix element-wise
+      status_rates <- base_rates * status_factors[[status]]
+      rates_by_status[[yr_char]][[status]] <- status_rates
+    }
+
+    if (yr %% 20 == 0 || yr == min(years) || yr == max(years)) {
+      cli::cli_alert("Processed {yr}")
+    }
+  }
+
+  cli::cli_alert_success("Applied status differentials to {length(rates_by_status)} years")
+
+  list(
+    rates_by_status = rates_by_status,
+    status_factors = status_factors,
+    statuses = statuses
+  )
+}
+
+#' Separate same-sex and opposite-sex marriage rates
+#'
+#' @description
+#' Per TR2025: "The MarGrid rates are then adjusted to produce two sets of
+#' marriage rates: opposite-sex marriage rates and same-sex marriage rates."
+#'
+#' Note: This is a simplified implementation that applies a constant factor
+#' for same-sex marriages. Full implementation would require state-level
+#' same-sex marriage data (2004-2012) which is not currently available.
+#'
+#' @param marriage_rates List of marriage rate matrices by year
+#' @param same_sex_fraction Fraction of marriages that are same-sex (default: 0.02)
+#'   Based on ~2% of marriages being same-sex post-2015
+#' @param years Years to process (default: all years)
+#'
+#' @return List with:
+#'   - opposite_sex: Rate matrices for opposite-sex marriages
+#'   - same_sex: Rate matrices for same-sex marriages
+#'
+#' @export
+separate_marriage_types <- function(marriage_rates,
+                                     same_sex_fraction = 0.02,
+                                     years = NULL) {
+  checkmate::assert_list(marriage_rates)
+  checkmate::assert_number(same_sex_fraction, lower = 0, upper = 1)
+
+  if (is.null(years)) {
+    years <- as.integer(names(marriage_rates))
+  }
+
+  cli::cli_h2("Separating Same-Sex and Opposite-Sex Marriage Rates")
+  cli::cli_alert_info("Same-sex fraction: {same_sex_fraction * 100}%")
+
+  opposite_sex <- list()
+  same_sex <- list()
+
+  for (yr in years) {
+    yr_char <- as.character(yr)
+    if (!(yr_char %in% names(marriage_rates))) next
+
+    total_rates <- marriage_rates[[yr_char]]
+
+    # Simple split: same-sex gets fraction, opposite-sex gets remainder
+    opposite_sex[[yr_char]] <- total_rates * (1 - same_sex_fraction)
+    same_sex[[yr_char]] <- total_rates * same_sex_fraction
+  }
+
+  cli::cli_alert_success("Separated rates for {length(opposite_sex)} years")
+  cli::cli_alert_info("Note: Using simplified constant fraction. Full implementation requires state same-sex data.")
+
+  list(
+    opposite_sex = opposite_sex,
+    same_sex = same_sex,
+    same_sex_fraction = same_sex_fraction
+  )
+}
+
+#' Run complete marriage projection (main entry point)
+#'
+#' @description
+#' Main function orchestrating the complete marriage projection per TR2025
+#' Section 1.6. Implements Equations 1.6.1 (age-specific rates) and 1.6.2 (AMR).
+#'
+#' Steps:
+#' 1. Build base MarGrid from 1978-1988 NCHS data
+#' 2. Calculate historical rates (1989-2022)
+#' 3. Project AMR to ultimate (4,000 by year 25)
+#' 4. Scale MarGrid to projected AMR (2023-2099)
+#' 5. Apply prior marital status differentials
+#' 6. Separate same-sex and opposite-sex rates (optional)
+#'
+#' @param nchs_marriages_1978_1988 NCHS marriages by age group (1978-1988)
+#'   From fetch_nchs_mra_marriages_1978_1988()
+#' @param cps_unmarried CPS unmarried population (1978-1995)
+#'   From fetch_cps_unmarried_population()
+#' @param nchs_subset NCHS MRA subset marriages (1989-1995)
+#'   From fetch_nchs_mra_marriages_1989_1995()
+#' @param acs_grids List of ACS marriage grids (2007-2022)
+#'   From fetch_acs_new_marriages()
+#' @param nchs_us_totals NCHS U.S. total marriages (1989-2022)
+#'   From fetch_nchs_us_total_marriages()
+#' @param standard_pop_by_group 2010 standard population by age group
+#'   From get_2010_standard_population()
+#' @param prior_status_data Prior marital status data (1979, 1981-88)
+#'   From fetch_nchs_marriages_by_prior_status_1978_1988()
+#' @param ultimate_amr Ultimate AMR target (default: 4000)
+#' @param ultimate_year Year when ultimate is reached (default: 2047)
+#' @param end_year Final projection year (default: 2099)
+#' @param include_same_sex Logical: separate same-sex rates (default: TRUE)
+#' @param include_prior_status Logical: apply prior status differentials (default: TRUE)
+#' @param cache_dir Directory for caching results
+#' @param force_recompute Force recomputation even if cache exists
+#'
+#' @return list with:
+#'   - historical_rates: Rate matrices for 1989-2022
+#'   - projected_rates: Rate matrices for 2023-2099
+#'   - amr_historical: Historical AMR values
+#'   - amr_projected: Projected AMR values
+#'   - rates_by_status: Rates by prior marital status (if requested)
+#'   - opposite_sex_rates: Opposite-sex rates (if requested)
+#'   - same_sex_rates: Same-sex rates (if requested)
+#'   - margrid: Base MarGrid matrix
+#'   - standard_pop_grid: 2010 standard population grid
+#'   - status_differentials: Prior status differentials
+#'
+#' @export
+run_marriage_projection <- function(nchs_marriages_1978_1988,
+                                     cps_unmarried,
+                                     nchs_subset,
+                                     acs_grids,
+                                     nchs_us_totals,
+                                     standard_pop_by_group,
+                                     prior_status_data = NULL,
+                                     ultimate_amr = 4000,
+                                     ultimate_year = 2047,
+                                     end_year = 2099,
+                                     include_same_sex = TRUE,
+                                     include_prior_status = TRUE,
+                                     cache_dir = here::here("data/cache/marriage"),
+                                     force_recompute = FALSE) {
+
+  # Check for complete cached result
+  cache_file <- file.path(cache_dir, "marriage_projection_complete.rds")
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+
+  if (file.exists(cache_file) && !force_recompute) {
+    cli::cli_alert_success("Loading cached complete marriage projection")
+    cached <- readRDS(cache_file)
+    return(cached)
+  }
+
+  cli::cli_h1("Running Complete Marriage Projection (TR2025 Section 1.6)")
+
+  start_time <- Sys.time()
+
+  # =========================================================================
+  # STEP 1: Build base MarGrid from 1978-1988
+  # =========================================================================
+  cli::cli_h2("Step 1: Building Base MarGrid (1978-1988)")
+
+  margrid_result <- build_base_margrid(
+    nchs_marriages = nchs_marriages_1978_1988,
+    cps_unmarried = cps_unmarried,
+    years = 1978:1988,
+    smooth = TRUE
+  )
+  base_margrid <- margrid_result$margrid
+
+  # =========================================================================
+  # STEP 2: Build standard population grid
+  # =========================================================================
+  cli::cli_h2("Step 2: Building Standard Population Grid (2010)")
+
+  # Ensure year column exists
+  std_pop <- data.table::copy(standard_pop_by_group)
+  if (!"year" %in% names(std_pop)) {
+    std_pop[, year := 2010]
+  }
+
+  standard_pop_grid <- build_standard_population_grid(
+    unmarried_pop = std_pop,
+    std_year = 2010,
+    min_age = MARGRID_MIN_AGE,
+    max_age = MARGRID_MAX_AGE
+  )
+
+  # =========================================================================
+  # STEP 3: Calculate historical rates (1989-2022)
+  # =========================================================================
+  cli::cli_h2("Step 3: Calculating Historical Rates (1989-2022)")
+
+  historical_result <- calculate_historical_period(
+    base_margrid = base_margrid,
+    nchs_subset = nchs_subset,
+    acs_grids = acs_grids,
+    nchs_us_totals = nchs_us_totals,
+    unmarried_pop_grid = standard_pop_grid,
+    cache_dir = cache_dir,
+    force_recompute = force_recompute
+  )
+
+  # =========================================================================
+  # STEP 4: Project rates (2023-2099)
+  # =========================================================================
+  cli::cli_h2("Step 4: Projecting Marriage Rates (2023-{end_year})")
+
+  # Use most recent historical grid as base for projection
+  recent_year <- max(as.integer(names(historical_result$rates)))
+  projection_base <- historical_result$rates[[as.character(recent_year)]]
+
+  projected_result <- project_marriage_rates(
+    base_margrid = projection_base,
+    historical_amr = historical_result$amr,
+    standard_pop_grid = standard_pop_grid,
+    ultimate_amr = ultimate_amr,
+    ultimate_year = ultimate_year,
+    end_year = end_year,
+    cache_dir = cache_dir,
+    force_recompute = force_recompute
+  )
+
+  # Combine all rates
+  all_rates <- c(historical_result$rates, projected_result$rates)
+
+  # =========================================================================
+  # STEP 5: Prior marital status differentials (optional)
+  # =========================================================================
+  status_differentials <- NULL
+  rates_by_status <- NULL
+
+  if (include_prior_status && !is.null(prior_status_data)) {
+    cli::cli_h2("Step 5: Applying Prior Marital Status Differentials")
+
+    status_differentials <- calculate_prior_status_differentials(
+      marriages_by_status = prior_status_data,
+      years = c(1979, 1981:1988)
+    )
+
+    status_result <- apply_prior_status_rates(
+      marriage_rates = all_rates,
+      status_differentials = status_differentials
+    )
+    rates_by_status <- status_result$rates_by_status
+  } else if (include_prior_status) {
+    cli::cli_alert_warning("Prior status data not provided, skipping status differentials")
+  }
+
+  # =========================================================================
+  # STEP 6: Same-sex separation (optional)
+  # =========================================================================
+  opposite_sex_rates <- NULL
+  same_sex_rates <- NULL
+
+  if (include_same_sex) {
+    cli::cli_h2("Step 6: Separating Same-Sex and Opposite-Sex Rates")
+
+    sex_result <- separate_marriage_types(
+      marriage_rates = all_rates,
+      same_sex_fraction = 0.02  # ~2% of marriages are same-sex
+    )
+    opposite_sex_rates <- sex_result$opposite_sex
+    same_sex_rates <- sex_result$same_sex
+  }
+
+  # =========================================================================
+  # COMPILE RESULTS
+  # =========================================================================
+  elapsed <- round(difftime(Sys.time(), start_time, units = "mins"), 1)
+
+  result <- list(
+    # Rate outputs
+    historical_rates = historical_result$rates,
+    projected_rates = projected_result$rates,
+    all_rates = all_rates,
+
+    # AMR outputs
+    amr_historical = historical_result$amr,
+    amr_projected = projected_result$amr,
+    starting_amr = projected_result$starting_amr,
+    ultimate_amr = ultimate_amr,
+    ultimate_year = ultimate_year,
+
+    # Prior status outputs
+    rates_by_status = rates_by_status,
+    status_differentials = status_differentials,
+
+    # Same-sex outputs
+    opposite_sex_rates = opposite_sex_rates,
+    same_sex_rates = same_sex_rates,
+
+    # Reference data
+    margrid = base_margrid,
+    standard_pop_grid = standard_pop_grid,
+
+    # Metadata
+    projection_years = 2023:end_year,
+    historical_years = as.integer(names(historical_result$rates)),
+    computed_at = Sys.time(),
+    elapsed_minutes = as.numeric(elapsed)
+  )
+
+  # Cache complete result
+  saveRDS(result, cache_file)
+  cli::cli_alert_success("Cached complete projection to {cache_file}")
+
+  cli::cli_h1("Marriage Projection Complete")
+  cli::cli_alert_success("Historical: {length(result$historical_years)} years ({min(result$historical_years)}-{max(result$historical_years)})")
+  cli::cli_alert_success("Projected: {length(result$projection_years)} years ({min(result$projection_years)}-{max(result$projection_years)})")
+  cli::cli_alert_info("Starting AMR: {round(result$starting_amr, 1)}")
+  cli::cli_alert_info("Ultimate AMR: {result$ultimate_amr} (by {result$ultimate_year})")
+  cli::cli_alert_info("Elapsed time: {elapsed} minutes")
+
+  result
+}

@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 6D - Historical Period Calculation (COMPLETE)
-**Subprocess Status:** IN PROGRESS - Ready for Phase 6E (AMR Projection)
+**Current Phase:** Phase 6F - Marriage Rate Projection (COMPLETE)
+**Subprocess Status:** IN PROGRESS - Ready for Phase 6H (Validation & Integration)
 
 ### Phase 6D Results (COMPLETE)
 
@@ -1081,20 +1081,38 @@ validate_marriage_type_split <- function(total_rates, opposite_sex, same_sex)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 6E.1 | Implement AMR projection function | None | project_amr() |
-| [ ] | 6E.2 | Calculate starting AMR (5-year weighted average) | 6D.5 | Starting AMR |
-| [ ] | 6E.3 | Project AMR to ultimate (year 25) | 6E.1, 6E.2 | Projected AMR |
-| [ ] | 6E.4 | Validate AMR projection | 6E.3 | Validation report |
+| [x] | 6E.1 | Implement AMR projection function | None | project_amr() |
+| [x] | 6E.2 | Calculate starting AMR (5-year weighted average) | 6D.5 | Starting AMR |
+| [x] | 6E.3 | Project AMR to ultimate (year 25) | 6E.1, 6E.2 | Projected AMR |
+| [x] | 6E.4 | Validate AMR projection | 6E.3 | Validation report |
+
+**Phase 6E Results:**
+- Starting AMR: 3,476.5 (weighted average of 2017-2022)
+- Ultimate AMR: 4,000 (reached by year 25 = 2047)
+- Rate of change decreases as ultimate approaches (37→18→5 per year)
+- Key functions: `calculate_starting_amr()`, `project_amr()`, `scale_margrid_to_target_amr()`
 
 ### Phase 6F: Marriage Rate Projection
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 6F.1 | Implement MarGrid-to-AMR scaling | 6C.3, 6E.1 | scale_margrid_to_amr() |
-| [ ] | 6F.2 | Project age-specific rates (2023-2099) | 6F.1, 6E.3 | Projected rates |
-| [ ] | 6F.3 | Implement same-sex/opposite-sex separation | Phase 6G | separate_marriage_types() |
-| [ ] | 6F.4 | Implement prior status application | 6B.7 | apply_prior_status_rates() |
-| [ ] | 6F.5 | Build run_marriage_projection() entry point | All above | Main function |
+| [x] | 6F.1 | Implement MarGrid-to-AMR scaling | 6C.3, 6E.1 | scale_margrid_to_amr() |
+| [x] | 6F.2 | Project age-specific rates (2023-2099) | 6F.1, 6E.3 | Projected rates |
+| [x] | 6F.3 | Implement same-sex/opposite-sex separation | Phase 6G | separate_marriage_types() |
+| [x] | 6F.4 | Implement prior status application | 6B.7 | apply_prior_status_rates() |
+| [x] | 6F.5 | Build run_marriage_projection() entry point | All above | Main function |
+
+**Phase 6F Results:**
+- Prior marital status differentials from 1979, 1981-88 per TR2025
+  - New function: `fetch_nchs_marriages_by_prior_status_1978_1988()`
+  - 54 age×sex×status combinations
+  - Single: relative rate 0.16-2.98 (highest at young ages)
+  - Divorced: relative rate 0.02-2.40 (highest at middle ages)
+  - Widowed: relative rate 0.00-2.34 (highest at older ages)
+- Same-sex separation: simplified 2% fraction (state data not available)
+- Main function: `run_marriage_projection()` orchestrates complete workflow
+- Output: 110 years (33 historical, 77 projected)
+- Cached to: `data/cache/marriage/marriage_projection_complete.rds`
 
 ### Phase 6G: Same-Sex Marriage (Can be deferred)
 

@@ -550,6 +550,93 @@ get_nchs_mra_totals_1978_1988 <- function(
   totals
 }
 
+#' Fetch NCHS marriages by prior marital status (1978-1988)
+#'
+#' @description
+#' Downloads and aggregates NCHS marriage data by age group, sex, and prior
+#' marital status for 1978-1988. This is Items 9-10 from TR2025 documentation.
+#'
+#' Per TR2025: "Future relative differences in marriage rates by prior marital
+#' status are assumed to be the same as the average of those experienced during
+#' 1979 and 1981-88."
+#'
+#' Note: 1980 data is available but TR2025 methodology excludes it.
+#'
+#' @param years Integer vector of years (default: c(1979, 1981:1988) per TR2025)
+#' @param cache_dir Character path to cache directory
+#'
+#' @return data.table with columns: year, age_group, sex, prior_status, marriages
+#'
+#' @export
+fetch_nchs_marriages_by_prior_status_1978_1988 <- function(
+    years = c(1979, 1981:1988),
+    cache_dir = here::here("data/cache/nber_marriage")
+) {
+  # Validate years
+  valid_years <- 1978:1988
+  if (!all(years %in% valid_years)) {
+    invalid <- years[!years %in% valid_years]
+    cli::cli_abort("Invalid years: {invalid}. Valid range: 1978-1988.")
+  }
+
+  # Check for cached data
+  cache_file <- file.path(cache_dir, "nchs_marriages_by_prior_status_1978_1988.rds")
+  if (file.exists(cache_file)) {
+    cli::cli_alert_success("Loading cached marriages by prior status (1978-1988)")
+    data <- readRDS(cache_file)
+    return(data[year %in% years])
+  }
+
+  cli::cli_alert_info("Downloading and parsing 1978-1988 marriage data for prior status...")
+
+  all_data <- list()
+
+  for (yr in 1978:1988) {
+    dat_file <- download_nber_marriage_file(yr, cache_dir)
+    yr_data <- parse_marr_data_1978_1988(dat_file, yr)
+    all_data[[as.character(yr)]] <- yr_data
+  }
+
+  combined <- data.table::rbindlist(all_data, use.names = TRUE)
+
+  cli::cli_alert("Aggregating marriages by prior marital status...")
+
+  # Aggregate grooms (husbands) by age group and prior status
+  groom_data <- combined[
+    !is.na(groom_age_group) & !is.na(groom_prior),
+    .(marriages = sum(weight, na.rm = TRUE)),
+    by = .(year, age_group = groom_age_group, prior_status = groom_prior)
+  ]
+  groom_data[, sex := "male"]
+
+  # Aggregate brides (wives) by age group and prior status
+  bride_data <- combined[
+    !is.na(bride_age_group) & !is.na(bride_prior),
+    .(marriages = sum(weight, na.rm = TRUE)),
+    by = .(year, age_group = bride_age_group, prior_status = bride_prior)
+  ]
+  bride_data[, sex := "female"]
+
+  # Combine
+  result <- data.table::rbindlist(list(groom_data, bride_data))
+
+  # Filter to known statuses (single, widowed, divorced)
+  result <- result[prior_status %in% c("single", "widowed", "divorced")]
+
+  # Order properly
+  age_order <- c("12-17", "18-19", "20-24", "25-29", "30-34", "35-44", "45-54", "55-64", "65+")
+  result[, age_group := factor(age_group, levels = age_order)]
+  data.table::setorder(result, year, sex, age_group, prior_status)
+  result[, age_group := as.character(age_group)]
+
+  # Cache all years
+  saveRDS(result, cache_file)
+  n_rows <- format(nrow(result), big.mark = ",")
+  cli::cli_alert_success("Cached marriages by prior status (1978-1988): {n_rows} rows")
+
+  result[year %in% years]
+}
+
 # =============================================================================
 # MAIN FETCH FUNCTIONS
 # =============================================================================
