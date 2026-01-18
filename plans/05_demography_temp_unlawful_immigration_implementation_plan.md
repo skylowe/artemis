@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 5C - Distribution Development (COMPLETE)
-**Next Phase:** Phase 5D - Departure Rate Development
+**Current Phase:** Phase 5D - Departure Rate Development (COMPLETE)
+**Next Phase:** Phase 5E - Core Projection Functions
 
 ### Phase 5C Progress Notes - COMPLETED (January 18, 2026)
 
@@ -66,6 +66,48 @@ The following functions accept `config` parameter to override defaults:
 | Type splits (N/I/V) | DHS unauthorized + nonimmigrant estimates | ~53% N, 15% I, 32% V |
 | Total O population (~13M) | DHS unauthorized (~11M) + nonimmigrant (~2M) | For proportion calculations |
 | Default NI distribution | DHS Yearbook + visa category patterns | F-1 students, H-1B workers concentrated |
+
+### Phase 5D Progress Notes - COMPLETED (January 18, 2026)
+
+**Files Created:**
+- `R/demography/temp_unlawful_emigration.R` - Departure rate calculation and O emigration projection
+
+**Functions Implemented:**
+- `build_o_stock_for_rates()` - Build O population stocks from 2008-2010 for rate derivation
+- `calculate_base_departure_rates()` - Calculate rates by dividing OE by OP
+- `smooth_departure_rates()` - 5-year moving average smoothing
+- `adjust_rates_for_recession()` - Adjust for 2008-2010 recession effects
+- `apply_type_adjustments()` - Type-specific rate adjustments (N/I/V)
+- `apply_daca_rate_adjustment()` - Lower rates for DACA-eligible population
+- `split_never_authorized_rates()` - Recent arrivals get 2× rate per TR2025
+- `project_o_emigration()` - Project OE = Rate × OP (Eq 1.5.2)
+- `run_o_emigration_projection()` - Full emigration projection pipeline
+- `get_departure_rate_sources()` - Source documentation
+
+**TR2025 Methodology Implemented:**
+- Stock build-up from 2008-2010 using cohort-component method
+- Deaths: OD = qx × OP (same mortality as total population)
+- Rates: OE / OP for each age, sex, type
+- Recession adjustment factor (0.85)
+- Policy periods: Pre-2015 vs Post-2015 (Executive Actions)
+- Recent arrivals: 2× departure rate (TR2025 explicit statement)
+- DACA eligible: 50% lower departure rates
+
+**Hardcoded Values with Sources:**
+| Value | Source | Notes |
+|-------|--------|-------|
+| Recession factor (0.85) | Professional judgment | 2008-2010 was atypical |
+| N pre-2015 multiplier (1.20) | TR2025 methodology | Higher enforcement |
+| N post-2015 multiplier (0.80) | TR2025 methodology | After Executive Actions |
+| NI transition (0.70→1.00) | TR2025 Section 1.5.c | 2015 to 2025 |
+| V pre/post multipliers | TR2025 methodology | 1.10/0.85 |
+| DACA rate reduction (0.50) | TR2025 explicit | Lower rates for DACA |
+| Recent arrival proportion | DHS estimates | Age-varying (15-80%) |
+| AOS type split (60/40) | LPR subprocess | I and V contribute |
+
+**Configuration Options:**
+- `get_default_rate_config(config=)` - Override all rate multipliers
+- Recession factor, type multipliers, DACA reduction all configurable
 
 ### Phase 5B Progress Notes - COMPLETED (January 18, 2026)
 
@@ -1086,15 +1128,15 @@ validate_o_distribution <- function(distribution)
 | [x] | 5C.3 | Implement overstay percentage estimation | DHS data | temp_unlawful_immigration.R |
 | [x] | 5C.4 | Calculate and validate ODIST | 5C.1-5C.3 | Distribution data |
 
-### Phase 5D: Departure Rate Development
+### Phase 5D: Departure Rate Development - COMPLETED (January 18, 2026)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 5D.1 | Implement departure rate calculation | Phase 4, Phase 2 | temp_unlawful_emigration.R |
-| [ ] | 5D.2 | Implement rate smoothing and adjustment | 5D.1 | temp_unlawful_emigration.R |
-| [ ] | 5D.3 | Implement type-specific rate adjustments | 5D.2 | temp_unlawful_emigration.R |
-| [ ] | 5D.4 | Implement policy-period rate transitions | 5D.3 | temp_unlawful_emigration.R |
-| [ ] | 5D.5 | Calculate and validate departure rates | 5D.1-5D.4 | Rate data |
+| [x] | 5D.1 | Implement departure rate calculation | Phase 4, Phase 2 | temp_unlawful_emigration.R |
+| [x] | 5D.2 | Implement rate smoothing and adjustment | 5D.1 | temp_unlawful_emigration.R |
+| [x] | 5D.3 | Implement type-specific rate adjustments | 5D.2 | temp_unlawful_emigration.R |
+| [x] | 5D.4 | Implement policy-period rate transitions | 5D.3 | temp_unlawful_emigration.R |
+| [x] | 5D.5 | Calculate and validate departure rates | 5D.1-5D.4 | Rate data |
 
 ### Phase 5E: Core Projection Functions
 
