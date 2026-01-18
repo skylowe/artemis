@@ -39,6 +39,141 @@ MARRIAGE_AGE_GROUPS <- list(
 )
 
 # =============================================================================
+# SS AREA FACTOR CALCULATION
+# =============================================================================
+
+#' Calculate SS Area Adjustment Factor
+#'
+#' @description
+#' Calculates the Social Security area adjustment factor for converting U.
+#' marriage totals to SS area totals. The factor is calculated as:
+#'   SS Area Factor = SS Area Population / U.S. Resident Population
+#'
+#' Per TR2025 documentation: "This estimate is obtained by increasing the number
+#' of marriages reported in the U.S. to reflect the difference between the
+#' Social Security area population and the U.S. population."
+#'
+#' @param year Integer: year for which to calculate factor
+#' @param cache_dir Character: directory containing historical population cache
+#'
+#' @return Numeric: SS area adjustment factor (typically ~1.02)
+#'
+#' @details
+#' The SS Area includes:
+#' - U.S. resident population
+#' - Armed Forces overseas
+#' - Territory residents (PR, VI, Guam, CNMI, AS)
+#' - Federal civilian employees overseas
+#' - Dependents of armed forces and federal employees overseas
+#' - OASDI beneficiaries living abroad
+#' - Other U.S. citizens overseas
+#'
+#' The factor ranges from ~1.019 (2022) to ~1.027 (1989) as the overseas
+#' and territory populations have changed relative to the U.S. total.
+#'
+#' @export
+get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache")) {
+  # Try to load cached historical population components
+  cache_file <- file.path(cache_dir, "historical_population", "ss_population_1940_2022.rds")
+
+  if (!file.exists(cache_file)) {
+    cli::cli_warn("Historical population cache not found at {cache_file}. Using fallback factor 1.02.")
+    return(1.02)
+  }
+
+  pop_data <- readRDS(cache_file)
+
+  if (!"components" %in% names(pop_data)) {
+    cli::cli_warn("Historical population cache missing components. Using fallback factor 1.02.")
+    return(1.02)
+  }
+
+  components <- data.table::as.data.table(pop_data$components)
+
+  # Check if year is in range
+  available_years <- components$year
+  min_year <- min(available_years)
+  max_year <- max(available_years)
+
+  if (target_year < min_year) {
+    # Use earliest available factor
+    factor_val <- components[year == min_year, total / census_usaf]
+    cli::cli_alert_info("Year {target_year} before historical data; using {min_year} factor: {round(factor_val, 5)}")
+    return(factor_val)
+  }
+
+  if (target_year > max_year) {
+    # Use latest available factor for projection years
+    factor_val <- components[year == max_year, total / census_usaf]
+    return(factor_val)
+  }
+
+  # Return factor for requested year
+  factor_val <- components[year == target_year, total / census_usaf]
+
+  if (length(factor_val) == 0 || is.na(factor_val)) {
+    cli::cli_warn("No data for year {target_year}. Using fallback factor 1.02.")
+    return(1.02)
+  }
+
+  factor_val
+}
+
+#' Get SS Area Factors for Multiple Years
+#'
+#' @description
+#' Retrieves SS area adjustment factors for a range of years, using cached
+#' historical population data.
+#'
+#' @param years Integer vector: years for which to get factors
+#' @param cache_dir Character: directory containing historical population cache
+#'
+#' @return Named numeric vector with SS area factors keyed by year
+#'
+#' @export
+get_ss_area_factors <- function(years, cache_dir = here::here("data/cache")) {
+  # Load cache once for efficiency
+  cache_file <- file.path(cache_dir, "historical_population", "ss_population_1940_2022.rds")
+
+  if (!file.exists(cache_file)) {
+    cli::cli_warn("Historical population cache not found. Using fallback factor 1.02 for all years.")
+    factors <- rep(1.02, length(years))
+    names(factors) <- as.character(years)
+    return(factors)
+  }
+
+  pop_data <- readRDS(cache_file)
+
+  if (!"components" %in% names(pop_data)) {
+    cli::cli_warn("Historical population cache missing components. Using fallback factor 1.02.")
+    factors <- rep(1.02, length(years))
+    names(factors) <- as.character(years)
+    return(factors)
+  }
+
+  components <- data.table::as.data.table(pop_data$components)
+  components[, ss_area_factor := total / census_usaf]
+
+  min_year <- min(components$year)
+  max_year <- max(components$year)
+
+  factors <- sapply(years, function(yr) {
+    if (yr < min_year) {
+      return(components[year == min_year, ss_area_factor])
+    } else if (yr > max_year) {
+      return(components[year == max_year, ss_area_factor])
+    } else {
+      f <- components[year == yr, ss_area_factor]
+      if (length(f) == 0 || is.na(f)) return(1.02)
+      return(f)
+    }
+  })
+
+  names(factors) <- as.character(years)
+  factors
+}
+
+# =============================================================================
 # MARRIAGE RATE CALCULATION (6C.1)
 # =============================================================================
 
@@ -1094,7 +1229,8 @@ adjust_margrid_to_groups <- function(margrid, group_totals, unmarried_pop) {
 #' @param nchs_us_totals data.table: NCHS U.S. total marriages
 #'   From fetch_nchs_us_total_marriages()
 #' @param unmarried_pop_grid Matrix: unmarried population geometric means
-#' @param ss_area_factor Numeric: SS area adjustment factor (default: 1.003)
+#' @param ss_area_factor Numeric or NULL: SS area adjustment factor. If NULL
+#'   (default), calculates dynamically from historical population data.
 #' @param smooth Logical: apply graduation after adjustment (default: TRUE)
 #'
 #' @return list with:
@@ -1106,7 +1242,7 @@ calculate_historical_rates_1989_1995 <- function(base_margrid,
                                                    nchs_subset,
                                                    nchs_us_totals,
                                                    unmarried_pop_grid,
-                                                   ss_area_factor = 1.003,
+                                                   ss_area_factor = NULL,
                                                    smooth = TRUE) {
   checkmate::assert_matrix(base_margrid, mode = "numeric")
   checkmate::assert_data_table(nchs_subset)
@@ -1144,8 +1280,15 @@ calculate_historical_rates_1989_1995 <- function(base_margrid,
       nchs_total <- sum(yr_data$marriages, na.rm = TRUE)
     }
 
+    # Get SS area factor (calculate dynamically if not provided)
+    yr_factor <- if (is.null(ss_area_factor)) {
+      get_ss_area_factor(yr)
+    } else {
+      ss_area_factor
+    }
+
     # Scale to SS area total (U.S. total × adjustment factor)
-    ss_total <- nchs_total * ss_area_factor
+    ss_total <- nchs_total * yr_factor
 
     # Scale rates to match total marriages
     scaled_grid <- scale_margrid_to_total(adjusted_grid, unmarried_pop_grid, ss_total)
@@ -1227,7 +1370,8 @@ align_nchs_subset_age_groups <- function(nchs_data) {
 #' @param years Integer vector: years to interpolate (between start and end)
 #' @param nchs_us_totals data.table: NCHS U.S. total marriages for scaling
 #' @param unmarried_pop_grid Matrix: unmarried population for scaling
-#' @param ss_area_factor Numeric: SS area adjustment factor
+#' @param ss_area_factor Numeric or NULL: SS area adjustment factor. If NULL
+#'   (default), calculates dynamically from historical population data.
 #'
 #' @return list of interpolated rate matrices by year
 #'
@@ -1239,7 +1383,7 @@ interpolate_marriage_grids <- function(grid_start,
                                          years,
                                          nchs_us_totals = NULL,
                                          unmarried_pop_grid = NULL,
-                                         ss_area_factor = 1.003) {
+                                         ss_area_factor = NULL) {
   checkmate::assert_matrix(grid_start, mode = "numeric")
   checkmate::assert_matrix(grid_end, mode = "numeric")
   checkmate::assert_integerish(years)
@@ -1259,11 +1403,18 @@ interpolate_marriage_grids <- function(grid_start,
     # Interpolate rate grids
     interpolated_grid <- grid_start * (1 - weight) + grid_end * weight
 
+    # Get SS area factor (calculate dynamically if not provided)
+    yr_factor <- if (is.null(ss_area_factor)) {
+      get_ss_area_factor(yr)
+    } else {
+      ss_area_factor
+    }
+
     # Scale to NCHS total if provided
     if (!is.null(nchs_us_totals) && !is.null(unmarried_pop_grid)) {
       nchs_total <- nchs_us_totals[year == yr, total_marriages]
       if (length(nchs_total) > 0 && !is.na(nchs_total)) {
-        ss_total <- nchs_total * ss_area_factor
+        ss_total <- nchs_total * yr_factor
         interpolated_grid <- scale_margrid_to_total(
           interpolated_grid, unmarried_pop_grid, ss_total
         )
@@ -1281,7 +1432,7 @@ interpolate_marriage_grids <- function(grid_start,
       if (!is.null(nchs_us_totals)) {
         nchs_total <- nchs_us_totals[year == yr, total_marriages]
         if (length(nchs_total) > 0 && !is.na(nchs_total)) {
-          total_mar <- nchs_total * ss_area_factor
+          total_mar <- nchs_total * yr_factor
         }
       }
 
@@ -1313,7 +1464,8 @@ interpolate_marriage_grids <- function(grid_start,
 #' @param acs_grids List of ACS marriage grid matrices by year
 #' @param nchs_us_totals data.table: NCHS U.S. total marriages
 #' @param unmarried_pop_grid Matrix: unmarried population geometric means
-#' @param ss_area_factor Numeric: SS area adjustment factor
+#' @param ss_area_factor Numeric or NULL: SS area adjustment factor. If NULL
+#'   (default), calculates dynamically from historical population data.
 #' @param smooth Logical: apply graduation after adjustment
 #'
 #' @return list with rates and AMR values
@@ -1323,7 +1475,7 @@ calculate_historical_rates_2008_2022 <- function(base_margrid,
                                                    acs_grids,
                                                    nchs_us_totals,
                                                    unmarried_pop_grid,
-                                                   ss_area_factor = 1.003,
+                                                   ss_area_factor = NULL,
                                                    smooth = TRUE) {
   checkmate::assert_matrix(base_margrid, mode = "numeric")
   checkmate::assert_list(acs_grids)
@@ -1361,8 +1513,15 @@ calculate_historical_rates_2008_2022 <- function(base_margrid,
       nchs_total <- sum(acs_grid, na.rm = TRUE)
     }
 
+    # Get SS area factor (calculate dynamically if not provided)
+    yr_factor <- if (is.null(ss_area_factor)) {
+      get_ss_area_factor(yr)
+    } else {
+      ss_area_factor
+    }
+
     # Scale to SS area total
-    ss_total <- nchs_total * ss_area_factor
+    ss_total <- nchs_total * yr_factor
 
     # Scale rates to match total marriages
     scaled_grid <- scale_margrid_to_total(adjusted_grid, unmarried_pop_grid, ss_total)
@@ -1468,7 +1627,8 @@ aggregate_grid_to_age_groups <- function(grid) {
 #' @param acs_grids List of ACS marriage grids (2008-2022)
 #' @param nchs_us_totals data.table: NCHS U.S. total marriages
 #' @param unmarried_pop_grid Matrix: 2010 standard population geometric means
-#' @param ss_area_factor Numeric: SS area adjustment factor (default: 1.003)
+#' @param ss_area_factor Numeric or NULL: SS area adjustment factor. If NULL
+#'   (default), calculates dynamically from historical population data.
 #' @param smooth Logical: apply graduation after adjustment (default: TRUE)
 #' @param cache_dir Character: directory for caching results
 #' @param force_recompute Logical: force recomputation even if cache exists
@@ -1484,7 +1644,7 @@ calculate_historical_period <- function(base_margrid,
                                           acs_grids,
                                           nchs_us_totals,
                                           unmarried_pop_grid,
-                                          ss_area_factor = 1.003,
+                                          ss_area_factor = NULL,
                                           smooth = TRUE,
                                           cache_dir = here::here("data/cache/marriage"),
                                           force_recompute = FALSE) {
@@ -2148,28 +2308,35 @@ apply_prior_status_rates <- function(marriage_rates,
 #' Per TR2025: "The MarGrid rates are then adjusted to produce two sets of
 #' marriage rates: opposite-sex marriage rates and same-sex marriage rates."
 #'
-#' This implementation uses ACS-derived same-sex marriage patterns by age
-#' to separate total marriage rates into opposite-sex and same-sex components.
-#' If ACS same-sex data is not provided, falls back to a constant fraction.
+#' This implementation uses a PREVALENCE-BASED approach: at each age cell,
+#' the same-sex rate equals the total rate times the local prevalence
+#' (probability that a marriage at that age is same-sex).
+#'
+#' This guarantees that ss_rate <= total_rate at every cell, ensuring
+#' opposite_sex + same_sex = total exactly.
 #'
 #' @param marriage_rates List of marriage rate matrices by year
-#' @param same_sex_data Result from fetch_acs_same_sex_grids() (optional)
-#'   If NULL, uses constant same_sex_fraction instead
-#' @param same_sex_fraction Fallback fraction if same_sex_data not provided (default: 0.045)
-#'   Based on ~4.5% of marriages being same-sex in ACS 2015-2022 data
+#' @param prevalence_grids Result from calculate_same_sex_prevalence_grids() (optional)
+#'   Contains ss_prevalence, mm_prevalence, ff_prevalence matrices
+#' @param same_sex_data Result from fetch_acs_same_sex_grids() (optional, legacy)
+#'   Used to calculate prevalence grids if prevalence_grids not provided
+#' @param opposite_sex_grids ACS opposite-sex grids (needed if using same_sex_data)
+#' @param same_sex_fraction Fallback fraction if no data provided (default: 0.045)
 #' @param years Years to process (default: all years)
 #'
 #' @return List with:
 #'   - opposite_sex: Rate matrices for opposite-sex marriages
 #'   - same_sex: Rate matrices for same-sex marriages
-#'   - male_male: Rate matrices for male-male marriages (if same_sex_data provided)
-#'   - female_female: Rate matrices for female-female marriages (if same_sex_data provided)
-#'   - same_sex_fraction: Overall same-sex fraction used
-#'   - method: "acs_pattern" or "constant_fraction"
+#'   - male_male: Rate matrices for male-male marriages
+#'   - female_female: Rate matrices for female-female marriages
+#'   - same_sex_fraction: Overall same-sex fraction
+#'   - method: "prevalence", "acs_pattern", or "constant_fraction"
 #'
 #' @export
 separate_marriage_types <- function(marriage_rates,
+                                     prevalence_grids = NULL,
                                      same_sex_data = NULL,
+                                     opposite_sex_grids = NULL,
                                      same_sex_fraction = 0.045,
                                      years = NULL) {
   checkmate::assert_list(marriage_rates)
@@ -2185,27 +2352,25 @@ separate_marriage_types <- function(marriage_rates,
   male_male <- list()
   female_female <- list()
 
-  # Check if we have ACS same-sex data with age patterns
- if (!is.null(same_sex_data) && "average_male_male" %in% names(same_sex_data)) {
-    cli::cli_alert_info("Using ACS-derived same-sex age patterns")
+  # ==========================================================================
+  # METHOD 1: Prevalence-based approach (PREFERRED)
+  # ==========================================================================
+  # If prevalence_grids provided, use them directly
+  # If same_sex_data + opposite_sex_grids provided, calculate prevalence first
 
-    # Get average same-sex patterns (normalized)
-    avg_mm <- same_sex_data$average_male_male
-    avg_ff <- same_sex_data$average_female_female
+  if (!is.null(prevalence_grids) && "ss_prevalence" %in% names(prevalence_grids)) {
+    cli::cli_alert_info("Using PREVALENCE-BASED separation (guarantees exact split)")
 
-    # Calculate overall same-sex fraction from totals
-    totals <- same_sex_data$totals
-    total_ss <- sum(totals$marriages)
+    ss_prev <- prevalence_grids$ss_prevalence
+    mm_prev <- prevalence_grids$mm_prevalence
+    ff_prev <- prevalence_grids$ff_prevalence
+    prev_ages <- prevalence_grids$ages
 
-    # Get male-male vs female-female split
-    mm_share <- sum(totals[sex_combo == "male_male", marriages]) / total_ss
-    ff_share <- sum(totals[sex_combo == "female_female", marriages]) / total_ss
+    overall_ss <- prevalence_grids$overall_ss_fraction
+    overall_mm <- prevalence_grids$overall_mm_fraction
+    overall_ff <- prevalence_grids$overall_ff_fraction
 
-    cli::cli_alert_info("Male-male share: {round(mm_share * 100, 1)}%")
-    cli::cli_alert_info("Female-female share: {round(ff_share * 100, 1)}%")
-
-    # Get age ranges
-    ss_ages <- same_sex_data$min_age:same_sex_data$max_age
+    cli::cli_alert_info("Overall same-sex fraction: {round(overall_ss * 100, 2)}%")
 
     for (yr in years) {
       yr_char <- as.character(yr)
@@ -2216,45 +2381,39 @@ separate_marriage_types <- function(marriage_rates,
       n_ages <- length(grid_ages)
 
       # Initialize output matrices
-      os_grid <- total_rates * (1 - same_sex_fraction)
-      ss_grid <- total_rates * same_sex_fraction
+      ss_grid <- matrix(0, nrow = n_ages, ncol = n_ages,
+                        dimnames = list(grid_ages, grid_ages))
       mm_grid <- matrix(0, nrow = n_ages, ncol = n_ages,
                         dimnames = list(grid_ages, grid_ages))
       ff_grid <- matrix(0, nrow = n_ages, ncol = n_ages,
                         dimnames = list(grid_ages, grid_ages))
 
-      # Apply same-sex pattern
-      # Scale the normalized patterns to match the same-sex total for this year
-      ss_total <- sum(ss_grid)
-
-      # Distribute same-sex marriages according to ACS age patterns
+      # Apply prevalence at each cell
       for (i in seq_along(grid_ages)) {
         for (j in seq_along(grid_ages)) {
           a1 <- grid_ages[i]
           a2 <- grid_ages[j]
 
-          # Find corresponding index in same-sex pattern
-          ss_i <- which(ss_ages == a1)
-          ss_j <- which(ss_ages == a2)
+          # Find prevalence at this age combination
+          prev_i <- which(prev_ages == a1)
+          prev_j <- which(prev_ages == a2)
 
-          if (length(ss_i) > 0 && length(ss_j) > 0) {
-            # Get pattern values (already normalized to sum to 1)
-            mm_pattern <- avg_mm[ss_i, ss_j]
-            ff_pattern <- avg_ff[ss_i, ss_j]
-
-            # Scale to this year's same-sex total
-            mm_grid[i, j] <- mm_pattern * ss_total * mm_share
-            ff_grid[i, j] <- ff_pattern * ss_total * ff_share
+          if (length(prev_i) > 0 && length(prev_j) > 0) {
+            # Use local prevalence
+            ss_grid[i, j] <- total_rates[i, j] * ss_prev[prev_i, prev_j]
+            mm_grid[i, j] <- total_rates[i, j] * mm_prev[prev_i, prev_j]
+            ff_grid[i, j] <- total_rates[i, j] * ff_prev[prev_i, prev_j]
+          } else {
+            # Age outside prevalence grid - use overall fraction
+            ss_grid[i, j] <- total_rates[i, j] * overall_ss
+            mm_grid[i, j] <- total_rates[i, j] * overall_mm
+            ff_grid[i, j] <- total_rates[i, j] * overall_ff
           }
         }
       }
 
-      # Recalculate same-sex grid as sum of male-male and female-female
-      ss_grid <- mm_grid + ff_grid
-
-      # Adjust opposite-sex to ensure total = original
+      # Opposite-sex is exactly total minus same-sex (guaranteed non-negative)
       os_grid <- total_rates - ss_grid
-      os_grid[os_grid < 0] <- 0  # Ensure non-negative
 
       opposite_sex[[yr_char]] <- os_grid
       same_sex[[yr_char]] <- ss_grid
@@ -2262,7 +2421,92 @@ separate_marriage_types <- function(marriage_rates,
       female_female[[yr_char]] <- ff_grid
     }
 
-    cli::cli_alert_success("Separated rates for {length(opposite_sex)} years using ACS patterns")
+    # Calculate actual resulting same-sex fraction
+    sample_yr <- as.character(years[ceiling(length(years)/2)])
+    actual_ss_frac <- sum(same_sex[[sample_yr]]) / sum(marriage_rates[[sample_yr]])
+
+    cli::cli_alert_success("Separated rates for {length(opposite_sex)} years using PREVALENCE method")
+    cli::cli_alert_info("Resulting same-sex fraction ({sample_yr}): {round(actual_ss_frac * 100, 2)}%")
+
+    result <- list(
+      opposite_sex = opposite_sex,
+      same_sex = same_sex,
+      male_male = male_male,
+      female_female = female_female,
+      same_sex_fraction = actual_ss_frac,
+      overall_ss_fraction = overall_ss,
+      method = "prevalence"
+    )
+
+  # ==========================================================================
+  # METHOD 2: Calculate prevalence from same_sex_data + opposite_sex_grids
+  # ==========================================================================
+  } else if (!is.null(same_sex_data) && !is.null(opposite_sex_grids) &&
+             "average_male_male" %in% names(same_sex_data)) {
+
+    cli::cli_alert_info("Calculating prevalence grids from ACS data...")
+
+    # Calculate prevalence grids
+    prev_grids <- calculate_same_sex_prevalence_grids(
+      same_sex_grids = same_sex_data,
+      opposite_sex_grids = opposite_sex_grids,
+      years = same_sex_data$years,
+      smooth = TRUE,
+      min_count = 10
+    )
+
+    # Recursive call with calculated prevalence
+    return(separate_marriage_types(
+      marriage_rates = marriage_rates,
+      prevalence_grids = prev_grids,
+      same_sex_fraction = same_sex_fraction,
+      years = years
+    ))
+
+  # ==========================================================================
+  # METHOD 3: Constant fraction fallback
+  # ==========================================================================
+  } else {
+    cli::cli_alert_warning("Using CONSTANT FRACTION separation (prevalence data not available)")
+    cli::cli_alert_info("Same-sex fraction: {same_sex_fraction * 100}%")
+
+    # Get male-male/female-female split from same_sex_data if available
+    if (!is.null(same_sex_data) && "totals" %in% names(same_sex_data)) {
+      totals <- same_sex_data$totals
+      total_ss <- sum(totals$marriages)
+      mm_share <- sum(totals[sex_combo == "male_male", marriages]) / total_ss
+      ff_share <- sum(totals[sex_combo == "female_female", marriages]) / total_ss
+      cli::cli_alert_info("Using ACS-derived MM/FF split: {round(mm_share*100, 1)}% / {round(ff_share*100, 1)}%")
+    } else {
+      # Default from ACS 2015-2022 average (documented in CLAUDE.md)
+      mm_share <- 0.459
+      ff_share <- 0.541
+      cli::cli_alert_info("Using default MM/FF split: {round(mm_share*100, 1)}% / {round(ff_share*100, 1)}%")
+    }
+
+    for (yr in years) {
+      yr_char <- as.character(yr)
+      if (!(yr_char %in% names(marriage_rates))) next
+
+      total_rates <- marriage_rates[[yr_char]]
+      grid_ages <- as.integer(rownames(total_rates))
+      n_ages <- length(grid_ages)
+
+      # Simple split: same-sex gets fraction, opposite-sex gets remainder
+      ss_grid <- total_rates * same_sex_fraction
+      os_grid <- total_rates * (1 - same_sex_fraction)
+
+      # Split same-sex into male-male and female-female
+      mm_grid <- ss_grid * mm_share
+      ff_grid <- ss_grid * ff_share
+
+      opposite_sex[[yr_char]] <- os_grid
+      same_sex[[yr_char]] <- ss_grid
+      male_male[[yr_char]] <- mm_grid
+      female_female[[yr_char]] <- ff_grid
+    }
+
+    cli::cli_alert_success("Separated rates for {length(opposite_sex)} years using constant fraction")
 
     result <- list(
       opposite_sex = opposite_sex,
@@ -2272,30 +2516,6 @@ separate_marriage_types <- function(marriage_rates,
       same_sex_fraction = same_sex_fraction,
       mm_share = mm_share,
       ff_share = ff_share,
-      method = "acs_pattern"
-    )
-
-  } else {
-    # Fallback to constant fraction
-    cli::cli_alert_info("Using constant same-sex fraction: {same_sex_fraction * 100}%")
-
-    for (yr in years) {
-      yr_char <- as.character(yr)
-      if (!(yr_char %in% names(marriage_rates))) next
-
-      total_rates <- marriage_rates[[yr_char]]
-
-      # Simple split: same-sex gets fraction, opposite-sex gets remainder
-      opposite_sex[[yr_char]] <- total_rates * (1 - same_sex_fraction)
-      same_sex[[yr_char]] <- total_rates * same_sex_fraction
-    }
-
-    cli::cli_alert_success("Separated rates for {length(opposite_sex)} years")
-
-    result <- list(
-      opposite_sex = opposite_sex,
-      same_sex = same_sex,
-      same_sex_fraction = same_sex_fraction,
       method = "constant_fraction"
     )
   }
@@ -2482,13 +2702,31 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
   same_sex_rates <- NULL
   male_male_rates <- NULL
   female_female_rates <- NULL
+  prevalence_grids <- NULL
 
   if (include_same_sex) {
     cli::cli_h2("Step 6: Separating Same-Sex and Opposite-Sex Rates")
 
+    # Calculate prevalence grids if we have both same-sex and opposite-sex data
+    if (!is.null(same_sex_data) && !is.null(acs_grids) &&
+        "average_male_male" %in% names(same_sex_data)) {
+      cli::cli_alert_info("Calculating same-sex prevalence grids from ACS data...")
+
+      prevalence_grids <- calculate_same_sex_prevalence_grids(
+        same_sex_grids = same_sex_data,
+        opposite_sex_grids = acs_grids,
+        years = intersect(same_sex_data$years, as.integer(names(acs_grids))),
+        smooth = TRUE,
+        min_count = 10
+      )
+    }
+
+    # Separate using prevalence-based method (or fallback)
     sex_result <- separate_marriage_types(
       marriage_rates = all_rates,
+      prevalence_grids = prevalence_grids,
       same_sex_data = same_sex_data,
+      opposite_sex_grids = acs_grids,
       same_sex_fraction = same_sex_fraction
     )
     opposite_sex_rates <- sex_result$opposite_sex

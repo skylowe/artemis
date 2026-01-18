@@ -350,17 +350,20 @@ validate_margrid_properties <- function(margrid) {
   }
 
   # Check 6: Total rate is reasonable
+  # For 87×87 grid with rates per 100,000, total can be several million
   total_rate <- sum(margrid, na.rm = TRUE)
-  total_reasonable <- total_rate > 10000 && total_rate < 1000000
+  total_reasonable <- total_rate > 10000 && total_rate < 10000000
   checks$total_rate <- total_reasonable
   messages <- c(messages, paste("Total rate:", format(round(total_rate), big.mark = ",")))
 
   # Overall
   all_pass <- all(unlist(checks))
 
-  # Report
+  # Report - check for actual failure indicators, not just keywords
   for (msg in messages) {
-    if (grepl("negative|NA values|unusual|expected", msg, ignore.case = TRUE)) {
+    # These patterns indicate actual problems (not "All rates non-negative" which is good)
+    is_warning <- grepl("\\d+ negative|\\d+ NA|unusual|expected \\d+", msg, ignore.case = TRUE)
+    if (is_warning) {
       cli::cli_alert_warning(msg)
     } else {
       cli::cli_alert_success(msg)
@@ -577,7 +580,8 @@ validate_marriage_type_split <- function(total_rates,
     passed = all_pass && fraction_ok,
     n_passed = n_pass,
     n_total = n_years,
-    max_diff = max_diff,
+    max_rel_diff = max_rel_diff,
+    max_abs_diff = max_abs_diff,
     same_sex_fraction = ss_fraction,
     message = ifelse(all_pass,
                      "Marriage type split is valid",

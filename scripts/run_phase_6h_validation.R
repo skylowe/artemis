@@ -20,9 +20,12 @@ cat("=== Phase 6H: Marriage Projection Validation ===\n\n")
 # =============================================================================
 cat("Step 1: Loading marriage projection...\n")
 
+# Set to TRUE to force recompute (e.g., after code changes)
+force_recompute <- FALSE
+
 cache_file <- here::here("data/cache/marriage/marriage_projection_complete.rds")
 
-if (file.exists(cache_file)) {
+if (file.exists(cache_file) && !force_recompute) {
   cat("  Loading from cache...\n")
   projection <- readRDS(cache_file)
   cat("  Loaded projection with", length(projection$all_rates), "years\n")

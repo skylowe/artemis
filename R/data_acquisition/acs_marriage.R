@@ -1298,6 +1298,182 @@ calculate_same_sex_fraction <- function(same_sex_grids,
   )
 }
 
+#' Calculate same-sex prevalence grids for marriage type separation
+#'
+#' @description
+#' Calculates prevalence grids (probability at each age cell) for same-sex,
+#' male-male, and female-female marriages. This is the preferred approach
+#' for separating marriage types because it guarantees that separated rates
+#' never exceed total rates at any cell.
+#'
+#' The prevalence at each cell represents: "What fraction of marriages at
+#' this age combination are same-sex (or male-male, or female-female)?"
+#'
+#' @param same_sex_grids Result from fetch_acs_same_sex_grids()
+#' @param opposite_sex_grids List of opposite-sex marriage grids by year
+#'   (aligned to MarGrid dimensions)
+#' @param years Years to use for calculation (default: all available)
+#' @param smooth Logical: apply smoothing to handle sparse cells (default: TRUE)
+#' @param min_count Minimum count threshold for reliable prevalence (default: 10)
+#'
+#' @return list with:
+#'   - ss_prevalence: Matrix of same-sex prevalence by age pair (0 to 1)
+#'   - mm_prevalence: Matrix of male-male prevalence by age pair (0 to 1)
+#'   - ff_prevalence: Matrix of female-female prevalence by age pair (0 to 1)
+#'   - overall_ss_fraction: Overall same-sex fraction for fallback
+#'   - overall_mm_fraction: Overall male-male fraction (of total)
+#'   - overall_ff_fraction: Overall female-female fraction (of total)
+#'   - ages: Age range covered
+#'
+#' @export
+calculate_same_sex_prevalence_grids <- function(same_sex_grids,
+                                                  opposite_sex_grids,
+                                                  years = NULL,
+                                                  smooth = TRUE,
+                                                  min_count = 10) {
+
+  if (is.null(years)) {
+    years <- same_sex_grids$years
+  }
+
+  cli::cli_h2("Calculating Same-Sex Prevalence Grids")
+
+  # Get age range from same-sex data
+  ages <- same_sex_grids$min_age:same_sex_grids$max_age
+  n_ages <- length(ages)
+
+  # Initialize accumulator matrices
+  total_mm <- matrix(0, nrow = n_ages, ncol = n_ages, dimnames = list(ages, ages))
+  total_ff <- matrix(0, nrow = n_ages, ncol = n_ages, dimnames = list(ages, ages))
+  total_os <- matrix(0, nrow = n_ages, ncol = n_ages, dimnames = list(ages, ages))
+
+  # Sum counts across years
+  for (yr in years) {
+    yr_char <- as.character(yr)
+
+    # Same-sex (separate male-male and female-female)
+    if (yr_char %in% names(same_sex_grids$grids)) {
+      ss_data <- same_sex_grids$grids[[yr_char]]
+      total_mm <- total_mm + ss_data$male_male_grid
+      total_ff <- total_ff + ss_data$female_female_grid
+    }
+
+    # Opposite-sex
+    if (yr_char %in% names(opposite_sex_grids)) {
+      os_grid <- opposite_sex_grids[[yr_char]]
+      os_ages <- as.integer(rownames(os_grid))
+
+      # Align to same-sex age range
+      for (i in seq_along(os_ages)) {
+        for (j in seq_along(os_ages)) {
+          a1 <- os_ages[i]
+          a2 <- os_ages[j]
+          if (a1 >= same_sex_grids$min_age && a1 <= same_sex_grids$max_age &&
+              a2 >= same_sex_grids$min_age && a2 <= same_sex_grids$max_age) {
+            r <- which(ages == a1)
+            c <- which(ages == a2)
+            if (length(r) > 0 && length(c) > 0) {
+              total_os[r, c] <- total_os[r, c] + os_grid[i, j]
+            }
+          }
+        }
+      }
+    }
+  }
+
+  # Calculate total same-sex and total all
+  total_ss <- total_mm + total_ff
+  total_all <- total_ss + total_os
+
+  # Calculate overall fractions (for fallback on sparse cells)
+  sum_mm <- sum(total_mm)
+  sum_ff <- sum(total_ff)
+  sum_ss <- sum_mm + sum_ff
+  sum_os <- sum(total_os)
+  sum_all <- sum_ss + sum_os
+
+  overall_ss_fraction <- sum_ss / sum_all
+  overall_mm_fraction <- sum_mm / sum_all
+  overall_ff_fraction <- sum_ff / sum_all
+
+  cli::cli_alert_info("Overall same-sex fraction: {round(overall_ss_fraction * 100, 2)}%")
+  cli::cli_alert_info("  Male-male: {round(overall_mm_fraction * 100, 2)}%")
+  cli::cli_alert_info("  Female-female: {round(overall_ff_fraction * 100, 2)}%")
+
+  # Calculate raw prevalence grids
+  ss_prevalence_raw <- total_ss / total_all
+  mm_prevalence_raw <- total_mm / total_all
+  ff_prevalence_raw <- total_ff / total_all
+
+  # Handle sparse cells: use overall fraction where count is too low
+  sparse_mask <- total_all < min_count
+  n_sparse <- sum(sparse_mask)
+
+  if (n_sparse > 0) {
+    cli::cli_alert_info("Using overall fraction for {n_sparse} sparse cells (count < {min_count})")
+
+    ss_prevalence_raw[sparse_mask] <- overall_ss_fraction
+    mm_prevalence_raw[sparse_mask] <- overall_mm_fraction
+    ff_prevalence_raw[sparse_mask] <- overall_ff_fraction
+  }
+
+  # Handle NA/Inf values
+  ss_prevalence_raw[is.na(ss_prevalence_raw) | is.infinite(ss_prevalence_raw)] <- overall_ss_fraction
+  mm_prevalence_raw[is.na(mm_prevalence_raw) | is.infinite(mm_prevalence_raw)] <- overall_mm_fraction
+  ff_prevalence_raw[is.na(ff_prevalence_raw) | is.infinite(ff_prevalence_raw)] <- overall_ff_fraction
+
+  # Optional smoothing to reduce noise
+  if (smooth) {
+    cli::cli_alert_info("Applying smoothing to prevalence grids")
+
+    # Simple 3x3 moving average for smoothing
+    smooth_grid <- function(grid, fallback) {
+      smoothed <- grid
+      for (i in 2:(nrow(grid) - 1)) {
+        for (j in 2:(ncol(grid) - 1)) {
+          neighborhood <- grid[(i-1):(i+1), (j-1):(j+1)]
+          if (all(is.finite(neighborhood))) {
+            smoothed[i, j] <- mean(neighborhood)
+          }
+        }
+      }
+      smoothed
+    }
+
+    ss_prevalence <- smooth_grid(ss_prevalence_raw, overall_ss_fraction)
+    mm_prevalence <- smooth_grid(mm_prevalence_raw, overall_mm_fraction)
+    ff_prevalence <- smooth_grid(ff_prevalence_raw, overall_ff_fraction)
+  } else {
+    ss_prevalence <- ss_prevalence_raw
+    mm_prevalence <- mm_prevalence_raw
+    ff_prevalence <- ff_prevalence_raw
+  }
+
+  # Ensure mm + ff = ss (adjust ff to balance)
+  ff_prevalence <- ss_prevalence - mm_prevalence
+  ff_prevalence[ff_prevalence < 0] <- 0
+
+  # Report peak prevalence locations
+  max_ss_idx <- which(ss_prevalence == max(ss_prevalence), arr.ind = TRUE)[1, ]
+  peak_ss_age1 <- ages[max_ss_idx[1]]
+  peak_ss_age2 <- ages[max_ss_idx[2]]
+  peak_ss_val <- ss_prevalence[max_ss_idx[1], max_ss_idx[2]]
+
+  cli::cli_alert_success("Peak same-sex prevalence: {round(peak_ss_val * 100, 1)}% at ages ({peak_ss_age1}, {peak_ss_age2})")
+
+  list(
+    ss_prevalence = ss_prevalence,
+    mm_prevalence = mm_prevalence,
+    ff_prevalence = ff_prevalence,
+    overall_ss_fraction = overall_ss_fraction,
+    overall_mm_fraction = overall_mm_fraction,
+    overall_ff_fraction = overall_ff_fraction,
+    ages = ages,
+    years_used = years,
+    n_sparse_cells = n_sparse
+  )
+}
+
 # =============================================================================
 # 2010 STANDARD POPULATION (Item 13)
 # =============================================================================
