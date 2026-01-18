@@ -1019,9 +1019,239 @@ list(
   ),
 
   # ===========================================================================
+  # DATA ACQUISITION TARGETS - MARRIAGE (Phase 6)
+  # ===========================================================================
+
+  # NCHS MRA marriages 1978-1988 (for base MarGrid)
+  tar_target(
+    nchs_mra_marriages_1978_1988,
+    {
+      cache_file <- here::here("data/cache/nber_marriage/nchs_mra_marriages_1978_1988.rds")
+      if (file.exists(cache_file)) {
+        readRDS(cache_file)
+      } else {
+        fetch_nchs_mra_marriages_1978_1988()
+      }
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # CPS unmarried population (1962-1995)
+  tar_target(
+    cps_unmarried_population,
+    {
+      cache_file <- here::here("data/cache/ipums_cps/cps_unmarried_1957_1995.rds")
+      if (file.exists(cache_file)) {
+        readRDS(cache_file)
+      } else {
+        cli::cli_abort("CPS unmarried data not cached - run fetch_cps_unmarried_population() first")
+      }
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # NCHS MRA subset marriages 1989-1995
+  tar_target(
+    nchs_mra_subset_1989_1995,
+    {
+      cache_file <- here::here("data/cache/nber_marriage/nchs_mra_marriages_1989_1995.rds")
+      if (file.exists(cache_file)) {
+        readRDS(cache_file)
+      } else {
+        fetch_nchs_mra_marriages_1989_1995()
+      }
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # NCHS U.S. total marriages 1989-2022
+  tar_target(
+    nchs_us_total_marriages,
+    fetch_nchs_us_total_marriages(years = 1989:2022)
+  ),
+
+  # ACS new marriage grids 2007-2022 (aligned to MarGrid dimensions)
+  tar_target(
+    acs_marriage_grids,
+    {
+      cache_dir <- here::here("data/cache/acs_marriage")
+      acs_files <- list.files(cache_dir, pattern = "^new_marriages_20[0-9]{2}\\.rds$", full.names = TRUE)
+
+      if (length(acs_files) == 0) {
+        cli::cli_abort("ACS marriage grids not cached - run fetch_acs_new_marriages() first")
+      }
+
+      aligned_grids <- list()
+      for (f in acs_files) {
+        yr <- as.integer(gsub(".*new_marriages_([0-9]{4})\\.rds", "\\1", f))
+        data <- readRDS(f)
+        acs_grid <- data$grid
+        acs_ages <- as.integer(rownames(acs_grid))
+
+        # Align to MarGrid dimensions (87×87, ages 14-100)
+        aligned <- matrix(0, nrow = 87, ncol = 87,
+                          dimnames = list(14:100, 14:100))
+
+        for (i in seq_along(acs_ages)) {
+          h_age <- acs_ages[i]
+          if (h_age < 14 || h_age > 100) next
+          h_idx <- h_age - 14 + 1
+
+          for (j in seq_along(acs_ages)) {
+            w_age <- acs_ages[j]
+            if (w_age < 14 || w_age > 100) next
+            w_idx <- w_age - 14 + 1
+            aligned[h_idx, w_idx] <- acs_grid[i, j]
+          }
+        }
+        aligned_grids[[as.character(yr)]] <- aligned
+      }
+      aligned_grids
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # 2010 standard population by age group
+  tar_target(
+    standard_pop_2010,
+    {
+      cache_file <- here::here("data/cache/acs_pums/marital_all_years.rds")
+      if (file.exists(cache_file)) {
+        get_2010_standard_population(cache_file = cache_file, by_age_group = TRUE)
+      } else {
+        cli::cli_abort("Standard population cache not found - run Phase 4 data acquisition first")
+      }
+    }
+  ),
+
+  # NCHS marriages by prior status 1978-1988
+  tar_target(
+    nchs_prior_status_1978_1988,
+    {
+      cache_file <- here::here("data/cache/nber_marriage/nchs_marriages_by_prior_status_1978_1988.rds")
+      if (file.exists(cache_file)) {
+        readRDS(cache_file)
+      } else {
+        fetch_nchs_marriages_by_prior_status_1978_1988()
+      }
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # ACS same-sex marriage grids 2015-2022
+  tar_target(
+    acs_same_sex_grids,
+    fetch_acs_same_sex_grids(years = 2015:2022),
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # Calculate same-sex fraction from ACS data
+  tar_target(
+    same_sex_fraction,
+    {
+      ss_result <- calculate_same_sex_fraction(
+        same_sex_grids = acs_same_sex_grids,
+        opposite_sex_grids = acs_marriage_grids,
+        years = 2015:2019
+      )
+      ss_result$overall_fraction
+    }
+  ),
+
+  # ===========================================================================
+  # MARRIAGE SUBPROCESS TARGETS (Phase 6)
+  # ===========================================================================
+  # Implements Equations 1.6.1 - 1.6.2 from TR2025 Documentation
+  # Produces: m̂_{x,y}^z (age-specific rates), AMR^z (age-adjusted rate)
+
+  # Run complete marriage projection
+  tar_target(
+    marriage_projection,
+    run_marriage_projection(
+      nchs_marriages_1978_1988 = nchs_mra_marriages_1978_1988,
+      cps_unmarried = cps_unmarried_population,
+      nchs_subset = nchs_mra_subset_1989_1995,
+      acs_grids = acs_marriage_grids,
+      nchs_us_totals = nchs_us_total_marriages,
+      standard_pop_by_group = standard_pop_2010,
+      prior_status_data = nchs_prior_status_1978_1988,
+      same_sex_data = acs_same_sex_grids,
+      same_sex_fraction = same_sex_fraction,
+      ultimate_amr = config_assumptions$marriage$ultimate_amr,
+      ultimate_year = config_assumptions$marriage$ultimate_year,
+      end_year = config_assumptions$metadata$projection_period$end_year,
+      include_same_sex = TRUE,
+      include_prior_status = TRUE,
+      force_recompute = FALSE
+    )
+  ),
+
+  # Extract marriage rates (all years)
+  tar_target(
+    marriage_rates_all,
+    marriage_projection$all_rates
+  ),
+
+  # Extract historical AMR
+  tar_target(
+    marriage_amr_historical,
+    marriage_projection$amr_historical
+  ),
+
+  # Extract projected AMR
+  tar_target(
+    marriage_amr_projected,
+    marriage_projection$amr_projected
+  ),
+
+  # Extract opposite-sex rates
+  tar_target(
+    marriage_rates_opposite_sex,
+    marriage_projection$opposite_sex_rates
+  ),
+
+  # Extract same-sex rates
+  tar_target(
+    marriage_rates_same_sex,
+    marriage_projection$same_sex_rates
+  ),
+
+  # Extract prior status differentials
+  tar_target(
+    marriage_status_differentials,
+    marriage_projection$status_differentials
+  ),
+
+  # Extract base MarGrid
+  tar_target(
+    marriage_margrid,
+    marriage_projection$margrid
+  ),
+
+  # ===========================================================================
+  # MARRIAGE VALIDATION TARGETS (Phase 6H)
+  # ===========================================================================
+
+  # Comprehensive marriage projection validation
+  tar_target(
+    marriage_validation,
+    validate_marriage_comprehensive(
+      projection = marriage_projection,
+      tolerance_amr = 0.001,
+      tolerance_totals = 0.05
+    )
+  ),
+
+  # Quick marriage validation (for faster iteration)
+  tar_target(
+    marriage_validation_quick,
+    validate_marriage_quick(projection = marriage_projection)
+  ),
+
+  # ===========================================================================
   # PLACEHOLDER: Future process targets will be added here
   # ===========================================================================
-  # - Marriage/Divorce targets
+  # - Divorce targets (Phase 7)
   # - Projected population targets
   # - Economics process targets
   # - Beneficiaries process targets

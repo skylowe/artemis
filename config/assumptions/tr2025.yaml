@@ -252,6 +252,52 @@ immigration:
   # Placeholder for other immigration types (to be implemented)
   ultimate_net_other_immigration: null
 
+# =========================================================================
+# Marriage Configuration (TR2025 Intermediate Assumptions)
+# =========================================================================
+# Source: SSA 2025 Long-Range Model Documentation, Section 1.6
+
+marriage:
+  # Ultimate age-adjusted marriage rate (AMR)
+  # Per 100,000 unmarried couples (geometric mean of male and female)
+  ultimate_amr: 4000
+
+  # Year when ultimate AMR is reached (year 25 from first projection year)
+  # 2023 + 24 = 2047
+  ultimate_year: 2047
+
+  # Starting rate calculation (weighted average of historical years)
+  starting_rate_years: 5  # Last 5 years of historical data
+  starting_rate_weights: "linear"  # More recent years weighted higher
+
+  # Age range for MarGrid
+  min_age: 14
+  max_age: 100  # 100+ grouped into single age
+
+  # Historical data periods
+  historical_periods:
+    detailed_nchs_start: 1978
+    detailed_nchs_end: 1988
+    nchs_subset_start: 1989
+    nchs_subset_end: 1995
+    interpolation_start: 1996
+    interpolation_end: 2007
+    acs_start: 2008
+    acs_end: 2022
+
+  # Years for prior marital status differentials
+  prior_status_years: [1979, 1981, 1982, 1983, 1984, 1985, 1986, 1987, 1988]
+
+  # Same-sex marriage configuration
+  # NOTE: TR2025 uses state-level data (2004-2012) we don't have access to
+  # We use ACS PUMS (2015-2022) instead - documented methodology deviation
+  same_sex:
+    data_source: "acs"  # "acs" or "state" (state data not available)
+    reference_years: [2015, 2016, 2017, 2018, 2019]
+
+  # Standard population year for AMR calculation
+  standard_population_year: 2010
+
 # Data source configuration
 data_sources:
   historical_birth_data:
