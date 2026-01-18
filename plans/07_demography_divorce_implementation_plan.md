@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 7A - COMPLETE
-**Subprocess Status:** IN PROGRESS (Phase 7B next)
+**Current Phase:** Phase 7B - COMPLETE
+**Subprocess Status:** IN PROGRESS (Phase 7C next)
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
@@ -185,11 +185,11 @@ The Divorce subprocess requires **11 distinct data inputs**:
 
 | # | Data | Source | Years | Status |
 |---|------|--------|-------|--------|
-| 1 | SS area married couples by age-of-husband × age-of-wife | HISTORICAL POPULATION | 1978-2022 | Available (Phase 4/6) |
-| 2 | Total July 1 SS area population | HISTORICAL POPULATION | 1979-2022 | Available (Phase 4) |
-| 3 | Total July 1 U.S. resident + armed forces overseas | Census | 1979-2022 | To implement |
-| 4 | Total July 1 PR + VI population | Census | 1988-2022 | To implement |
-| 5 | Final historical year | HISTORICAL POPULATION | 2022 | Available (Phase 4) |
+| 1 | SS area married couples by age-of-husband × age-of-wife | HISTORICAL POPULATION | 1978-2022 | ✓ Complete (Phase 7B) |
+| 2 | Total July 1 SS area population | HISTORICAL POPULATION | 1979-2022 | ✓ Complete (Phase 7B) |
+| 3 | Total July 1 U.S. resident + armed forces overseas | Census | 1979-2022 | ✓ Complete (Phase 7B) |
+| 4 | Total July 1 PR + VI population | Census | 1988-2022 | ✓ Complete (Phase 7B) |
+| 5 | Final historical year | HISTORICAL POPULATION | 2022 | ✓ Complete (Phase 4) |
 
 **Notes:**
 - Item 1 is the key denominator for rate calculations (married couples grid)
@@ -877,11 +877,19 @@ validate_divorce_comprehensive <- function(divorce_projection, config)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 7B.1 | Extract married couples grid from Phase 4/6 | Phase 4/6 | Married couples by age |
-| [ ] | 7B.2 | Calculate standard population (avg 2009-2010) | 7B.1 | Standard pop matrix |
-| [ ] | 7B.3 | Fetch population totals for SS area adjustment | Phase 4 | Pop totals by year |
-| [ ] | 7B.4 | Calculate SS area adjustment factors | 7B.3 | Adjustment factors |
-| [ ] | 7B.5 | Validate population data | 7B.1-7B.4 | Validation report |
+| [x] | 7B.1 | Extract married couples grid from Phase 4/6 | Phase 4/6 | Married couples by age |
+| [x] | 7B.2 | Calculate standard population (avg 2009-2010) | 7B.1 | Standard pop matrix |
+| [x] | 7B.3 | Fetch population totals for SS area adjustment | Phase 4 | Pop totals by year |
+| [x] | 7B.4 | Calculate SS area adjustment factors | 7B.3 | Adjustment factors |
+| [x] | 7B.5 | Validate population data | 7B.1-7B.4 | Validation report |
+
+**Phase 7B Notes (January 18, 2026):**
+- Created `R/demography/divorce.R` with core functions
+- Married couples grid uses geometric means: P_{x,y} = sqrt(married_male_x × married_female_y)
+- Standard population: averaged 2009-2010 December 31 married couples (per TR2025)
+- SS area factors: 1.019 - 1.027 (reuses marriage subprocess calculation)
+- Population totals available for all required years (1979-1988, 1998-2000, 2008-2022)
+- All 4/4 validation checks pass
 
 ### Phase 7C: DivGrid Development
 
