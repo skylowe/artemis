@@ -2148,55 +2148,159 @@ apply_prior_status_rates <- function(marriage_rates,
 #' Per TR2025: "The MarGrid rates are then adjusted to produce two sets of
 #' marriage rates: opposite-sex marriage rates and same-sex marriage rates."
 #'
-#' Note: This is a simplified implementation that applies a constant factor
-#' for same-sex marriages. Full implementation would require state-level
-#' same-sex marriage data (2004-2012) which is not currently available.
+#' This implementation uses ACS-derived same-sex marriage patterns by age
+#' to separate total marriage rates into opposite-sex and same-sex components.
+#' If ACS same-sex data is not provided, falls back to a constant fraction.
 #'
 #' @param marriage_rates List of marriage rate matrices by year
-#' @param same_sex_fraction Fraction of marriages that are same-sex (default: 0.02)
-#'   Based on ~2% of marriages being same-sex post-2015
+#' @param same_sex_data Result from fetch_acs_same_sex_grids() (optional)
+#'   If NULL, uses constant same_sex_fraction instead
+#' @param same_sex_fraction Fallback fraction if same_sex_data not provided (default: 0.045)
+#'   Based on ~4.5% of marriages being same-sex in ACS 2015-2022 data
 #' @param years Years to process (default: all years)
 #'
 #' @return List with:
 #'   - opposite_sex: Rate matrices for opposite-sex marriages
 #'   - same_sex: Rate matrices for same-sex marriages
+#'   - male_male: Rate matrices for male-male marriages (if same_sex_data provided)
+#'   - female_female: Rate matrices for female-female marriages (if same_sex_data provided)
+#'   - same_sex_fraction: Overall same-sex fraction used
+#'   - method: "acs_pattern" or "constant_fraction"
 #'
 #' @export
 separate_marriage_types <- function(marriage_rates,
-                                     same_sex_fraction = 0.02,
+                                     same_sex_data = NULL,
+                                     same_sex_fraction = 0.045,
                                      years = NULL) {
   checkmate::assert_list(marriage_rates)
-  checkmate::assert_number(same_sex_fraction, lower = 0, upper = 1)
 
   if (is.null(years)) {
     years <- as.integer(names(marriage_rates))
   }
 
   cli::cli_h2("Separating Same-Sex and Opposite-Sex Marriage Rates")
-  cli::cli_alert_info("Same-sex fraction: {same_sex_fraction * 100}%")
 
   opposite_sex <- list()
   same_sex <- list()
+  male_male <- list()
+  female_female <- list()
 
-  for (yr in years) {
-    yr_char <- as.character(yr)
-    if (!(yr_char %in% names(marriage_rates))) next
+  # Check if we have ACS same-sex data with age patterns
+ if (!is.null(same_sex_data) && "average_male_male" %in% names(same_sex_data)) {
+    cli::cli_alert_info("Using ACS-derived same-sex age patterns")
 
-    total_rates <- marriage_rates[[yr_char]]
+    # Get average same-sex patterns (normalized)
+    avg_mm <- same_sex_data$average_male_male
+    avg_ff <- same_sex_data$average_female_female
 
-    # Simple split: same-sex gets fraction, opposite-sex gets remainder
-    opposite_sex[[yr_char]] <- total_rates * (1 - same_sex_fraction)
-    same_sex[[yr_char]] <- total_rates * same_sex_fraction
+    # Calculate overall same-sex fraction from totals
+    totals <- same_sex_data$totals
+    total_ss <- sum(totals$marriages)
+
+    # Get male-male vs female-female split
+    mm_share <- sum(totals[sex_combo == "male_male", marriages]) / total_ss
+    ff_share <- sum(totals[sex_combo == "female_female", marriages]) / total_ss
+
+    cli::cli_alert_info("Male-male share: {round(mm_share * 100, 1)}%")
+    cli::cli_alert_info("Female-female share: {round(ff_share * 100, 1)}%")
+
+    # Get age ranges
+    ss_ages <- same_sex_data$min_age:same_sex_data$max_age
+
+    for (yr in years) {
+      yr_char <- as.character(yr)
+      if (!(yr_char %in% names(marriage_rates))) next
+
+      total_rates <- marriage_rates[[yr_char]]
+      grid_ages <- as.integer(rownames(total_rates))
+      n_ages <- length(grid_ages)
+
+      # Initialize output matrices
+      os_grid <- total_rates * (1 - same_sex_fraction)
+      ss_grid <- total_rates * same_sex_fraction
+      mm_grid <- matrix(0, nrow = n_ages, ncol = n_ages,
+                        dimnames = list(grid_ages, grid_ages))
+      ff_grid <- matrix(0, nrow = n_ages, ncol = n_ages,
+                        dimnames = list(grid_ages, grid_ages))
+
+      # Apply same-sex pattern
+      # Scale the normalized patterns to match the same-sex total for this year
+      ss_total <- sum(ss_grid)
+
+      # Distribute same-sex marriages according to ACS age patterns
+      for (i in seq_along(grid_ages)) {
+        for (j in seq_along(grid_ages)) {
+          a1 <- grid_ages[i]
+          a2 <- grid_ages[j]
+
+          # Find corresponding index in same-sex pattern
+          ss_i <- which(ss_ages == a1)
+          ss_j <- which(ss_ages == a2)
+
+          if (length(ss_i) > 0 && length(ss_j) > 0) {
+            # Get pattern values (already normalized to sum to 1)
+            mm_pattern <- avg_mm[ss_i, ss_j]
+            ff_pattern <- avg_ff[ss_i, ss_j]
+
+            # Scale to this year's same-sex total
+            mm_grid[i, j] <- mm_pattern * ss_total * mm_share
+            ff_grid[i, j] <- ff_pattern * ss_total * ff_share
+          }
+        }
+      }
+
+      # Recalculate same-sex grid as sum of male-male and female-female
+      ss_grid <- mm_grid + ff_grid
+
+      # Adjust opposite-sex to ensure total = original
+      os_grid <- total_rates - ss_grid
+      os_grid[os_grid < 0] <- 0  # Ensure non-negative
+
+      opposite_sex[[yr_char]] <- os_grid
+      same_sex[[yr_char]] <- ss_grid
+      male_male[[yr_char]] <- mm_grid
+      female_female[[yr_char]] <- ff_grid
+    }
+
+    cli::cli_alert_success("Separated rates for {length(opposite_sex)} years using ACS patterns")
+
+    result <- list(
+      opposite_sex = opposite_sex,
+      same_sex = same_sex,
+      male_male = male_male,
+      female_female = female_female,
+      same_sex_fraction = same_sex_fraction,
+      mm_share = mm_share,
+      ff_share = ff_share,
+      method = "acs_pattern"
+    )
+
+  } else {
+    # Fallback to constant fraction
+    cli::cli_alert_info("Using constant same-sex fraction: {same_sex_fraction * 100}%")
+
+    for (yr in years) {
+      yr_char <- as.character(yr)
+      if (!(yr_char %in% names(marriage_rates))) next
+
+      total_rates <- marriage_rates[[yr_char]]
+
+      # Simple split: same-sex gets fraction, opposite-sex gets remainder
+      opposite_sex[[yr_char]] <- total_rates * (1 - same_sex_fraction)
+      same_sex[[yr_char]] <- total_rates * same_sex_fraction
+    }
+
+    cli::cli_alert_success("Separated rates for {length(opposite_sex)} years")
+
+    result <- list(
+      opposite_sex = opposite_sex,
+      same_sex = same_sex,
+      same_sex_fraction = same_sex_fraction,
+      method = "constant_fraction"
+    )
   }
 
-  cli::cli_alert_success("Separated rates for {length(opposite_sex)} years")
-  cli::cli_alert_info("Note: Using simplified constant fraction. Full implementation requires state same-sex data.")
-
-  list(
-    opposite_sex = opposite_sex,
-    same_sex = same_sex,
-    same_sex_fraction = same_sex_fraction
-  )
+  result
 }
 
 #' Run complete marriage projection (main entry point)
@@ -2255,6 +2359,8 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
                                      nchs_us_totals,
                                      standard_pop_by_group,
                                      prior_status_data = NULL,
+                                     same_sex_data = NULL,
+                                     same_sex_fraction = 0.045,
                                      ultimate_amr = 4000,
                                      ultimate_year = 2047,
                                      end_year = 2099,
@@ -2374,16 +2480,21 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
   # =========================================================================
   opposite_sex_rates <- NULL
   same_sex_rates <- NULL
+  male_male_rates <- NULL
+  female_female_rates <- NULL
 
   if (include_same_sex) {
     cli::cli_h2("Step 6: Separating Same-Sex and Opposite-Sex Rates")
 
     sex_result <- separate_marriage_types(
       marriage_rates = all_rates,
-      same_sex_fraction = 0.02  # ~2% of marriages are same-sex
+      same_sex_data = same_sex_data,
+      same_sex_fraction = same_sex_fraction
     )
     opposite_sex_rates <- sex_result$opposite_sex
     same_sex_rates <- sex_result$same_sex
+    male_male_rates <- sex_result$male_male
+    female_female_rates <- sex_result$female_female
   }
 
   # =========================================================================
@@ -2411,6 +2522,8 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
     # Same-sex outputs
     opposite_sex_rates = opposite_sex_rates,
     same_sex_rates = same_sex_rates,
+    male_male_rates = male_male_rates,
+    female_female_rates = female_female_rates,
 
     # Reference data
     margrid = base_margrid,

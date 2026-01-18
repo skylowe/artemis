@@ -178,8 +178,12 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - Single: highest relative rate at young ages (2.97 at 12-17), decreasing with age
   - Divorced: highest at middle ages (2.28 at 35-44)
   - Widowed: highest at older ages (2.34 at 65+)
-- Same-sex/opposite-sex separation (simplified 2% fraction)
-  - Full implementation requires state-level same-sex marriage data (2004-2012)
+- Same-sex/opposite-sex separation using ACS-derived age patterns:
+  - Same-sex fraction: 4.5% (calculated from ACS 2015-2019 data vs opposite-sex)
+  - Male-male: 45.9% of same-sex marriages
+  - Female-female: 54.1% of same-sex marriages
+  - Age patterns differ: male-male peaks at ages 29-30, female-female peaks at ages 26-27
+  - Functions: `fetch_acs_same_sex_grids()`, `calculate_same_sex_fraction()`
 - Main entry point: `run_marriage_projection()` orchestrates complete workflow
 - Complete projection cached to `data/cache/marriage/marriage_projection_complete.rds`
 - Key functions: `calculate_prior_status_differentials()`, `apply_prior_status_rates()`, `separate_marriage_types()`
@@ -202,6 +206,12 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - Item 6 (MRA subset 1989-1995): ✓ Complete - cpmarr.dat parsed (1,357,710 records, 498 age groups)
 - Item 8 (U.S. totals 1989-2022): ✓ Complete - NCHS published data
 - Items 9-11 (Prior marital status): ✓ Complete - 1978-1988 and 1989-1995 available
+
+**Methodology Deviations from TR2025 (Marriage):**
+1. Same-sex marriage separation uses ACS PUMS data (2015-2022) instead of state-level same-sex marriage counts (2004-2012) which are not publicly available
+   - ACS approach: 4.5% same-sex fraction, 45.9% male-male / 54.1% female-female
+   - Age patterns derived from ACS same-sex married households
+   - TR2025 uses Item 7: "State-level same-sex marriage data (2004-2012)"
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)

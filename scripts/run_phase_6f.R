@@ -4,6 +4,7 @@
 library(data.table)
 library(here)
 
+source(here::here("R/utils/api_helpers.R"))
 source(here::here("R/demography/marriage.R"))
 source(here::here("R/data_acquisition/nchs_marriage.R"))
 source(here::here("R/data_acquisition/acs_marriage.R"))
@@ -80,6 +81,23 @@ cat("  Loading prior marital status data (1979, 1981-88)...\n")
 prior_status_data <- fetch_nchs_marriages_by_prior_status_1978_1988()
 cat("    Rows:", nrow(prior_status_data), "\n")
 
+# 1h. ACS same-sex marriage grids (2015-2022)
+cat("  Loading ACS same-sex marriage grids (2015-2022)...\n")
+same_sex_data <- fetch_acs_same_sex_grids(years = 2015:2022)
+cat("    Years:", length(same_sex_data$years), "\n")
+cat("    Male-male share:", round(100 * sum(same_sex_data$totals[sex_combo == "male_male", marriages]) /
+                                   sum(same_sex_data$totals$marriages), 1), "%\n")
+
+# 1i. Calculate same-sex fraction from ACS data
+cat("  Calculating same-sex fraction from ACS data...\n")
+ss_fraction_data <- calculate_same_sex_fraction(
+  same_sex_grids = same_sex_data,
+  opposite_sex_grids = aligned_acs_grids,
+  years = 2015:2019  # Use overlapping years
+)
+same_sex_fraction <- ss_fraction_data$overall_fraction
+cat("    Same-sex fraction:", round(same_sex_fraction * 100, 2), "%\n")
+
 # =============================================================================
 # STEP 2: Test prior status differentials calculation
 # =============================================================================
@@ -113,6 +131,8 @@ result <- run_marriage_projection(
   nchs_us_totals = nchs_us_totals,
   standard_pop_by_group = std_pop_by_group,
   prior_status_data = prior_status_data,
+  same_sex_data = same_sex_data,
+  same_sex_fraction = same_sex_fraction,
   ultimate_amr = 4000,
   ultimate_year = 2047,
   end_year = 2099,
@@ -161,6 +181,13 @@ if (!is.null(result$opposite_sex_rates)) {
   cat("  2050 opposite-sex total:", round(opp_total), "\n")
   cat("  2050 same-sex total:", round(same_total), "\n")
   cat("  Same-sex percentage:", round(100 * same_total / (opp_total + same_total), 1), "%\n")
+
+  if (!is.null(result$male_male_rates)) {
+    mm_total <- sum(result$male_male_rates[[yr]], na.rm = TRUE)
+    ff_total <- sum(result$female_female_rates[[yr]], na.rm = TRUE)
+    cat("    Male-male:", round(mm_total), "(", round(100 * mm_total / same_total, 1), "% of same-sex)\n")
+    cat("    Female-female:", round(ff_total), "(", round(100 * ff_total / same_total, 1), "% of same-sex)\n")
+  }
 }
 
 cat("\n=== Phase 6F Complete ===\n")
@@ -169,3 +196,4 @@ cat("Historical years:", length(result$historical_rates), "\n")
 cat("Projected years:", length(result$projected_rates), "\n")
 cat("Prior status included:", !is.null(result$rates_by_status), "\n")
 cat("Same-sex separation included:", !is.null(result$opposite_sex_rates), "\n")
+cat("Male-male/female-female split:", !is.null(result$male_male_rates), "\n")

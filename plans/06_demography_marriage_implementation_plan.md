@@ -1109,19 +1109,29 @@ validate_marriage_type_split <- function(total_rates, opposite_sex, same_sex)
   - Single: relative rate 0.16-2.98 (highest at young ages)
   - Divorced: relative rate 0.02-2.40 (highest at middle ages)
   - Widowed: relative rate 0.00-2.34 (highest at older ages)
-- Same-sex separation: simplified 2% fraction (state data not available)
+- Same-sex separation: **DEVIATION FROM TR2025** - Uses ACS-derived patterns instead of state-level data
+  - Same-sex fraction: 4.5% (calculated from ACS 2015-2019 vs opposite-sex totals)
+  - Male-male: 45.9% of same-sex marriages (ACS average)
+  - Female-female: 54.1% of same-sex marriages (ACS average)
+  - Age patterns: male-male peaks at ages 29-30, female-female at 26-27
+  - TR2025 uses state-level same-sex marriage counts (2004-2012) we don't have access to
+  - Functions: `fetch_acs_same_sex_grids()`, `calculate_same_sex_fraction()`, `separate_marriage_types()`
 - Main function: `run_marriage_projection()` orchestrates complete workflow
 - Output: 110 years (33 historical, 77 projected)
 - Cached to: `data/cache/marriage/marriage_projection_complete.rds`
 
-### Phase 6G: Same-Sex Marriage (Can be deferred)
+### Phase 6G: Same-Sex Marriage (SUPERSEDED)
+
+**Note:** Phase 6G has been superseded by the ACS-based same-sex implementation in Phase 6F.
+The ACS approach provides age-specific same-sex marriage patterns without requiring state-level data.
+This is a methodology deviation from TR2025, which uses 2004-2012 state-level same-sex marriage counts.
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 6G.1 | Research state same-sex marriage data | None | Data assessment |
-| [ ] | 6G.2 | Implement same-sex marriage data loader | 6G.1 | same_sex_marriage.R |
-| [ ] | 6G.3 | Calculate same-sex marriage rate factors | 6G.2 | Same-sex factors |
-| [ ] | 6G.4 | Integrate into main projection | 6G.3, 6F | Updated projection |
+| [x] | 6G.1 | Research same-sex marriage data | None | ACS PUMS data |
+| [x] | 6G.2 | Implement same-sex marriage data loader | 6G.1 | fetch_acs_same_sex_grids() |
+| [x] | 6G.3 | Calculate same-sex marriage rate factors | 6G.2 | calculate_same_sex_fraction() |
+| [x] | 6G.4 | Integrate into main projection | 6G.3, 6F | Updated projection |
 
 ### Phase 6H: Validation & Targets Integration
 

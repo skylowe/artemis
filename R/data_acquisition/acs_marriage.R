@@ -844,7 +844,7 @@ fetch_acs_same_sex_marriages <- function(years = 2013:2022,
   combined
 }
 
-#' Fetch ACS same-sex marriages for a single year
+#' Fetch ACS same-sex marriages for a single year (totals only)
 #'
 #' @keywords internal
 fetch_acs_same_sex_year <- function(year, api_key) {
@@ -910,6 +910,392 @@ fetch_acs_same_sex_year <- function(year, api_key) {
   result[, year := year]
 
   result
+}
+
+#' Fetch ACS same-sex marriage grids by age for a single year
+#'
+#' @description
+#' Downloads ACS PUMS data and builds age grids for same-sex marriages.
+#' Returns separate grids for male-male and female-female couples.
+#'
+#' @param year Integer: ACS year
+#' @param api_key Character: Census API key
+#' @param min_age Integer: minimum age for grid (default: 15)
+#' @param max_age Integer: maximum age for grid (default: 99)
+#'
+#' @return list with:
+#'   - male_male_grid: Matrix of male-male marriages by age
+#'   - female_female_grid: Matrix of female-female marriages by age
+#'   - totals: data.table with total counts by sex_combo
+#'   - year: The year
+#'
+#' @keywords internal
+fetch_acs_same_sex_grids_year <- function(year, api_key, min_age = 15, max_age = 99) {
+  base_url <- sprintf("https://api.census.gov/data/%d/acs/acs1/pums", year)
+
+  rel_var <- if (year >= 2019) "RELSHIPP" else "RELP"
+
+  req <- httr2::request(base_url) |>
+    httr2::req_url_query(
+      get = paste0("SERIALNO,AGEP,SEX,MARHM,", rel_var, ",PWGTP"),
+      MARHM = "1",
+      key = api_key
+    ) |>
+    httr2::req_timeout(600) |>
+    httr2::req_user_agent("ARTEMIS OASDI Projection Model (R)")
+
+  resp <- api_request_with_retry(req, max_retries = 3)
+  check_api_response(resp, sprintf("ACS PUMS API (%d)", year))
+
+  json_data <- httr2::resp_body_json(resp, simplifyVector = TRUE)
+
+  if (length(json_data) < 2) {
+    return(NULL)
+  }
+
+  headers <- json_data[1, ]
+  data_rows <- json_data[-1, , drop = FALSE]
+  dt <- data.table::as.data.table(data_rows)
+  data.table::setnames(dt, headers)
+
+  dt[, serialno := as.character(SERIALNO)]
+  dt[, age := as.integer(AGEP)]
+  dt[, sex_code := as.integer(SEX)]
+  dt[, weight := as.numeric(PWGTP)]
+
+  # Identify same-sex households
+  hh_info <- dt[, .(
+    n_males = sum(sex_code == 1),
+    n_females = sum(sex_code == 2)
+  ), by = serialno]
+
+  # Male-male households: 2+ males, 0 females
+  mm_hh <- hh_info[n_males >= 2 & n_females == 0, serialno]
+  # Female-female households: 2+ females, 0 males
+  ff_hh <- hh_info[n_females >= 2 & n_males == 0, serialno]
+
+  # Initialize grids
+  ages <- min_age:max_age
+  n_ages <- length(ages)
+
+  mm_grid <- matrix(0, nrow = n_ages, ncol = n_ages,
+                    dimnames = list(ages, ages))
+  ff_grid <- matrix(0, nrow = n_ages, ncol = n_ages,
+                    dimnames = list(ages, ages))
+
+  # Process male-male couples
+  if (length(mm_hh) > 0) {
+    mm_data <- dt[serialno %in% mm_hh]
+
+    # For each household, get the two ages and weight
+    mm_pairs <- mm_data[, {
+      if (.N >= 2) {
+        # Sort ages to ensure consistent ordering (younger first)
+        sorted_ages <- sort(age)
+        avg_weight <- mean(weight)
+        list(age1 = sorted_ages[1], age2 = sorted_ages[2], weight = avg_weight)
+      } else {
+        list(age1 = NA_integer_, age2 = NA_integer_, weight = NA_real_)
+      }
+    }, by = serialno]
+
+    mm_pairs <- mm_pairs[!is.na(age1) & !is.na(age2)]
+
+    # Clip ages to grid range
+    mm_pairs[age1 < min_age, age1 := min_age]
+    mm_pairs[age1 > max_age, age1 := max_age]
+    mm_pairs[age2 < min_age, age2 := min_age]
+    mm_pairs[age2 > max_age, age2 := max_age]
+
+    # Aggregate by age pair
+    mm_agg <- mm_pairs[, .(marriages = sum(weight)), by = .(age1, age2)]
+
+    # Fill grid
+    for (i in seq_len(nrow(mm_agg))) {
+      a1 <- mm_agg$age1[i]
+      a2 <- mm_agg$age2[i]
+      m <- mm_agg$marriages[i]
+      row_idx <- which(ages == a1)
+      col_idx <- which(ages == a2)
+      if (length(row_idx) > 0 && length(col_idx) > 0) {
+        mm_grid[row_idx, col_idx] <- mm_grid[row_idx, col_idx] + m
+      }
+    }
+  }
+
+  # Process female-female couples
+  if (length(ff_hh) > 0) {
+    ff_data <- dt[serialno %in% ff_hh]
+
+    ff_pairs <- ff_data[, {
+      if (.N >= 2) {
+        sorted_ages <- sort(age)
+        avg_weight <- mean(weight)
+        list(age1 = sorted_ages[1], age2 = sorted_ages[2], weight = avg_weight)
+      } else {
+        list(age1 = NA_integer_, age2 = NA_integer_, weight = NA_real_)
+      }
+    }, by = serialno]
+
+    ff_pairs <- ff_pairs[!is.na(age1) & !is.na(age2)]
+
+    ff_pairs[age1 < min_age, age1 := min_age]
+    ff_pairs[age1 > max_age, age1 := max_age]
+    ff_pairs[age2 < min_age, age2 := min_age]
+    ff_pairs[age2 > max_age, age2 := max_age]
+
+    ff_agg <- ff_pairs[, .(marriages = sum(weight)), by = .(age1, age2)]
+
+    for (i in seq_len(nrow(ff_agg))) {
+      a1 <- ff_agg$age1[i]
+      a2 <- ff_agg$age2[i]
+      m <- ff_agg$marriages[i]
+      row_idx <- which(ages == a1)
+      col_idx <- which(ages == a2)
+      if (length(row_idx) > 0 && length(col_idx) > 0) {
+        ff_grid[row_idx, col_idx] <- ff_grid[row_idx, col_idx] + m
+      }
+    }
+  }
+
+  # Calculate totals
+  totals <- data.table::data.table(
+    sex_combo = c("male_male", "female_female"),
+    marriages = c(sum(mm_grid), sum(ff_grid)),
+    year = year
+  )
+
+  list(
+    male_male_grid = mm_grid,
+    female_female_grid = ff_grid,
+    totals = totals,
+    year = year
+  )
+}
+
+#' Fetch ACS same-sex marriage grids for multiple years
+#'
+#' @description
+#' Downloads ACS PUMS data and builds age grids for same-sex marriages
+#' for multiple years. These grids can be used to develop age-specific
+#' same-sex marriage rate patterns per TR2025 methodology.
+#'
+#' @param years Integer vector of ACS years (2015+ recommended, post-Obergefell)
+#' @param cache_dir Character: directory for caching
+#' @param min_age Integer: minimum age for grid (default: 15)
+#' @param max_age Integer: maximum age for grid (default: 99)
+#'
+#' @return list with:
+#'   - grids: List of grids by year, each containing male_male_grid and female_female_grid
+#'   - totals: data.table with totals by year and sex_combo
+#'   - average_male_male: Average male-male grid across years (normalized)
+#'   - average_female_female: Average female-female grid across years (normalized)
+#'
+#' @export
+fetch_acs_same_sex_grids <- function(years = 2015:2022,
+                                      cache_dir = here::here("data/cache/acs_marriage"),
+                                      min_age = 15,
+                                      max_age = 99) {
+
+  checkmate::assert_integerish(years, lower = 2013, upper = 2024, min.len = 1)
+
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+  api_key <- get_api_key("CENSUS_KEY")
+
+  # Check for cached combined result
+  cache_file <- file.path(cache_dir, "same_sex_grids_combined.rds")
+  if (file.exists(cache_file)) {
+    cli::cli_alert_success("Loading cached same-sex marriage grids")
+    cached <- readRDS(cache_file)
+    # Filter to requested years
+    if (all(years %in% names(cached$grids))) {
+      return(cached)
+    }
+  }
+
+  cli::cli_h2("Fetching ACS Same-Sex Marriage Grids")
+
+  grids <- list()
+  all_totals <- list()
+
+  for (yr in years) {
+    if (yr == 2020) {
+      cli::cli_alert_info("Skipping 2020 (no ACS 1-year data)")
+      next
+    }
+
+    yr_cache <- file.path(cache_dir, sprintf("same_sex_grid_%d.rds", yr))
+
+    if (file.exists(yr_cache)) {
+      cli::cli_alert_success("Loading cached same-sex grid for {yr}")
+      yr_data <- readRDS(yr_cache)
+    } else {
+      cli::cli_alert("Fetching same-sex marriage grid for {yr}...")
+
+      tryCatch({
+        yr_data <- fetch_acs_same_sex_grids_year(yr, api_key, min_age, max_age)
+
+        if (!is.null(yr_data)) {
+          saveRDS(yr_data, yr_cache)
+          cli::cli_alert_success("Cached same-sex grid for {yr}")
+        }
+      }, error = function(e) {
+        cli::cli_alert_warning("Failed for {yr}: {conditionMessage(e)}")
+        yr_data <- NULL
+      })
+    }
+
+    if (!is.null(yr_data)) {
+      grids[[as.character(yr)]] <- yr_data
+      all_totals[[as.character(yr)]] <- yr_data$totals
+    }
+  }
+
+  if (length(grids) == 0) {
+    cli::cli_abort("No same-sex marriage data could be fetched")
+  }
+
+  totals <- data.table::rbindlist(all_totals)
+
+  # Calculate average grids (normalized to sum to 1)
+  ages <- min_age:max_age
+  n_ages <- length(ages)
+
+  avg_mm <- matrix(0, nrow = n_ages, ncol = n_ages, dimnames = list(ages, ages))
+  avg_ff <- matrix(0, nrow = n_ages, ncol = n_ages, dimnames = list(ages, ages))
+
+  n_years <- length(grids)
+  for (yr_name in names(grids)) {
+    yr_data <- grids[[yr_name]]
+
+    # Normalize each year's grid to sum to 1, then average
+    mm_total <- sum(yr_data$male_male_grid)
+    ff_total <- sum(yr_data$female_female_grid)
+
+    if (mm_total > 0) {
+      avg_mm <- avg_mm + yr_data$male_male_grid / mm_total / n_years
+    }
+    if (ff_total > 0) {
+      avg_ff <- avg_ff + yr_data$female_female_grid / ff_total / n_years
+    }
+  }
+
+  # Summary statistics
+  mm_total <- sum(totals[sex_combo == "male_male", marriages])
+  ff_total <- sum(totals[sex_combo == "female_female", marriages])
+  total_ss <- mm_total + ff_total
+
+  cli::cli_alert_success("Processed {length(grids)} years of same-sex marriage data")
+  cli::cli_alert_info("Total male-male: {format(round(mm_total), big.mark=',')} ({round(100*mm_total/total_ss, 1)}%)")
+  cli::cli_alert_info("Total female-female: {format(round(ff_total), big.mark=',')} ({round(100*ff_total/total_ss, 1)}%)")
+
+  result <- list(
+    grids = grids,
+    totals = totals,
+    average_male_male = avg_mm,
+    average_female_female = avg_ff,
+    years = as.integer(names(grids)),
+    min_age = min_age,
+    max_age = max_age
+  )
+
+  # Cache combined result
+
+  saveRDS(result, cache_file)
+  cli::cli_alert_success("Cached combined same-sex grids")
+
+  result
+}
+
+#' Calculate same-sex marriage fraction by age
+#'
+#' @description
+#' Calculates the fraction of marriages that are same-sex by age,
+#' using ACS data. This can be used to separate total marriage rates
+#' into opposite-sex and same-sex components.
+#'
+#' @param same_sex_grids Result from fetch_acs_same_sex_grids()
+#' @param opposite_sex_grids List of opposite-sex marriage grids by year
+#'   From fetch_acs_new_marriages()
+#' @param years Years to use for calculation (default: all available)
+#'
+#' @return list with:
+#'   - fraction_by_age: Matrix of same-sex fraction by age pair
+#'   - overall_fraction: Overall same-sex fraction
+#'   - male_male_fraction: Fraction that is male-male (of same-sex)
+#'   - female_female_fraction: Fraction that is female-female (of same-sex)
+#'
+#' @export
+calculate_same_sex_fraction <- function(same_sex_grids,
+                                         opposite_sex_grids,
+                                         years = NULL) {
+
+  if (is.null(years)) {
+    years <- same_sex_grids$years
+  }
+
+  # Sum same-sex grids across years
+  ages <- same_sex_grids$min_age:same_sex_grids$max_age
+  n_ages <- length(ages)
+
+  total_ss <- matrix(0, nrow = n_ages, ncol = n_ages, dimnames = list(ages, ages))
+  total_os <- matrix(0, nrow = n_ages, ncol = n_ages, dimnames = list(ages, ages))
+
+  for (yr in years) {
+    yr_char <- as.character(yr)
+
+    # Same-sex
+    if (yr_char %in% names(same_sex_grids$grids)) {
+      ss_data <- same_sex_grids$grids[[yr_char]]
+      total_ss <- total_ss + ss_data$male_male_grid + ss_data$female_female_grid
+    }
+
+    # Opposite-sex
+    if (yr_char %in% names(opposite_sex_grids)) {
+      os_grid <- opposite_sex_grids[[yr_char]]
+      # Align dimensions if needed
+      os_ages <- as.integer(rownames(os_grid))
+      for (i in seq_along(os_ages)) {
+        for (j in seq_along(os_ages)) {
+          a1 <- os_ages[i]
+          a2 <- os_ages[j]
+          if (a1 >= same_sex_grids$min_age && a1 <= same_sex_grids$max_age &&
+              a2 >= same_sex_grids$min_age && a2 <= same_sex_grids$max_age) {
+            r <- which(ages == a1)
+            c <- which(ages == a2)
+            if (length(r) > 0 && length(c) > 0) {
+              total_os[r, c] <- total_os[r, c] + os_grid[i, j]
+            }
+          }
+        }
+      }
+    }
+  }
+
+  # Calculate fraction
+  total_all <- total_ss + total_os
+  fraction_by_age <- total_ss / total_all
+  fraction_by_age[is.na(fraction_by_age) | is.infinite(fraction_by_age)] <- 0
+
+  # Overall fractions
+  sum_ss <- sum(total_ss)
+  sum_os <- sum(total_os)
+  sum_all <- sum_ss + sum_os
+
+  overall_fraction <- sum_ss / sum_all
+
+  # Male-male vs female-female split
+  sum_mm <- sum(sapply(same_sex_grids$grids[as.character(years)], function(x) sum(x$male_male_grid)))
+  sum_ff <- sum(sapply(same_sex_grids$grids[as.character(years)], function(x) sum(x$female_female_grid)))
+
+  list(
+    fraction_by_age = fraction_by_age,
+    overall_fraction = overall_fraction,
+    male_male_fraction = sum_mm / sum_ss,
+    female_female_fraction = sum_ff / sum_ss,
+    total_same_sex = sum_ss,
+    total_opposite_sex = sum_os
+  )
 }
 
 # =============================================================================
