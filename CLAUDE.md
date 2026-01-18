@@ -106,21 +106,36 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
    - Guarantees mathematical consistency: opposite_sex + same_sex = total at every cell
 2. Dynamic SS Area factor from population data (~1.02) vs simplified 1.003 assumption
 
-### Divorce Subprocess Status (PLANNED)
+### Divorce Subprocess Status (IN PROGRESS - Phase 7D Complete)
 - **Purpose:** Project annual age-specific divorce rates by husband age × wife age
 - **Key Outputs:**
   - d̂_{x,y}^z - Age-specific divorce rates (Eq 1.7.1)
   - ADR^z - Age-adjusted central divorce rate (Eq 1.7.2)
   - DivGrid: 87×87 matrix of divorce rates (ages 14-100+)
 - **TR2025 Assumptions:** Ultimate ADR 1,700 per 100,000 married couples by year 25 (2047)
-- **Data Sources:** NCHS DRA (1979-1988), state health depts (18 states, 2009-2012), ACS PUMS (PR)
-- **Key files (planned):** `R/demography/divorce.R`, `R/data_acquisition/nchs_divorce.R`, `R/validation/validate_divorce.R`
+- **Data Sources:** NCHS DRA (1979-1988), ACS PUMS (2008-2022) for adjustment
+- **Key files:** `R/demography/divorce.R`, `R/data_acquisition/nchs_divorce.R`, `R/data_acquisition/acs_divorce.R`
 - **Plan document:** `plans/07_demography_divorce_implementation_plan.md`
+- **Completed phases:**
+  - Phase 7A: NCHS DRA data acquisition (1979-1988)
+  - Phase 7B: Population data & married couples grid
+  - Phase 7C: Base DivGrid development (1979-1988 average)
+  - Phase 7D: ACS-based DivGrid adjustment (deviation from TR2025)
+- **Key results:**
+  - Base ADR (1979-1988): 1,749.4 per 100,000
+  - ACS-adjusted ADR (2018-2022): 2,457.4 per 100,000
+  - Peak divorce ages shifted from (26, 25) to (41, 39) - reflects demographic shift
+- **Remaining phases:** 7E (Historical Period), 7F (ADR Projection), 7G (Rate Projection), 7H (Validation)
 - **Key differences from Marriage:**
   - Uses married couples as denominator (not unmarried)
   - DRA coverage ~48% (vs MRA ~80%)
   - Ultimate rate 1,700 (vs 4,000 for marriage)
-  - State data from 18 states may be difficult to obtain
+
+**Methodology Deviation from TR2025 (Divorce):**
+1. ACS PUMS divorce data (2018-2022) used for DivGrid adjustment instead of 18-state health department data (2009-2012)
+   - ACS data is publicly available; state data requires direct contact with health departments
+   - Same ratio-based adjustment methodology as TR2025
+   - Uses MARHD variable (divorced in past 12 months) to capture recent divorce patterns
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)

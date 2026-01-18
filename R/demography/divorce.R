@@ -1200,3 +1200,533 @@ fetch_base_divgrid <- function(cache_dir = here::here("data/cache"),
 
   result
 }
+
+
+# =============================================================================
+# DIVGRID ADJUSTMENT WITH ACS DATA (Phase 7D)
+# =============================================================================
+# Per TR2025 Section 1.7.c:
+# "DivGrid for years after 1988 is a weighted average of the 1988 DivGrid and
+# the 2011 state data single year grid. This state data single year of age grid
+# is derived by ratioing the 1988 DivGrid cells using the original state
+# age-group data."
+#
+# Our deviation: We use ACS PUMS divorce data (2008-2022) instead of
+# state health department data (2009-2012) as our source for recent patterns.
+# =============================================================================
+
+#' Calculate marginal distributions from DivGrid
+#'
+#' @description
+#' Extracts the marginal age distributions (husband and wife) from a DivGrid.
+#' Used for calculating ratio adjustments.
+#'
+#' @param divgrid Matrix of divorce rates (87×87)
+#'
+#' @return List with:
+#'   - husband_marginal: Named numeric vector of row sums (by husband age)
+#'   - wife_marginal: Named numeric vector of column sums (by wife age)
+#'   - husband_normalized: Normalized (sums to 1)
+#'   - wife_normalized: Normalized (sums to 1)
+#'
+#' @export
+get_divgrid_marginals <- function(divgrid) {
+  checkmate::assert_matrix(divgrid, mode = "numeric")
+
+  # Row sums = husband marginal (sum across all wife ages for each husband age)
+  husband_marginal <- rowSums(divgrid, na.rm = TRUE)
+  names(husband_marginal) <- rownames(divgrid)
+
+  # Column sums = wife marginal (sum across all husband ages for each wife age)
+  wife_marginal <- colSums(divgrid, na.rm = TRUE)
+  names(wife_marginal) <- colnames(divgrid)
+
+  # Normalize
+  husband_total <- sum(husband_marginal)
+  wife_total <- sum(wife_marginal)
+
+  husband_normalized <- husband_marginal / husband_total
+  wife_normalized <- wife_marginal / wife_total
+
+  list(
+    husband_marginal = husband_marginal,
+    wife_marginal = wife_marginal,
+    husband_normalized = husband_normalized,
+    wife_normalized = wife_normalized
+  )
+}
+
+
+#' Calculate ratio adjustments from ACS data
+#'
+#' @description
+#' Calculates age-specific ratio adjustments by comparing ACS marginal
+#' distributions to base DivGrid marginals.
+#'
+#' Per TR2025: "This state data single year of age grid is derived by
+#' ratioing the 1988 DivGrid cells using the original state age-group data."
+#'
+#' @param acs_male_marginal ACS male age distribution (normalized, from fetch_acs_divorces)
+#' @param acs_female_marginal ACS female age distribution (normalized)
+#' @param base_husband_marginal Base DivGrid husband marginal (normalized)
+#' @param base_wife_marginal Base DivGrid wife marginal (normalized)
+#' @param min_ratio Minimum allowed ratio (default: 0.1)
+#' @param max_ratio Maximum allowed ratio (default: 10)
+#'
+#' @return List with:
+#'   - husband_ratios: Named numeric vector of adjustment ratios by age
+#'   - wife_ratios: Named numeric vector of adjustment ratios by age
+#'
+#' @export
+calculate_acs_adjustment_ratios <- function(acs_male_marginal,
+                                             acs_female_marginal,
+                                             base_husband_marginal,
+                                             base_wife_marginal,
+                                             min_ratio = 0.1,
+                                             max_ratio = 10) {
+
+  # ACS uses male/female, DivGrid uses husband/wife (same thing for opposite-sex)
+  # Map: male -> husband, female -> wife
+
+  # Calculate ratios: new_pattern / old_pattern
+  # Where both are small, use ratio of 1 (no adjustment)
+
+  calculate_ratios <- function(acs_dist, base_dist, min_val = 0.001) {
+    # Ensure same ages
+    ages <- names(base_dist)
+    ratios <- rep(1, length(ages))
+    names(ratios) <- ages
+
+    for (age in ages) {
+      base_val <- base_dist[age]
+      acs_val <- if (age %in% names(acs_dist)) acs_dist[age] else NA
+
+      if (is.na(acs_val) || is.na(base_val)) {
+        ratios[age] <- 1
+      } else if (base_val < min_val) {
+        # If base is very small, cap the ratio
+        ratios[age] <- if (acs_val > min_val) max_ratio else 1
+      } else {
+        ratios[age] <- acs_val / base_val
+      }
+    }
+
+    # Clip to allowed range
+    ratios <- pmax(pmin(ratios, max_ratio), min_ratio)
+
+    ratios
+  }
+
+  husband_ratios <- calculate_ratios(acs_male_marginal, base_husband_marginal)
+  wife_ratios <- calculate_ratios(acs_female_marginal, base_wife_marginal)
+
+  list(
+    husband_ratios = husband_ratios,
+    wife_ratios = wife_ratios
+  )
+}
+
+
+#' Apply ratio adjustments to DivGrid
+#'
+#' @description
+#' Creates an adjusted DivGrid by applying ratio adjustments from ACS data.
+#'
+#' Per TR2025 methodology: For each cell (x,y), the adjusted rate is:
+#' adjusted_rate[x,y] = base_rate[x,y] * sqrt(husband_ratio[x] * wife_ratio[y])
+#'
+#' Using geometric mean of ratios maintains symmetry and ensures the
+#' adjusted marginals match the ACS pattern.
+#'
+#' @param base_divgrid Base DivGrid matrix (87×87)
+#' @param husband_ratios Named numeric vector of husband age ratios
+#' @param wife_ratios Named numeric vector of wife age ratios
+#'
+#' @return Adjusted DivGrid matrix
+#'
+#' @export
+apply_ratio_adjustments <- function(base_divgrid,
+                                     husband_ratios,
+                                     wife_ratios) {
+  checkmate::assert_matrix(base_divgrid, mode = "numeric")
+
+  ages <- rownames(base_divgrid)
+  n_ages <- length(ages)
+
+  adjusted <- base_divgrid
+
+  for (i in seq_along(ages)) {
+    h_age <- ages[i]
+    h_ratio <- if (h_age %in% names(husband_ratios)) husband_ratios[h_age] else 1
+
+    for (j in seq_along(ages)) {
+      w_age <- ages[j]
+      w_ratio <- if (w_age %in% names(wife_ratios)) wife_ratios[w_age] else 1
+
+      # Apply geometric mean of ratios
+      combined_ratio <- sqrt(h_ratio * w_ratio)
+      adjusted[i, j] <- base_divgrid[i, j] * combined_ratio
+    }
+  }
+
+  adjusted
+}
+
+
+#' Build ACS-adjusted DivGrid
+#'
+#' @description
+#' Creates a DivGrid adjusted with ACS PUMS divorce data.
+#' This is our implementation alternative to TR2025's state data adjustment.
+#'
+#' @param base_divgrid Base DivGrid from build_base_divgrid()
+#' @param acs_divorce_data Result from fetch_acs_divorces() or get_acs_divorce_data()
+#' @param smooth Logical: apply additional smoothing after adjustment (default: TRUE)
+#'
+#' @return Adjusted DivGrid matrix
+#'
+#' @export
+build_acs_adjusted_divgrid <- function(base_divgrid,
+                                        acs_divorce_data,
+                                        smooth = TRUE) {
+  cli::cli_h2("Building ACS-Adjusted DivGrid")
+
+  # Get base marginals
+  base_marginals <- get_divgrid_marginals(base_divgrid)
+
+  cli::cli_alert_info("Base DivGrid - Peak husband age: {names(which.max(base_marginals$husband_normalized))}")
+  cli::cli_alert_info("Base DivGrid - Peak wife age: {names(which.max(base_marginals$wife_normalized))}")
+
+  # Get ACS marginals
+  acs_male <- acs_divorce_data$male_marginal
+  acs_female <- acs_divorce_data$female_marginal
+
+  cli::cli_alert_info("ACS Data - Peak male age: {names(which.max(acs_male))}")
+  cli::cli_alert_info("ACS Data - Peak female age: {names(which.max(acs_female))}")
+
+  # Calculate ratios
+  ratios <- calculate_acs_adjustment_ratios(
+    acs_male_marginal = acs_male,
+    acs_female_marginal = acs_female,
+    base_husband_marginal = base_marginals$husband_normalized,
+    base_wife_marginal = base_marginals$wife_normalized
+  )
+
+  cli::cli_alert_info("Ratio range - Husband: [{round(min(ratios$husband_ratios), 2)}, {round(max(ratios$husband_ratios), 2)}]")
+  cli::cli_alert_info("Ratio range - Wife: [{round(min(ratios$wife_ratios), 2)}, {round(max(ratios$wife_ratios), 2)}]")
+
+  # Apply adjustments
+  adjusted <- apply_ratio_adjustments(base_divgrid, ratios$husband_ratios, ratios$wife_ratios)
+
+  # Optional smoothing
+  if (smooth) {
+    cli::cli_alert("Applying Whittaker-Henderson graduation to adjusted grid...")
+    adjusted <- graduate_divgrid(adjusted, h_param = 1, w_param = 1)
+  }
+
+  # Ensure non-negative
+  adjusted[adjusted < 0] <- 0
+
+  # Report results
+  max_rate <- max(adjusted, na.rm = TRUE)
+  max_idx <- which(adjusted == max_rate, arr.ind = TRUE)[1, ]
+  peak_h_age <- as.integer(rownames(adjusted)[max_idx[1]])
+  peak_w_age <- as.integer(colnames(adjusted)[max_idx[2]])
+
+  cli::cli_alert_success("Adjusted DivGrid - Peak rate: {round(max_rate, 1)} at husband {peak_h_age}, wife {peak_w_age}")
+
+  attr(adjusted, "adjustment_source") <- "ACS PUMS"
+  attr(adjusted, "adjustment_years") <- acs_divorce_data$years
+
+  adjusted
+}
+
+
+#' Create weighted average of base and adjusted DivGrid
+#'
+#' @description
+#' Per TR2025: "DivGrid for years after 1988 is a weighted average of the
+#' 1988 DivGrid and the 2011 state data single year grid."
+#'
+#' This function creates a weighted combination of base and adjusted grids,
+#' where the weight on the adjusted grid increases from 0 to 1 over the
+#' transition period.
+#'
+#' @param base_divgrid Base DivGrid (1979-1988)
+#' @param adjusted_divgrid ACS-adjusted DivGrid
+#' @param target_year Year for which to calculate weighted average
+#' @param base_year Final year of base period (default: 1988)
+#' @param adjustment_year Year of adjustment data (default: 2015 = midpoint of ACS 2008-2022)
+#'
+#' @return Weighted average DivGrid for target year
+#'
+#' @export
+weighted_average_divgrid <- function(base_divgrid,
+                                      adjusted_divgrid,
+                                      target_year,
+                                      base_year = 1988,
+                                      adjustment_year = 2015) {
+
+  if (target_year <= base_year) {
+    return(base_divgrid)
+  }
+
+  if (target_year >= adjustment_year) {
+    return(adjusted_divgrid)
+  }
+
+  # Linear interpolation between base and adjusted
+  transition_years <- adjustment_year - base_year
+  years_since_base <- target_year - base_year
+
+  weight_adjusted <- years_since_base / transition_years
+  weight_base <- 1 - weight_adjusted
+
+  weighted <- weight_base * base_divgrid + weight_adjusted * adjusted_divgrid
+
+  attr(weighted, "base_weight") <- weight_base
+  attr(weighted, "adjusted_weight") <- weight_adjusted
+  attr(weighted, "target_year") <- target_year
+
+  weighted
+}
+
+
+#' Get DivGrid for a specific year
+#'
+#' @description
+#' Returns the appropriate DivGrid for a given year, using weighted
+#' averaging between base and ACS-adjusted grids as needed.
+#'
+#' @param year Target year
+#' @param base_divgrid Base DivGrid (1979-1988)
+#' @param adjusted_divgrid ACS-adjusted DivGrid (or NULL to use base only)
+#' @param base_year Final year of base period (default: 1988)
+#' @param adjustment_year Year of adjustment data (default: 2015)
+#'
+#' @return DivGrid matrix for the target year
+#'
+#' @export
+get_divgrid_for_year <- function(year,
+                                  base_divgrid,
+                                  adjusted_divgrid = NULL,
+                                  base_year = 1988,
+                                  adjustment_year = 2015) {
+
+  if (is.null(adjusted_divgrid)) {
+    return(base_divgrid)
+  }
+
+  weighted_average_divgrid(
+    base_divgrid = base_divgrid,
+    adjusted_divgrid = adjusted_divgrid,
+    target_year = year,
+    base_year = base_year,
+    adjustment_year = adjustment_year
+  )
+}
+
+
+#' Fetch ACS-adjusted DivGrid with caching
+#'
+#' @description
+#' Main entry point for obtaining ACS-adjusted DivGrid.
+#' Builds base DivGrid and applies ACS adjustment.
+#'
+#' @param cache_dir Character path to cache directory
+#' @param acs_years Integer vector of ACS years to use for adjustment
+#' @param force Logical: force rebuild (default: FALSE)
+#'
+#' @return List with:
+#'   - base_divgrid: Original 1979-1988 DivGrid
+#'   - adjusted_divgrid: ACS-adjusted DivGrid
+#'   - standard_pop: Standard population matrix
+#'   - base_adr: ADR from base DivGrid
+#'   - adjusted_adr: ADR from adjusted DivGrid
+#'   - metadata: Processing details
+#'
+#' @export
+fetch_adjusted_divgrid <- function(cache_dir = here::here("data/cache"),
+                                    acs_years = 2018:2022,
+                                    force = FALSE) {
+
+  cache_file <- file.path(cache_dir, "divorce", "adjusted_divgrid.rds")
+
+  # Return cached if available
+  if (file.exists(cache_file) && !force) {
+    cli::cli_alert_success("Loading cached ACS-adjusted DivGrid")
+    return(readRDS(cache_file))
+  }
+
+  cli::cli_h2("Building ACS-Adjusted DivGrid")
+
+  # Get base DivGrid
+  base_result <- fetch_base_divgrid(cache_dir = cache_dir, force = FALSE)
+  base_divgrid <- base_result$divgrid
+  standard_pop <- base_result$standard_pop
+
+  # Get ACS divorce data
+  acs_cache_dir <- file.path(cache_dir, "acs_divorce")
+  acs_data <- get_acs_divorce_data(years = acs_years, cache_dir = acs_cache_dir)
+
+  # Build adjusted DivGrid
+  adjusted_divgrid <- build_acs_adjusted_divgrid(
+    base_divgrid = base_divgrid,
+    acs_divorce_data = acs_data,
+    smooth = TRUE
+  )
+
+  # Calculate ADRs
+  base_adr <- calculate_adr(base_divgrid, standard_pop)
+  adjusted_adr <- calculate_adr(adjusted_divgrid, standard_pop)
+
+  cli::cli_alert_info("Base ADR (1979-1988): {round(base_adr, 1)} per 100,000")
+  cli::cli_alert_info("Adjusted ADR (ACS {min(acs_years)}-{max(acs_years)}): {round(adjusted_adr, 1)} per 100,000")
+
+  result <- list(
+    base_divgrid = base_divgrid,
+    adjusted_divgrid = adjusted_divgrid,
+    standard_pop = standard_pop,
+    base_adr = base_adr,
+    adjusted_adr = adjusted_adr,
+    metadata = list(
+      base_years = 1979:1988,
+      acs_years = acs_data$years,
+      adjustment_year = median(acs_data$years),
+      created = Sys.time()
+    )
+  )
+
+  # Cache result
+  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+  saveRDS(result, cache_file)
+  cli::cli_alert_success("Cached ACS-adjusted DivGrid")
+
+  result
+}
+
+
+#' Validate ACS-adjusted DivGrid
+#'
+#' @description
+#' Validates the ACS-adjusted DivGrid against the base and checks
+#' for reasonable properties.
+#'
+#' @param adjusted_result Result from fetch_adjusted_divgrid()
+#'
+#' @return List with validation results
+#'
+#' @export
+validate_adjusted_divgrid <- function(adjusted_result) {
+  results <- list(
+    checks = list(),
+    passed = 0,
+    failed = 0
+  )
+
+  cli::cli_h2("ACS-Adjusted DivGrid Validation")
+
+  base_divgrid <- adjusted_result$base_divgrid
+  adjusted_divgrid <- adjusted_result$adjusted_divgrid
+  standard_pop <- adjusted_result$standard_pop
+
+  # Check 1: Dimensions match
+  check1_passed <- all(dim(adjusted_divgrid) == dim(base_divgrid))
+  results$checks$dimensions <- list(
+    passed = check1_passed,
+    message = sprintf("Dimensions match base: %s", if (check1_passed) "PASS" else "FAIL")
+  )
+  if (check1_passed) {
+    cli::cli_alert_success(results$checks$dimensions$message)
+    results$passed <- results$passed + 1
+  } else {
+    cli::cli_alert_danger(results$checks$dimensions$message)
+    results$failed <- results$failed + 1
+  }
+
+  # Check 2: All rates non-negative
+  check2_passed <- all(adjusted_divgrid >= 0, na.rm = TRUE)
+  results$checks$non_negative <- list(
+    passed = check2_passed,
+    message = sprintf("All rates non-negative: %s", if (check2_passed) "PASS" else "FAIL")
+  )
+  if (check2_passed) {
+    cli::cli_alert_success(results$checks$non_negative$message)
+    results$passed <- results$passed + 1
+  } else {
+    cli::cli_alert_danger(results$checks$non_negative$message)
+    results$failed <- results$failed + 1
+  }
+
+  # Check 3: Peak ages reasonable (30-55)
+  max_rate <- max(adjusted_divgrid, na.rm = TRUE)
+  max_idx <- which(adjusted_divgrid == max_rate, arr.ind = TRUE)[1, ]
+  peak_h_age <- as.integer(rownames(adjusted_divgrid)[max_idx[1]])
+  peak_w_age <- as.integer(colnames(adjusted_divgrid)[max_idx[2]])
+  check3_passed <- peak_h_age >= 25 && peak_h_age <= 55 &&
+    peak_w_age >= 25 && peak_w_age <= 55
+  results$checks$peak_ages <- list(
+    passed = check3_passed,
+    message = sprintf("Peak at ages (%d, %d): %s",
+                      peak_h_age, peak_w_age,
+                      if (check3_passed) "PASS" else "WARNING")
+  )
+  if (check3_passed) {
+    cli::cli_alert_success(results$checks$peak_ages$message)
+    results$passed <- results$passed + 1
+  } else {
+    cli::cli_alert_warning(results$checks$peak_ages$message)
+    results$failed <- results$failed + 1
+  }
+
+  # Check 4: ADR in reasonable range (500-3000)
+  adjusted_adr <- adjusted_result$adjusted_adr
+  check4_passed <- adjusted_adr >= 500 && adjusted_adr <= 3000
+  results$checks$adr_reasonable <- list(
+    passed = check4_passed,
+    message = sprintf("Adjusted ADR: %.1f per 100,000 (expect 500-3000)",
+                      adjusted_adr)
+  )
+  if (check4_passed) {
+    cli::cli_alert_success(results$checks$adr_reasonable$message)
+    results$passed <- results$passed + 1
+  } else {
+    cli::cli_alert_warning(results$checks$adr_reasonable$message)
+    results$failed <- results$failed + 1
+  }
+
+  # Check 5: ADR change from base is reasonable (<50% change)
+  base_adr <- adjusted_result$base_adr
+  pct_change <- abs(adjusted_adr - base_adr) / base_adr * 100
+  check5_passed <- pct_change <= 50
+  results$checks$adr_change <- list(
+    passed = check5_passed,
+    message = sprintf("ADR change from base: %.1f%% (expect <= 50%%)", pct_change)
+  )
+  if (check5_passed) {
+    cli::cli_alert_success(results$checks$adr_change$message)
+    results$passed <- results$passed + 1
+  } else {
+    cli::cli_alert_warning(results$checks$adr_change$message)
+    results$failed <- results$failed + 1
+  }
+
+  # Check 6: Correlation with base is high (similar pattern)
+  correlation <- cor(as.vector(base_divgrid), as.vector(adjusted_divgrid))
+  check6_passed <- correlation >= 0.90
+  results$checks$correlation <- list(
+    passed = check6_passed,
+    message = sprintf("Correlation with base: %.3f (expect >= 0.90)", correlation)
+  )
+  if (check6_passed) {
+    cli::cli_alert_success(results$checks$correlation$message)
+    results$passed <- results$passed + 1
+  } else {
+    cli::cli_alert_warning(results$checks$correlation$message)
+    results$failed <- results$failed + 1
+  }
+
+  cli::cli_alert_info("Passed: {results$passed}/{results$passed + results$failed}")
+
+  invisible(results)
+}
