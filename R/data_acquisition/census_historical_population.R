@@ -266,12 +266,15 @@ fetch_resident_usaf_population <- function(years, ages, reference_date, cache_di
 #' @keywords internal
 fetch_resident_usaf_2020s <- function(years, ages, reference_date, cache_dir) {
   # For 2020+, download the NSRH file that includes USAF
-  # NC-EST2024-AGESEX.xlsx has resident + armed forces overseas
+  # NC-EST20XX-AGESEX.xlsx has resident + armed forces overseas
 
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
 
+  # Get current vintage setting
+  vintage <- getOption("artemis.census_vintage", 2024)
+
   # Different files for different data:
-  # - nc-est2024-syasexn.xlsx: Single year of age, national, resident only
+  # - nc-est20XX-syasexn.xlsx: Single year of age, national, resident only
   # - For USAF, we need a different file or to add armed forces separately
 
   # The AGESEX file has both resident and USAF totals but not by single age
@@ -303,7 +306,7 @@ fetch_resident_usaf_2020s <- function(years, ages, reference_date, cache_dir) {
     if (reference_date == "jan1") {
       # Get adjacent years for interpolation
       all_years <- c(min(years) - 1, years, max(years))
-      all_years <- all_years[all_years >= 2020 & all_years <= 2024]
+      all_years <- all_years[all_years >= 2020 & all_years <= vintage]
 
       if (length(setdiff(all_years, years)) > 0) {
         extra <- list()

@@ -80,6 +80,21 @@ calculate_historical_population <- function(start_year = 1940,
                                              use_cache = TRUE) {
   cli::cli_h1("Calculating Historical Population (Eq 1.4.1)")
 
+  # Load config if not provided
+  if (is.null(config)) {
+    config_path <- here::here("config/assumptions/tr2025.yaml")
+    if (file.exists(config_path)) {
+      config <- yaml::read_yaml(config_path)
+    }
+  }
+
+  # Set census vintage from config
+  if (!is.null(config) && !is.null(config$data_sources$census_vintage)) {
+    vintage <- config$data_sources$census_vintage
+    options(artemis.census_vintage = vintage)
+    cli::cli_alert_info("Using Census Vintage {vintage}")
+  }
+
   # Check cache first
   cache_subdir <- file.path(cache_dir, "historical_population")
   if (!dir.exists(cache_subdir)) dir.create(cache_subdir, recursive = TRUE)
@@ -92,8 +107,16 @@ calculate_historical_population <- function(start_year = 1940,
   if (use_cache && file.exists(cache_file)) {
     cli::cli_alert_success("Loading cached historical population")
     cached <- readRDS(cache_file)
+
+    # Handle both old format (data.table) and new format (list with components)
+    if (is.list(cached) && "population" %in% names(cached)) {
+      pop_data <- cached$population
+    } else {
+      pop_data <- cached
+    }
+
     target_ages <- ages
-    result <- cached[age %in% target_ages]
+    result <- pop_data[age %in% target_ages]
     cli::cli_alert_info("Loaded {nrow(result)} cells for {start_year}-{end_year}")
     return(result)
   }
@@ -149,11 +172,112 @@ calculate_historical_population <- function(start_year = 1940,
   cli::cli_alert_info("1940 total: {format(total_by_year[year == min(year), total], big.mark = ',', scientific = FALSE)}")
   cli::cli_alert_info("{end_year} total: {format(total_by_year[year == max(year), total], big.mark = ',', scientific = FALSE)}")
 
-  # Save to cache
-  saveRDS(all_pop, cache_file)
+  # Compute component totals by year for analysis
+  component_totals <- compute_component_totals(components)
+
+  # Save to cache (both population and components)
+  cache_data <- list(
+    population = all_pop,
+    components = component_totals
+  )
+  saveRDS(cache_data, cache_file)
   cli::cli_alert_success("Saved to cache: {cache_file}")
 
   all_pop
+}
+
+#' Get Cached Component Totals
+#'
+#' @description
+#' Retrieves the component totals from cache without recomputing.
+#'
+#' @param start_year Integer: first year (default: 1940)
+#' @param end_year Integer: last year (default: 2022)
+#' @param cache_dir Character: cache directory
+#'
+#' @return data.table with component totals by year, or NULL if not cached
+#'
+#' @export
+get_cached_components <- function(start_year = 1940,
+                                   end_year = 2022,
+                                   cache_dir = here::here("data/cache")) {
+  cache_file <- file.path(
+    cache_dir, "historical_population",
+    sprintf("ss_population_%d_%d.rds", start_year, end_year)
+  )
+
+  if (!file.exists(cache_file)) {
+    cli::cli_alert_warning("Cache file not found. Run calculate_historical_population() first.")
+    return(NULL)
+  }
+
+  cached <- readRDS(cache_file)
+
+  if (is.list(cached) && "components" %in% names(cached)) {
+    return(cached$components)
+  } else {
+    cli::cli_alert_warning("Cache is in old format without components. Re-run calculate_historical_population() with use_cache=FALSE.")
+    return(NULL)
+  }
+}
+
+#' Compute Component Totals by Year
+#'
+#' @description
+#' Summarizes all population components by year for analysis.
+#'
+#' @param components List of component data from gather_population_components
+#'
+#' @return data.table with component totals by year
+#'
+#' @keywords internal
+compute_component_totals <- function(components) {
+  # Census USAF totals
+  usaf <- components$census_usaf[, .(census_usaf = sum(population)), by = year]
+
+  # Territory totals
+  terr <- components$territories[, .(territories = sum(territory_pop)), by = year]
+
+  # Undercount adjustment - need to calculate using the formula
+  uc_data <- merge(components$census_usaf, components$undercount,
+                   by = c("year", "age", "sex"), all.x = TRUE)
+  uc_data[is.na(undercount_rate), undercount_rate := 0]
+  uc_data[, uc_adj := population * undercount_rate / (1 - undercount_rate)]
+  uc_totals <- uc_data[, .(undercount_adj = sum(uc_adj)), by = year]
+
+  # Federal employees
+ fed <- components$fed_employees[, .(fed_employees = employees_overseas), by = year]
+
+  # Beneficiaries abroad
+  ben <- components$beneficiaries[, .(beneficiaries = total_beneficiaries), by = year]
+
+  # Other overseas
+  oth <- components$other_overseas[, .(other_overseas = other_overseas), by = year]
+
+  # Armed forces
+  af <- components$armed_forces[, .(armed_forces = sum(population)), by = year]
+
+  # Dependents = 0.5 * (armed_forces + fed_employees)
+  deps <- merge(af, fed, by = "year", all = TRUE)
+  deps[is.na(fed_employees), fed_employees := 0]
+  deps[is.na(armed_forces), armed_forces := 0]
+  deps[, dependents := 0.5 * (armed_forces + fed_employees)]
+
+  # Combine all
+  all_comp <- Reduce(function(x, y) merge(x, y, by = "year", all = TRUE),
+    list(usaf, uc_totals, terr, fed, deps[, .(year, armed_forces, dependents)], ben, oth))
+
+  # Fill NAs with 0
+  for (col in names(all_comp)[-1]) {
+    all_comp[is.na(get(col)), (col) := 0]
+  }
+
+  # Calculate total
+  all_comp[, total := census_usaf + undercount_adj + territories +
+             fed_employees + dependents + beneficiaries + other_overseas]
+
+  data.table::setorder(all_comp, year)
+  all_comp
 }
 
 # =============================================================================

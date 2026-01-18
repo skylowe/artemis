@@ -872,55 +872,64 @@ parse_census_1980s_file <- function(zip_path, years, ages, sex, ref_month = 7) {
 #' Fetch Census population for 2020-2024 from Vintage 2024 file
 #'
 #' @description
-#' Downloads the Vintage 2024 population estimates file (NC-EST2024-SYASEXN)
+#' Downloads Census population estimates file by vintage
 #' from Census Bureau and extracts population by single year of age and sex.
-#' Uses the most recent vintage available which includes any revisions.
 #'
-#' @param years Integer vector of years (2020-2024)
+#' @param years Integer vector of years (2020+)
 #' @param ages Integer vector of ages (default: 0:85)
 #' @param sex Character: "both", "male", or "female" (default: "female")
 #' @param cache_dir Character: directory to cache downloaded files
+#' @param vintage Integer: Census vintage year (default: 2024). Use 2023 to match TR2025.
 #'
 #' @return data.table with columns: year, age, sex, population
 #'
 #' @details
 #' The Census Bureau stopped supporting Population Estimates on the API after 2020.
-#' This function downloads the official Vintage 2024 XLSX file which contains
-#' July 1 population estimates by single year of age for 2020-2024.
+#' This function downloads the official Vintage XLSX files which contain
+#' July 1 population estimates by single year of age.
 #'
-#' File: NC-EST2024-SYASEXN.xlsx
-#' URL: https://www2.census.gov/programs-surveys/popest/tables/2020-2024/national/asrh/
+#' Available vintages:
+#' - 2024: Latest data, includes 2020 Census revisions (2020-2024)
+#' - 2023: Earlier data, closer to what TR2025 used (2020-2023)
+#'
+#' To match TR2025 more closely, use vintage = 2023.
 #'
 #' @export
 fetch_census_population_2020s_file <- function(years,
                                                ages = 0:85,
                                                sex = "female",
-                                               cache_dir = here::here("data/raw/census")) {
-  # Filter to valid years for this file (2020-2024)
-  years <- years[years >= 2020 & years <= 2024]
+                                               cache_dir = here::here("data/raw/census"),
+                                               vintage = getOption("artemis.census_vintage", 2024)) {
+  # Determine max year based on vintage
+
+  max_year <- vintage
+  years <- years[years >= 2020 & years <= max_year]
 
   if (length(years) == 0) {
-    cli::cli_alert_warning("No years in 2020-2024 range provided")
+    cli::cli_alert_warning("No years in 2020-{max_year} range provided")
     return(NULL)
   }
 
-  cli::cli_alert_info("Fetching Census Vintage 2024 population data for {paste(years, collapse=', ')}")
+  cli::cli_alert_info("Fetching Census Vintage {vintage} population data for {paste(years, collapse=', ')}")
 
   # Create cache directory
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
 
-  # Download file if not cached
-  url <- "https://www2.census.gov/programs-surveys/popest/tables/2020-2024/national/asrh/nc-est2024-syasexn.xlsx"
-  local_file <- file.path(cache_dir, "nc-est2024-syasexn.xlsx")
+  # Build URL and filename based on vintage
+  url <- sprintf(
+    "https://www2.census.gov/programs-surveys/popest/tables/2020-%d/national/asrh/nc-est%d-syasexn.xlsx",
+    vintage, vintage
+  )
+  local_file <- file.path(cache_dir, sprintf("nc-est%d-syasexn.xlsx", vintage))
 
   if (!file.exists(local_file)) {
-    cli::cli_alert("Downloading Vintage 2024 population estimates...")
+    cli::cli_alert("Downloading Vintage {vintage} population estimates...")
     tryCatch({
       download.file(url, local_file, mode = "wb", quiet = TRUE)
       cli::cli_alert_success("Downloaded {basename(local_file)}")
     }, error = function(e) {
       cli::cli_abort(c(
-        "Failed to download Vintage 2024 population file",
+        "Failed to download Vintage {vintage} population file",
         "x" = conditionMessage(e),
         "i" = "URL: {url}"
       ))
@@ -939,7 +948,7 @@ fetch_census_population_2020s_file <- function(years,
   dt
 }
 
-#' Parse Census Vintage 2024 XLSX file
+#' Parse Census Vintage XLSX file
 #'
 #' @param xlsx_path Character: path to XLSX file
 #' @param years Integer vector of years to extract
@@ -949,10 +958,10 @@ fetch_census_population_2020s_file <- function(years,
 #' @return data.table with columns: year, age, sex, population
 #'
 #' @details
-#' File structure (NC-EST2024-SYASEXN.xlsx):
+#' File structure (NC-EST20XX-SYASEXN.xlsx):
 #' - Rows 1-2: Title/metadata
 #' - Row 3: Column headers (Sex and Age, April 1 2020 Base, Population Estimate...)
-#' - Row 4: Year labels (NA, NA, 2020, 2021, 2022, 2023, 2024)
+#' - Row 4: Year labels (NA, NA, 2020, 2021, ...)
 #' - Rows 5-108: Total population by age (.0, .1, .2, ... .100+)
 #' - Row 109+: Male population section
 #' - Row 213+: Female population section

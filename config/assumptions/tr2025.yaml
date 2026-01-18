@@ -257,3 +257,9 @@ data_sources:
   population_estimates:
     start_year: 1980
     end_year: 2024
+  # Census Bureau population estimates vintage
+  # 2024: Latest data with 2020 Census revisions (default)
+  # 2023: Earlier vintage, closer to what TR2025 used for 2020-2022
+  # Note: Both vintages incorporate 2020 Census baseline, so 2019+ will
+  # differ from TR2025 which used pre-2020 Census estimates
+  census_vintage: 2023
