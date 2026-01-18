@@ -619,29 +619,87 @@ fetch_beneficiaries_for_historical <- function(years) {
 #' - Some long-term residents abroad receiving SS benefits
 #' - Citizens with historical SS coverage living abroad
 #'
-#' The estimate is calibrated to match TR2025 totals.
+#' The estimate is calibrated to match TR2025 totals, scaling with
+#' US resident population growth.
 #'
 #' @keywords internal
 get_other_citizens_overseas <- function(years) {
   # Most Americans abroad are NOT part of the SS Area population
   # The "OTH" component is a small residual, not the full 9M Americans abroad
 
-  # Calibrated to help reach TR2025 totals (about 300K-500K)
-  # This is much smaller than the State Dept 9M estimate because
-  # the SS Area only includes specific categories of overseas citizens
+  # Base: 525,000 in 1990, scaled by US resident population growth
+  # Source: SSA Actuarial Study No. 112, Table 1
+  # https://www.ssa.gov/oact/NOTES/AS112/as112.html
+  # "Other U.S. citizens abroad" = 525,000 for 1990
+  base_1990 <- 525000
 
-  base_2020 <- 400000  # Small residual category
+  # Get US resident population for every year
+  yearly_pop <- get_us_resident_population_by_year(years)
+  pop_1990 <- get_us_resident_population_by_year(1990)[, population]
 
-  # Slight historical trend
-  result <- data.table::data.table(
-    year = years,
-    other_overseas = pmax(
-      100000,  # Minimum
-      base_2020 * exp(-0.02 * (2020 - years))  # ~2% annual growth
-    )
-  )
+ # Scale OTH proportionally to population ratio vs 1990
+  result <- yearly_pop[, .(
+    year = year,
+    other_overseas = base_1990 * (population / pop_1990)
+  )]
 
   result
+}
+
+#' Get US Resident Population by Year
+#'
+#' @description
+#' Fetches US resident population totals for specified years from
+#' pre-1980 static data and modern Census estimates.
+#'
+#' @param years Integer vector of years
+#' @return data.table with year and population columns
+#' @keywords internal
+get_us_resident_population_by_year <- function(years) {
+  result_list <- list()
+
+ # Pre-1980: Use static historical estimates
+  pre1980_years <- years[years >= 1940 & years < 1980]
+  if (length(pre1980_years) > 0) {
+    pre1980 <- get_pre1980_usaf_population(years = pre1980_years, by_age = FALSE)
+    result_list$pre1980 <- pre1980[, .(year, population = total)]
+  }
+
+  # 1980+: Use Census intercensal/postcensal estimates
+  post1980_years <- years[years >= 1980]
+  if (length(post1980_years) > 0) {
+    post1980 <- get_census_population_totals(post1980_years)
+    result_list$post1980 <- post1980
+  }
+
+  result <- data.table::rbindlist(result_list)
+  data.table::setorder(result, year)
+  result
+}
+
+#' Get Census Population Totals for 1980+
+#'
+#' @description
+#' Fetches US resident population totals from Census Bureau PEP data
+#' using our existing data acquisition functions.
+#'
+#' @param years Integer vector of years (1980+)
+#' @return data.table with year and population columns
+#' @keywords internal
+get_census_population_totals <- function(years) {
+  # Fetch resident population using existing function and sum to get totals
+  pop_data <- fetch_census_historical_population(
+    years = years,
+    reference_date = "jul1",
+    concept = "resident",
+    ages = 0:100,
+    cache_dir = here::here("data/cache")
+  )
+
+  # Sum by year to get totals
+  totals <- pop_data[, .(population = sum(population)), by = year]
+  data.table::setorder(totals, year)
+  totals
 }
 
 #' Fetch Armed Forces Overseas Data
