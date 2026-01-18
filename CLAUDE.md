@@ -153,6 +153,7 @@ For detailed implementation status and task tracking, see:
 - `plans/05_demography_temp_unlawful_immigration_implementation_plan.md` - Temp/Unlawfully Present Immigration subprocess (Phase 5)
 - `plans/06_demography_marriage_implementation_plan.md` - Marriage subprocess (Phase 6)
 - `plans/07_demography_divorce_implementation_plan.md` - Divorce subprocess (Phase 7)
+- `plans/08_demography_projected_population_implementation_plan.md` - Projected Population subprocess (Phase 8)
 
 The plan documents contain:
 - Detailed task breakdowns with status checkboxes
