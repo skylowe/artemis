@@ -1249,9 +1249,87 @@ list(
   ),
 
   # ===========================================================================
+  # DIVORCE SUBPROCESS TARGETS (Phase 7)
+  # ===========================================================================
+  # Implements Equations 1.7.1 - 1.7.2 from TR2025 Documentation
+  # Produces: d̂_{x,y}^z (age-specific rates), ADR^z (age-adjusted rate)
+
+  # Run complete divorce projection
+  tar_target(
+    divorce_projection,
+    run_divorce_projection(
+      cache_dir = here::here("data/cache"),
+      ultimate_adr = config_assumptions$divorce$ultimate_adr,
+      ultimate_year = config_assumptions$divorce$ultimate_year,
+      end_year = config_assumptions$metadata$projection_period$end_year,
+      force = FALSE
+    )
+  ),
+
+  # Extract projected ADR series (2023-2099)
+  tar_target(
+    divorce_adr_projected,
+    divorce_projection$projected_adr
+  ),
+
+  # Extract historical ADR series (1989-2022)
+  tar_target(
+    divorce_adr_historical,
+    divorce_projection$historical$adr_series
+  ),
+
+  # Extract complete ADR series (historical + projected)
+  tar_target(
+    divorce_adr_complete,
+    divorce_projection$complete_adr
+  ),
+
+  # Extract projected divorce rates (DivGrid by year)
+  tar_target(
+    divorce_rates_projected,
+    divorce_projection$projected_rates
+  ),
+
+  # Extract base DivGrid (1979-1988 average)
+  tar_target(
+    divorce_divgrid_base,
+    divorce_projection$historical$base_result$divgrid
+  ),
+
+  # Extract adjusted DivGrid (ACS-adjusted)
+  tar_target(
+    divorce_divgrid_adjusted,
+    divorce_projection$historical$adjusted_result$adjusted_divgrid
+  ),
+
+  # Extract standard married population (July 1, 2010)
+  tar_target(
+    divorce_standard_pop,
+    divorce_projection$standard_pop
+  ),
+
+  # ===========================================================================
+  # DIVORCE VALIDATION TARGETS (Phase 7H)
+  # ===========================================================================
+
+  # Comprehensive divorce projection validation
+  tar_target(
+    divorce_validation,
+    validate_divorce_comprehensive(
+      projection = divorce_projection,
+      tolerance_adr = 0.001
+    )
+  ),
+
+  # Quick divorce validation (for faster iteration)
+  tar_target(
+    divorce_validation_quick,
+    validate_divorce_quick(projection = divorce_projection)
+  ),
+
+  # ===========================================================================
   # PLACEHOLDER: Future process targets will be added here
   # ===========================================================================
-  # - Divorce targets (Phase 7)
   # - Projected population targets
   # - Economics process targets
   # - Beneficiaries process targets

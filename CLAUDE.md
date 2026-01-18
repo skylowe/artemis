@@ -4,9 +4,9 @@
 R-based replication of the SSA Office of the Chief Actuary's long-range OASDI projection model. Uses `{targets}` for pipeline orchestration and `{renv}` for dependency management.
 
 ## Current Status
-**Phase:** 6 - Marriage Subprocess (COMPLETE)
-**Most Recent Completion:** Phase 6H - Validation & Pipeline Integration (January 18, 2026)
-**Next Step:** Phase 7 - Divorce Subprocess
+**Phase:** 7 - Divorce Subprocess (COMPLETE)
+**Most Recent Completion:** Phase 7H - Validation & Pipeline Integration (January 18, 2026)
+**Next Step:** Phase 8 - Projected Population
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -106,7 +106,7 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
    - Guarantees mathematical consistency: opposite_sex + same_sex = total at every cell
 2. Dynamic SS Area factor from population data (~1.02) vs simplified 1.003 assumption
 
-### Divorce Subprocess Status (IN PROGRESS - Phase 7G Complete)
+### Divorce Subprocess Status (COMPLETE)
 - **Purpose:** Project annual age-specific divorce rates by husband age × wife age
 - **Key Outputs:**
   - d̂_{x,y}^z - Age-specific divorce rates (Eq 1.7.1)
@@ -114,16 +114,9 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - DivGrid: 87×87 matrix of divorce rates (ages 14-100+)
 - **TR2025 Assumptions:** Ultimate ADR 1,700 per 100,000 married couples by year 25 (2047)
 - **Data Sources:** NCHS DRA (1979-1988), ACS PUMS (2008-2022) for adjustment
-- **Key files:** `R/demography/divorce.R`, `R/data_acquisition/nchs_divorce.R`, `R/data_acquisition/acs_divorce.R`
+- **Key files:** `R/demography/divorce.R`, `R/data_acquisition/nchs_divorce.R`, `R/data_acquisition/acs_divorce.R`, `R/validation/validate_divorce.R`
+- **Pipeline targets:** `divorce_projection`, `divorce_adr_projected`, `divorce_validation`
 - **Plan document:** `plans/07_demography_divorce_implementation_plan.md`
-- **Completed phases:**
-  - Phase 7A: NCHS DRA data acquisition (1979-1988)
-  - Phase 7B: Population data & married couples grid
-  - Phase 7C: Base DivGrid development (1979-1988 average)
-  - Phase 7D: ACS-based DivGrid adjustment (deviation from TR2025)
-  - Phase 7E: Historical period calculation (1989-2022) - ADR series
-  - Phase 7F: ADR projection (2023-2099) - asymptotic convergence to ultimate
-  - Phase 7G: Divorce rate projection (2023-2099) - DivGrid scaled to ADR
 - **Key results:**
   - Base ADR (1979-1988): 1,749.4 per 100,000
   - ACS-adjusted ADR (2018-2022): 2,457.4 per 100,000
@@ -131,8 +124,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - Starting ADR (2018-2022 weighted): 1,119 per 100,000
   - Projected ADR: 1,119 (2023) → 1,700 (2047) → 1,700 (2099)
   - 121 years total (44 historical, 77 projected)
-  - Peak divorce ages maintained at (41, 39) throughout projection
-- **Remaining phases:** 7H (Validation & Pipeline Integration)
+  - Peak divorce ages: (25, 23) base → (41, 39) ACS-adjusted
+- **Validation:** 8/8 checks pass (ADR ultimate, trajectory, DivGrid properties, etc.)
 - **Key differences from Marriage:**
   - Uses married couples as denominator (not unmarried)
   - DRA coverage ~48% (vs MRA ~80%)
@@ -143,6 +136,9 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
    - ACS data is publicly available; state data requires direct contact with health departments
    - Same ratio-based adjustment methodology as TR2025
    - Uses MARHD variable (divorced in past 12 months) to capture recent divorce patterns
+2. Standard population uses averaged 2009-2010 married couples from our historical population
+   - TR2025 uses December 31 marriage grids from the 2015 TR
+   - Minor differences expected but methodology is consistent
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)
