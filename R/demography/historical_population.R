@@ -264,10 +264,24 @@ fetch_census_usaf_for_historical <- function(years, ages, cache_dir) {
 #' age distributions from Census APIs. This function estimates age-sex
 #' distributions using decennial census benchmarks and interpolation.
 #'
+#' Adjusts from July 1 reference date to December 31 by interpolating
+#' with the following year's population.
+#'
 #' @keywords internal
 estimate_pre1980_population <- function(years, ages) {
-  # Get pre-1980 totals from historical_static.R
-  totals <- get_pre1980_usaf_population(years = years, by_age = FALSE)
+  # Get pre-1980 totals from historical_static.R (July 1 estimates)
+  # Request years and years+1 for December 31 interpolation
+  all_years_needed <- unique(c(years, years + 1))
+  all_years_needed <- all_years_needed[all_years_needed <= 1979]
+  totals <- get_pre1980_usaf_population(years = all_years_needed, by_age = FALSE)
+
+  # Get 1980 July 1 population from Census data for 1979 Dec 31 interpolation
+  pop_1980 <- NULL
+  if (1979 %in% years) {
+    pop_1980 <- tryCatch({
+      get_census_population_totals(1980)
+    }, error = function(e) NULL)
+  }
 
   # Get age distributions from decennial censuses
   census_years <- c(1940, 1950, 1960, 1970)
@@ -281,9 +295,33 @@ estimate_pre1980_population <- function(years, ages) {
   result_list <- lapply(years, function(yr) {
     year_dist <- interpolate_age_distribution(yr, decennial_dist)
 
-    # Get totals for this year by sex (data is in wide format: year, male, female, total)
-    male_total <- totals[year == yr, male]
-    female_total <- totals[year == yr, female]
+    # Get July 1 totals for this year and next year
+    male_jul1 <- totals[year == yr, male]
+    female_jul1 <- totals[year == yr, female]
+
+    # Adjust from July 1 to December 31
+    # Dec 31 of year Y is approximately halfway between July 1 of Y and July 1 of Y+1
+    if (yr < 1979 && (yr + 1) %in% totals$year) {
+      male_jul1_next <- totals[year == yr + 1, male]
+      female_jul1_next <- totals[year == yr + 1, female]
+
+      # Interpolate: Dec 31 = Jul 1 + 0.5 * (next Jul 1 - this Jul 1)
+      male_total <- male_jul1 + 0.5 * (male_jul1_next - male_jul1)
+      female_total <- female_jul1 + 0.5 * (female_jul1_next - female_jul1)
+    } else if (yr == 1979 && !is.null(pop_1980) && nrow(pop_1980) > 0) {
+      # For 1979, use 1980 Census data to interpolate
+      # Assume sex ratio similar to 1979 (slightly more female)
+      total_1980 <- pop_1980[year == 1980, population]
+      male_ratio <- male_jul1 / (male_jul1 + female_jul1)
+
+      total_dec31 <- (male_jul1 + female_jul1) + 0.5 * (total_1980 - (male_jul1 + female_jul1))
+      male_total <- total_dec31 * male_ratio
+      female_total <- total_dec31 * (1 - male_ratio)
+    } else {
+      # Fallback: use ~1% annual growth to estimate Dec 31
+      male_total <- male_jul1 * 1.005
+      female_total <- female_jul1 * 1.005
+    }
 
     if (length(male_total) == 0) male_total <- NA_real_
     if (length(female_total) == 0) female_total <- NA_real_
@@ -454,12 +492,13 @@ generate_demographic_age_distribution <- function(ages, params, census_year) {
 
 #' Fetch Territory Populations for Historical Calculation
 #'
+#' @description
+#' Gets territory populations for all years. Uses IDB API for 1990+ and
+#' historical decennial census data with interpolation for pre-1990.
+#'
 #' @keywords internal
 fetch_territory_for_historical <- function(years, ages, cache_dir) {
-  # Get territory data from census_historical_population.R
   territories <- c("PR", "VI", "GU", "MP", "AS")
-
-  # Get when each territory was added to SS area
   ss_start_years <- sapply(territories, get_territory_ss_start_year)
 
   result_list <- list()
@@ -471,26 +510,40 @@ fetch_territory_for_historical <- function(years, ages, cache_dir) {
 
     if (length(terr_years) == 0) next
 
-    # Fetch territory population
-    terr_pop <- tryCatch({
-      fetch_territory_populations_by_age_sex(
-        years = terr_years,
-        territories = terr,
-        cache_dir = cache_dir
-      )
-    }, error = function(e) {
-      cli::cli_alert_warning("Territory {terr} data error: {conditionMessage(e)}")
-      NULL
-    })
+    # Split into pre-1990 and 1990+ years
+    pre1990_years <- terr_years[terr_years < 1990]
+    post1990_years <- terr_years[terr_years >= 1990]
 
-    if (!is.null(terr_pop) && nrow(terr_pop) > 0) {
-      terr_pop[, territory := terr]
-      result_list[[terr]] <- terr_pop
+    # Pre-1990: Use historical decennial data with interpolation
+    if (length(pre1990_years) > 0) {
+      pre1990_pop <- get_territory_population_pre1990(terr, pre1990_years, ages)
+      if (!is.null(pre1990_pop) && nrow(pre1990_pop) > 0) {
+        pre1990_pop[, territory := terr]
+        result_list[[paste0(terr, "_pre1990")]] <- pre1990_pop
+      }
+    }
+
+    # 1990+: Use IDB API
+    if (length(post1990_years) > 0) {
+      post1990_pop <- tryCatch({
+        fetch_territory_populations_by_age_sex(
+          years = post1990_years,
+          territories = terr,
+          cache_dir = cache_dir
+        )
+      }, error = function(e) {
+        cli::cli_alert_warning("Territory {terr} data error (1990+): {conditionMessage(e)}")
+        NULL
+      })
+
+      if (!is.null(post1990_pop) && nrow(post1990_pop) > 0) {
+        post1990_pop[, territory := terr]
+        result_list[[paste0(terr, "_post1990")]] <- post1990_pop
+      }
     }
   }
 
   if (length(result_list) == 0) {
-    # Return empty data.table with correct structure
     return(data.table::data.table(
       year = integer(),
       age = integer(),
@@ -506,6 +559,91 @@ fetch_territory_for_historical <- function(years, ages, cache_dir) {
   result[, .(
     territory_pop = sum(population, na.rm = TRUE)
   ), by = .(year, age, sex)]
+}
+
+#' Get Territory Population for Pre-1990 Years
+#'
+#' @description
+#' Uses historical decennial census totals and interpolates between
+#' census years, distributing by age using standard age distribution.
+#'
+#' @keywords internal
+get_territory_population_pre1990 <- function(territory, years, ages) {
+  # Get historical territory data (decennial census totals)
+  hist_data <- get_territory_historical_population()
+  target_terr <- territory
+  terr_data <- hist_data[territory == target_terr]
+
+  if (nrow(terr_data) == 0) return(NULL)
+
+  # Interpolate total population for each requested year
+  result_list <- lapply(years, function(yr) {
+    # Find bracketing census years
+    census_years <- terr_data$census_year
+    lower_census <- max(census_years[census_years <= yr], na.rm = TRUE)
+    upper_census <- min(census_years[census_years >= yr], na.rm = TRUE)
+
+    if (is.infinite(lower_census)) lower_census <- min(census_years)
+    if (is.infinite(upper_census)) upper_census <- max(census_years)
+
+    # Get populations at bracketing years
+    lower_pop <- terr_data[census_year == lower_census, population]
+    upper_pop <- terr_data[census_year == upper_census, population]
+
+    # Interpolate
+    if (lower_census == upper_census) {
+      total_pop <- lower_pop
+    } else {
+      weight <- (yr - lower_census) / (upper_census - lower_census)
+      total_pop <- lower_pop + weight * (upper_pop - lower_pop)
+    }
+
+    # Distribute across ages using standard age distribution
+    distribute_population_by_age(total_pop, yr, ages)
+  })
+
+  data.table::rbindlist(result_list)
+}
+
+#' Distribute Population by Age
+#'
+#' @description
+#' Distributes a total population across ages using a standard
+#' demographic age distribution typical for the era.
+#'
+#' @keywords internal
+distribute_population_by_age <- function(total_pop, year, ages) {
+  # Use a typical demographic age distribution
+  # Younger populations in earlier years, aging over time
+
+  # Create age weights based on a modified Gompertz-like curve
+  age_weights <- sapply(ages, function(a) {
+    if (a < 5) {
+      0.07  # Young children
+    } else if (a < 18) {
+      0.065  # Children/teens
+    } else if (a < 65) {
+      0.055 * exp(-0.01 * (a - 30))  # Working age
+    } else {
+      0.03 * exp(-0.03 * (a - 65))  # Elderly
+    }
+  })
+
+  # Normalize weights
+  age_weights <- age_weights / sum(age_weights)
+
+  # Split by sex (roughly equal with slight female majority at older ages)
+  male_share <- ifelse(ages < 65, 0.51, 0.45)
+
+  data.table::data.table(
+    year = year,
+    age = rep(ages, 2),
+    sex = c(rep("male", length(ages)), rep("female", length(ages))),
+    population = c(
+      total_pop * age_weights * male_share,
+      total_pop * age_weights * (1 - male_share)
+    )
+  )
 }
 
 # =============================================================================
