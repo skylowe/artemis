@@ -22,25 +22,47 @@
 **Current Phase:** Phase 5D - Departure Rate Development (COMPLETE)
 **Next Phase:** Phase 5E - Core Projection Functions
 
-### Phase 5C Progress Notes - COMPLETED (January 18, 2026)
+### Phase 5C Progress Notes - UPDATED (January 18, 2026)
 
 **Files Created:**
 - `R/demography/temp_unlawful_immigration.R` - Core O immigration projection functions
 
-**Functions Implemented:**
+**Functions Implemented (Core):**
 - `calculate_o_immigration()` - O = ACS new arrivals (with undercount) - LPR NEW arrivals
 - `calculate_odist()` - ODIST distribution from 2015-2019 average (Eq 1.5.1)
-- `get_default_type_splits()` - Type proportions (N/I/V) by age/sex
 - `get_overstay_percentages()` - Age-specific overstay percentages (RAND-based)
 - `project_o_immigration()` - Apply ODIST to TR assumptions
 - `run_o_immigration_projection()` - Full projection pipeline
 - `validate_odist()` - Validation checks
 - `get_overstay_percentage_sources()` - Documentation of data sources
 
+**Functions Implemented (Historical Type Interpolation - TR2025 Methodology):**
+- `get_type_splits_interpolated()` - TR2025 interpolation with anchor points
+- `get_type_anchor_points()` - Defines 1963, 2010, 2015 anchor points
+- `calculate_anchor_from_dhs()` - Derives anchor proportions from DHS data
+- `get_nonimmigrant_age_distribution()` - NI age concentration (students, workers)
+- `calculate_odist_with_interpolation()` - ODIST using TR2025 type interpolation
+
+**TR2025 Historical Type Interpolation:**
+Per TR2025: "It is assumed that all temporary or unlawfully present immigrants were
+nonimmigrants as of December 31, 1963. Between December 31, 1963, and December 31, 2010,
+the percentage...is linearly interpolated."
+
+Anchor points implemented:
+- **1963:** 100% nonimmigrant (I=100%, N=0%, V=0%)
+- **2010:** Based on DHS estimates (N≈51%, I≈15%, V≈34%)
+- **2015:** Based on DHS estimates (N≈49%, I≈16%, V≈35%)
+- **2015+:** Use 2015 proportions (stable)
+
+Type proportions evolve over time:
+- **1980:** N=23%, I=69%, V=8% (interpolated)
+- **2000:** N=44%, I=37%, V=19% (interpolated)
+- **2015+:** N≈49%, I≈16%, V≈35% (post-anchor)
+
 **Key Results:**
 - O immigration (2015-2019 avg): 2.12M/year
 - ODIST validated: sums to 1.0, all non-negative
-- Type proportions: N=53.2%, I=15.2%, V=31.7%
+- Type proportions (with interpolation): N=46.2%, I=28.3%, V=25.4%
 - Sex proportions: Female=50.6%, Male=49.4%
 - Age distribution: 20% ages 0-17, 47% ages 18-34, 18% ages 35-49
 
@@ -56,33 +78,43 @@ All hardcoded values are clearly marked with `# HARDCODED` comments and block he
 The following functions accept `config` parameter to override defaults:
 - `get_tr2025_o_immigration_assumptions(config=)` - TR2025 assumptions by year
 - `get_overstay_percentages(config=)` - Age-specific overstay percentages
-- `get_nonimmigrant_stock_distribution(config=)` - Total O population estimate
+- `get_type_anchor_points(config=)` - Override anchor point proportions
 
 **Sources for Hardcoded Values:**
 | Value | Source | Notes |
 |-------|--------|-------|
 | TR2025 O immigration totals | TR2025 Section 1.5 | Official Trustees assumptions |
 | Overstay percentages by age | Warren & Kerwin (2017), DHS Overstay Reports | SSA internal RAND values not public |
-| Type splits (N/I/V) | DHS unauthorized + nonimmigrant estimates | ~53% N, 15% I, 32% V |
-| Total O population (~13M) | DHS unauthorized (~11M) + nonimmigrant (~2M) | For proportion calculations |
-| Default NI distribution | DHS Yearbook + visa category patterns | F-1 students, H-1B workers concentrated |
+| 1963 anchor (100% NI) | TR2025 explicit | "all...were nonimmigrants as of December 31, 1963" |
+| 2010 anchor | DHS unauthorized (10.8M) + NI stock (1.9M) | Total O ≈ 12.7M |
+| 2015 anchor | DHS unauthorized (10.7M) + NI stock (2.1M) | Total O ≈ 12.8M |
+| NI age distribution | DHS Yearbook + visa category patterns | F-1 students, H-1B workers concentrated |
 
 ### Phase 5D Progress Notes - COMPLETED (January 18, 2026)
 
 **Files Created:**
 - `R/demography/temp_unlawful_emigration.R` - Departure rate calculation and O emigration projection
 
-**Functions Implemented:**
+**Functions Implemented (Core):**
 - `build_o_stock_for_rates()` - Build O population stocks from 2008-2010 for rate derivation
 - `calculate_base_departure_rates()` - Calculate rates by dividing OE by OP
 - `smooth_departure_rates()` - 5-year moving average smoothing
 - `adjust_rates_for_recession()` - Adjust for 2008-2010 recession effects
 - `apply_type_adjustments()` - Type-specific rate adjustments (N/I/V)
 - `apply_daca_rate_adjustment()` - Lower rates for DACA-eligible population
-- `split_never_authorized_rates()` - Recent arrivals get 2× rate per TR2025
-- `project_o_emigration()` - Project OE = Rate × OP (Eq 1.5.2)
-- `run_o_emigration_projection()` - Full emigration projection pipeline
 - `get_departure_rate_sources()` - Source documentation
+
+**Functions Implemented (Cohort-Tracking):**
+- `initialize_cohort_tracking()` - Initialize O population with arrival_status dimension
+- `add_new_arrivals_with_cohort()` - Mark new N arrivals as "recent"
+- `transition_recent_to_non_recent()` - 1/threshold transitions each year
+- `calculate_emigration_with_cohorts()` - Apply 2× rate to recent N arrivals
+- `run_o_emigration_with_cohorts()` - Full projection with cohort tracking
+- `update_o_population_with_cohorts()` - Update stock preserving cohorts
+- `age_population_with_cohorts()` - Age population preserving arrival_status
+
+**NOTE:** Legacy age-based approximation (`split_never_authorized_rates`, `run_o_emigration_projection`)
+has been removed in favor of cohort-tracking approach which is more faithful to TR2025.
 
 **TR2025 Methodology Implemented:**
 - Stock build-up from 2008-2010 using cohort-component method
@@ -90,8 +122,9 @@ The following functions accept `config` parameter to override defaults:
 - Rates: OE / OP for each age, sex, type
 - Recession adjustment factor (0.85)
 - Policy periods: Pre-2015 vs Post-2015 (Executive Actions)
-- Recent arrivals: 2× departure rate (TR2025 explicit statement)
+- **Cohort-based recent arrivals:** Tracks actual years since arrival, 2× rate for recent N
 - DACA eligible: 50% lower departure rates
+- Cohort transition: 1/threshold of recent → non_recent each year (default threshold: 5 years)
 
 **Hardcoded Values with Sources:**
 | Value | Source | Notes |
@@ -102,12 +135,13 @@ The following functions accept `config` parameter to override defaults:
 | NI transition (0.70→1.00) | TR2025 Section 1.5.c | 2015 to 2025 |
 | V pre/post multipliers | TR2025 methodology | 1.10/0.85 |
 | DACA rate reduction (0.50) | TR2025 explicit | Lower rates for DACA |
-| Recent arrival proportion | DHS estimates | Age-varying (15-80%) |
+| Recent threshold (5 years) | TR2025 methodology | Time to become non-recent |
+| Initial recent proportion (30%) | Flow/stock ratio | Estimated from immigration rates |
 | AOS type split (60/40) | LPR subprocess | I and V contribute |
 
 **Configuration Options:**
 - `get_default_rate_config(config=)` - Override all rate multipliers
-- Recession factor, type multipliers, DACA reduction all configurable
+- Recession factor, type multipliers, DACA reduction, recent_threshold all configurable
 
 ### Phase 5B Progress Notes - COMPLETED (January 18, 2026)
 

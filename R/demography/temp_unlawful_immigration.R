@@ -236,21 +236,414 @@ calculate_odist <- function(o_immigration,
 }
 
 # =============================================================================
-# TYPE SPLIT FUNCTIONS
+# HISTORICAL TYPE INTERPOLATION (TR2025 Methodology)
+# =============================================================================
+# Per TR2025: "It is assumed that all temporary or unlawfully present immigrants
+# were nonimmigrants as of December 31, 1963. Between December 31, 1963, and
+# December 31, 2010, the percentage of total temporary or unlawfully present
+# immigrants by age and sex in each type is linearly interpolated from the
+# percentages at those two points in time. Between December 31, 2010, and
+# December 31, 2015, a similar interpolation is done from the percentages at
+# those two points in time."
 # =============================================================================
 
-#' Get type split proportions by age and sex
+#' Get type splits using historical interpolation (TR2025 methodology)
 #'
 #' @description
-#' Returns the proportion of O immigrants in each type category:
-#' - N: Never-authorized
-#' - I: Nonimmigrant (temporary legal)
-#' - V: Visa-overstayer
+#' Calculates type proportions (N/I/V) using the TR2025 historical interpolation
+#' methodology with anchor points at 1963, 2010, and 2015.
 #'
-#' Per TR2025: "It is assumed that all temporary or unlawfully present
-#' immigrants were nonimmigrants as of December 31, 1963. Between
-#' December 31, 1963, and December 31, 2010, the percentage...is
-#' linearly interpolated."
+#' @param year Integer: year for type splits
+#' @param age Integer or vector: age(s) for type splits
+#' @param sex Character: "male" or "female"
+#' @param anchor_points List with type proportions at anchor years (optional)
+#'
+#' @return data.table with type_n, type_i, type_v proportions
+#'
+#' @details
+#' TR2025 specifies three anchor points:
+#' - Dec 31, 1963: 100% nonimmigrant (I = 1.0, N = 0, V = 0)
+#' - Dec 31, 2010: Estimated from DHS unauthorized + nonimmigrant stock
+#' - Dec 31, 2015: Current proportions from DHS data
+#'
+#' Linear interpolation is used between anchor points:
+#' - 1963-2010: Gradual shift from all-NI to mixed population
+#' - 2010-2015: Adjustment based on updated DHS estimates
+#' - 2015+: Use 2015 proportions (or slight extrapolation)
+#'
+#' @export
+get_type_splits_interpolated <- function(year,
+                                          age = 0:99,
+                                          sex = c("male", "female"),
+                                          anchor_points = NULL) {
+  # Get anchor point proportions
+  if (is.null(anchor_points)) {
+    anchor_points <- get_type_anchor_points()
+  }
+
+  # Create age-sex grid
+  result <- data.table::CJ(age = age, sex = sex)
+
+  # Get anchor proportions for each age-sex combination
+  result <- merge(result, anchor_points$y1963, by = c("age", "sex"),
+                  all.x = TRUE, suffixes = c("", "_1963"))
+  result <- merge(result, anchor_points$y2010, by = c("age", "sex"),
+                  all.x = TRUE, suffixes = c("", "_2010"))
+  result <- merge(result, anchor_points$y2015, by = c("age", "sex"),
+                  all.x = TRUE, suffixes = c("", "_2015"))
+
+  # Rename columns for clarity
+  data.table::setnames(result,
+    c("type_n", "type_i", "type_v"),
+    c("type_n_1963", "type_i_1963", "type_v_1963"),
+    skip_absent = TRUE
+  )
+
+  # Interpolate based on year
+  if (year <= 1963) {
+    # Before 1963: all nonimmigrant
+    result[, type_n := 0]
+    result[, type_i := 1]
+    result[, type_v := 0]
+  } else if (year <= 2010) {
+    # 1963-2010: Linear interpolation
+    progress <- (year - 1963) / (2010 - 1963)
+    result[, type_n := type_n_1963 + progress * (type_n_2010 - type_n_1963)]
+    result[, type_i := type_i_1963 + progress * (type_i_2010 - type_i_1963)]
+    result[, type_v := type_v_1963 + progress * (type_v_2010 - type_v_1963)]
+  } else if (year <= 2015) {
+    # 2010-2015: Linear interpolation
+    progress <- (year - 2010) / (2015 - 2010)
+    result[, type_n := type_n_2010 + progress * (type_n_2015 - type_n_2010)]
+    result[, type_i := type_i_2010 + progress * (type_i_2015 - type_i_2010)]
+    result[, type_v := type_v_2010 + progress * (type_v_2015 - type_v_2010)]
+  } else {
+    # 2015+: Use 2015 proportions (stable)
+    result[, type_n := type_n_2015]
+    result[, type_i := type_i_2015]
+    result[, type_v := type_v_2015]
+  }
+
+  # Ensure non-negative and normalize
+  result[type_n < 0, type_n := 0]
+  result[type_i < 0, type_i := 0]
+  result[type_v < 0, type_v := 0]
+
+  result[, total := type_n + type_i + type_v]
+  result[total > 0, `:=`(
+    type_n = type_n / total,
+    type_i = type_i / total,
+    type_v = type_v / total
+  )]
+
+  # Select only needed columns
+  result[, .(age, sex, type_n, type_i, type_v)]
+}
+
+#' Get type proportion anchor points for historical interpolation
+#'
+#' @description
+#' Returns type proportions at the three TR2025 anchor points:
+#' - 1963: 100% nonimmigrant
+#' - 2010: Based on DHS unauthorized and nonimmigrant stock estimates
+#' - 2015: Current proportions from DHS data
+#'
+#' @param config Optional configuration to override anchor values
+#'
+#' @return List with data.tables for y1963, y2010, y2015
+#'
+#' @details
+#' The 2010 and 2015 anchor points are derived from:
+#' - DHS nonimmigrant stock (Apr 2008, Dec 2010, Apr 2016)
+#' - DHS unauthorized immigrant population estimates
+#' - Overstay percentage estimates (Input #25)
+#'
+#' @export
+get_type_anchor_points <- function(config = NULL) {
+  ages <- 0:99
+  sexes <- c("male", "female")
+
+  # =========================================================================
+  # ANCHOR POINT 1: December 31, 1963
+  # =========================================================================
+  # Per TR2025: "all temporary or unlawfully present immigrants were
+  # nonimmigrants as of December 31, 1963"
+  # =========================================================================
+  y1963 <- data.table::CJ(age = ages, sex = sexes)
+  y1963[, type_n := 0]
+  y1963[, type_i := 1]  # 100% nonimmigrant
+
+  y1963[, type_v := 0]
+
+  # =========================================================================
+  # ANCHOR POINT 2: December 31, 2010
+  # =========================================================================
+  # Based on DHS estimates for this period:
+  # - Total unauthorized: ~10.8M (DHS 2010 estimate)
+  # - Nonimmigrant stock: ~1.9M (DHS Dec 2010)
+  # - Total O: ~12.7M
+  # - Overstay proportion of unauthorized: ~40% (Warren & Kerwin)
+  #
+  # Type proportions:
+  # - I (nonimmigrant): 1.9M / 12.7M ≈ 15%
+  # - V (overstayer): 10.8M × 0.40 / 12.7M ≈ 34%
+  # - N (never-auth): remainder ≈ 51%
+  # =========================================================================
+  y2010 <- calculate_anchor_from_dhs(
+    reference_year = 2010,
+    total_unauthorized = 10800000,  # DHS 2010 estimate
+    total_nonimmigrant = 1900000,   # DHS Dec 2010 stock
+    overstay_pct_overall = 0.40,    # Warren & Kerwin estimate
+    config = config
+  )
+
+  # =========================================================================
+  # ANCHOR POINT 3: December 31, 2015
+  # =========================================================================
+  # Based on more recent DHS estimates:
+  # - Total unauthorized: ~10.7M (DHS 2015 estimate)
+  # - Nonimmigrant stock: ~2.1M (DHS Apr 2016, closest available)
+  # - Total O: ~12.8M
+  # - Overstay proportion: ~42% (updated Warren & Kerwin)
+  #
+  # Type proportions:
+  # - I (nonimmigrant): 2.1M / 12.8M ≈ 16%
+  # - V (overstayer): 10.7M × 0.42 / 12.8M ≈ 35%
+  # - N (never-auth): remainder ≈ 49%
+  # =========================================================================
+  y2015 <- calculate_anchor_from_dhs(
+    reference_year = 2015,
+    total_unauthorized = 10700000,  # DHS 2015 estimate
+    total_nonimmigrant = 2100000,   # DHS Apr 2016 stock
+    overstay_pct_overall = 0.42,    # Updated estimate
+    config = config
+  )
+
+  list(
+    y1963 = y1963,
+    y2010 = y2010,
+    y2015 = y2015
+  )
+}
+
+#' Calculate anchor point type proportions from DHS data
+#'
+#' @description
+#' Calculates age-sex specific type proportions for a given anchor year
+#' using DHS unauthorized and nonimmigrant estimates.
+#'
+#' @param reference_year Reference year for the anchor
+#' @param total_unauthorized Total unauthorized population
+#' @param total_nonimmigrant Total nonimmigrant stock
+#' @param overstay_pct_overall Overall overstay percentage of unauthorized
+#' @param config Optional configuration
+#'
+#' @return data.table with type proportions by age and sex
+#'
+#' @keywords internal
+calculate_anchor_from_dhs <- function(reference_year,
+                                       total_unauthorized,
+                                       total_nonimmigrant,
+                                       overstay_pct_overall,
+                                       config = NULL) {
+  ages <- 0:99
+  sexes <- c("male", "female")
+
+  result <- data.table::CJ(age = ages, sex = sexes)
+
+  # Total O population
+
+  total_o <- total_unauthorized + total_nonimmigrant
+
+  # Get age-specific overstay percentages
+  overstay_by_age <- get_overstay_percentages(config)
+
+  # Get age distribution of nonimmigrants (working-age concentrated)
+  ni_age_dist <- get_nonimmigrant_age_distribution()
+
+  # Merge distributions
+  result <- merge(result, overstay_by_age[, .(age, overstay_pct)],
+                  by = "age", all.x = TRUE)
+  result <- merge(result, ni_age_dist[, .(age, sex, ni_age_pct)],
+                  by = c("age", "sex"), all.x = TRUE)
+
+  # Fill missing values
+  result[is.na(overstay_pct), overstay_pct := overstay_pct_overall]
+  result[is.na(ni_age_pct), ni_age_pct := 1 / (length(ages) * length(sexes))]
+
+  # Calculate type proportions
+  # Type I: Nonimmigrant proportion based on stock
+  result[, type_i := (total_nonimmigrant / total_o) * ni_age_pct * length(ages) * length(sexes)]
+  result[type_i > 0.50, type_i := 0.50]  # Cap at 50%
+
+  # Type V: Overstayer proportion of non-nonimmigrant
+  result[, type_v := (1 - type_i) * overstay_pct]
+
+  # Type N: Never-authorized (remainder)
+  result[, type_n := 1 - type_i - type_v]
+  result[type_n < 0, type_n := 0]
+
+  # Normalize
+  result[, total := type_n + type_i + type_v]
+  result[total > 0, `:=`(
+    type_n = type_n / total,
+    type_i = type_i / total,
+    type_v = type_v / total
+  )]
+
+  result[, .(age, sex, type_n, type_i, type_v)]
+}
+
+#' Get nonimmigrant age distribution
+#'
+#' @description
+#' Returns the relative concentration of nonimmigrants by age and sex.
+#' Nonimmigrants are concentrated in working ages (students, workers).
+#'
+#' @return data.table with ni_age_pct by age and sex
+#'
+#' @keywords internal
+get_nonimmigrant_age_distribution <- function() {
+  ages <- 0:99
+  sexes <- c("male", "female")
+
+  result <- data.table::CJ(age = ages, sex = sexes)
+
+  # ===========================================================================
+  # Age distribution based on visa categories
+  # ===========================================================================
+  # - F-1 students: concentrated ages 18-30
+  # - H-1B workers: concentrated ages 25-45
+  # - L-1 transfers: ages 30-50
+  # - Other workers: various
+  # ===========================================================================
+  result[, ni_age_pct := data.table::fcase(
+    age < 5, 0.02,
+    age >= 5 & age < 18, 0.05,
+    age >= 18 & age < 22, 0.15,   # College students
+    age >= 22 & age < 25, 0.18,   # Grad students, early workers
+    age >= 25 & age < 30, 0.20,   # Peak H-1B
+    age >= 30 & age < 35, 0.15,
+    age >= 35 & age < 40, 0.10,
+    age >= 40 & age < 50, 0.08,
+    age >= 50 & age < 60, 0.04,
+    age >= 60, 0.02
+  )]
+
+  # Slight male skew in worker categories
+  result[sex == "male" & age >= 25 & age < 50, ni_age_pct := ni_age_pct * 1.1]
+  result[sex == "female" & age >= 25 & age < 50, ni_age_pct := ni_age_pct * 0.9]
+
+  # Normalize to sum to 1
+  result[, ni_age_pct := ni_age_pct / sum(ni_age_pct)]
+
+  result
+}
+
+#' Calculate ODIST with historical type interpolation
+#'
+#' @description
+#' Calculates ODIST using the TR2025 historical interpolation methodology.
+#' Type proportions for each year in the reference period (2015-2019) are
+#' calculated using interpolated anchor points.
+#'
+#' @param o_immigration data.table with O immigration by year, age, sex
+#' @param reference_years Years for ODIST average (default: 2015:2019)
+#' @param use_interpolation Logical: use historical interpolation (default: TRUE)
+#'
+#' @return data.table with ODIST by age, sex, type
+#'
+#' @export
+calculate_odist_with_interpolation <- function(o_immigration,
+                                                reference_years = 2015:2019,
+                                                use_interpolation = TRUE) {
+  checkmate::assert_data_table(o_immigration)
+
+  cli::cli_h3("Calculating ODIST with historical type interpolation")
+
+  # Filter to reference years
+  ref_data <- o_immigration[year %in% reference_years]
+
+  if (nrow(ref_data) == 0) {
+    cli::cli_abort("No O immigration data for reference years {reference_years}")
+  }
+
+  # Get anchor points for interpolation
+  anchor_points <- get_type_anchor_points()
+
+  # For each year, get interpolated type splits and apply to O immigration
+  results <- list()
+
+  for (yr in reference_years) {
+    yr_data <- ref_data[year == yr]
+
+    if (nrow(yr_data) == 0) {
+      cli::cli_alert_warning("No data for year {yr}, skipping")
+      next
+    }
+
+    # Get interpolated type splits for this year
+    type_splits <- get_type_splits_interpolated(
+      year = yr,
+      age = unique(yr_data$age),
+      sex = unique(yr_data$sex),
+      anchor_points = anchor_points
+    )
+
+    # Merge and apply type splits
+    yr_typed <- merge(yr_data, type_splits, by = c("age", "sex"), all.x = TRUE)
+
+    # Fill any missing type splits
+    yr_typed[is.na(type_n), type_n := 0.50]
+    yr_typed[is.na(type_i), type_i := 0.15]
+    yr_typed[is.na(type_v), type_v := 0.35]
+
+    # Create long format with type dimension
+    yr_result <- data.table::rbindlist(list(
+      yr_typed[, .(year, age, sex, type = "N",
+                   o_immigration = o_immigration * type_n)],
+      yr_typed[, .(year, age, sex, type = "I",
+                   o_immigration = o_immigration * type_i)],
+      yr_typed[, .(year, age, sex, type = "V",
+                   o_immigration = o_immigration * type_v)]
+    ))
+
+    results[[as.character(yr)]] <- yr_result
+
+    cli::cli_alert("Year {yr}: N={round(mean(type_splits$type_n)*100)}%, I={round(mean(type_splits$type_i)*100)}%, V={round(mean(type_splits$type_v)*100)}%")
+  }
+
+  # Combine all years
+  all_years <- data.table::rbindlist(results)
+
+  # Calculate average across years
+  avg_oi <- all_years[, .(avg_o_immigration = mean(o_immigration)),
+                      by = .(age, sex, type)]
+
+  # Calculate distribution (normalize to sum to 1)
+  total <- sum(avg_oi$avg_o_immigration)
+  avg_oi[, odist := avg_o_immigration / total]
+
+  cli::cli_alert_success("Calculated ODIST with {length(reference_years)} years of interpolated types")
+
+  # Report summary
+  type_totals <- avg_oi[, .(total = sum(odist)), by = type]
+  cli::cli_alert_info(
+    "Type proportions: N={round(type_totals[type=='N', total]*100, 1)}%, I={round(type_totals[type=='I', total]*100, 1)}%, V={round(type_totals[type=='V', total]*100, 1)}%"
+  )
+
+  avg_oi
+}
+
+# =============================================================================
+# TYPE SPLIT FUNCTIONS (Legacy - kept for backward compatibility)
+# =============================================================================
+
+#' Get type split proportions by age and sex (Legacy)
+#'
+#' @description
+#' Returns the proportion of O immigrants in each type category.
+#' NOTE: For TR2025-compliant implementation, use get_type_splits_interpolated().
 #'
 #' @param reference_year Integer: year for type splits (default: 2019)
 #' @param nonimmigrant_stock data.table with DHS nonimmigrant stock by age/sex
