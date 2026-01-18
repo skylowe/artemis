@@ -19,8 +19,47 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 6A - Data Acquisition (COMPLETE)
-**Subprocess Status:** IN PROGRESS
+**Current Phase:** Phase 6B - NCHS Historical Data (COMPLETE)
+**Subprocess Status:** IN PROGRESS - Ready for Phase 6C (MarGrid Development)
+
+### Phase 6B Results (COMPLETE)
+
+**1978-1988 Data (Items 4-5):** ✓ COMPLETE
+- Downloaded marr78.zip through marr88.zip from NBER archive (11 files, ~1.2GB total)
+- Note: TR2025 mentions excluding 1980, but 1980 data IS available from NBER
+- Parsed fixed-width format (140-char records) using marr88.pdf layout
+- Total records: 8,236,466 across 11 years
+- 792 age group combinations (9×9 groups × 11 years - some zero)
+- Cached to `data/cache/nber_marriage/nchs_mra_marriages_1978_1988.rds`
+- Yearly totals:
+  - 1978: 1,800,325 | 1979: 1,876,315 | 1980: 2,275,711
+  - 1981: 1,918,846 | 1982: 1,944,448 | 1983: 1,921,778
+  - 1984: 1,935,339 | 1985: 1,890,543 | 1986: 1,888,895
+  - 1987: 1,874,243 | 1988: 1,886,657
+
+**1989-1995 Data (Item 6):** ✓ COMPLETE
+- Downloaded cpmarr.zip from NBER archive (1,357,710 records)
+- Parsed fixed-width format (67-char records) using marrlyo.txt layout
+- 498 age group combinations (9×9 groups × 7 years)
+- MRA covers 75.6%-78.7% of U.S. marriages (expected ~80%)
+- Cached to `data/cache/nber_marriage/nchs_mra_marriages_1989_1995.rds`
+
+**Item 8 (Total U.S. marriages, 1989-2022):** ✓ COMPLETE
+- Published NCHS totals hardcoded in `fetch_nchs_us_total_marriages()`
+- Source: CDC/NCHS National Vital Statistics Reports
+
+**Items 9-11 (Prior marital status):** PARTIAL
+- 1989-1995 data available from NBER cpmarr.dat
+- TR2025 requires 1979, 1981-1988 (different file format) - NOW AVAILABLE
+- 367 rows by age group × sex × prior status
+- Cached to `data/cache/nber_marriage/nchs_marriages_by_prior_status_1989_1995.rds`
+
+**Detailed age grids:** ✓ COMPLETE
+- 1989-1995: 20,805 rows with single-year ages (12-94)
+  - Cached to `data/cache/nber_marriage/nchs_mra_marriages_detailed_1989_1995.rds`
+- 1978-1988: Available via `fetch_nchs_mra_marriages_detailed_1978_1988()`
+
+**Key file:** `R/data_acquisition/nchs_marriage.R`
 
 ### Phase 6A Results
 - ACS new marriages fetched for 2007-2022 (2007 extrapolated from 2008, 2020 skipped)
@@ -942,13 +981,20 @@ validate_marriage_type_split <- function(total_rates, opposite_sex, same_sex)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 6B.1 | Research NCHS MRA data availability (1978-1988) | None | Data assessment |
-| [ ] | 6B.2 | Implement NCHS marriage data loader | 6B.1 | nchs_marriage.R |
-| [ ] | 6B.3 | Load/digitize NCHS marriage grids (1978-1988) | 6B.2 | Historical grids |
-| [ ] | 6B.4 | Load NCHS MRA unmarried population | 6B.2 | MRA unmarried |
-| [ ] | 6B.5 | Load NCHS subset data (1989-1995) | 6B.2 | Subset grids |
-| [ ] | 6B.6 | Load NCHS total U.S. marriages (1989-2022) | 6B.2 | Annual totals |
-| [ ] | 6B.7 | Load NCHS marriages by prior marital status | 6B.2 | Status data |
+| [x] | 6B.1 | Research NCHS MRA data availability (1978-1988) | None | NBER data assessed |
+| [x] | 6B.2 | Implement NCHS marriage data loader | 6B.1 | nchs_marriage.R |
+| [x] | 6B.3 | Load/digitize NCHS marriage grids (1978-1988) | 6B.2 | 792 rows (incl. 1980) |
+| [~] | 6B.4 | Load NCHS MRA unmarried population | 6B.2 | Optional: from CPS |
+| [x] | 6B.5 | Load NCHS subset data (1989-1995) | 6B.2 | cpmarr.dat parsed |
+| [x] | 6B.6 | Load NCHS total U.S. marriages (1989-2022) | 6B.2 | Annual totals |
+| [x] | 6B.7 | Load NCHS marriages by prior marital status | 6B.2 | 1978-1988 + 1989-1995 |
+
+**6B Data Source Details:**
+- NBER Marriage and Divorce Data: https://www.nber.org/research/data/marriage-and-divorce-data-1968-1995
+- cpmarr.zip: 1989-1995 combined file (93.7 MB, 1,357,710 records)
+- marr78.zip through marr88.zip: Individual year files (140-char format, 11 files ~1.2GB)
+- Documentation: md_doc.zip contains marrlyo.txt (67-char layout), cpmarr.cbk, marr88.pdf (1978-88 layout)
+- **Note:** TR2025 excludes 1980, but 1980 data IS available from NBER and now included
 
 ### Phase 6C: MarGrid Development
 
