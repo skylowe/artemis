@@ -2399,3 +2399,371 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
 
   result
 }
+
+
+# =============================================================================
+# PHASE 7F: ADR PROJECTION (2023-2099)
+# =============================================================================
+
+#' Project ADR from starting value to ultimate
+#'
+#' @description
+#' Projects the Age-Adjusted Divorce Rate from the starting value
+#' (weighted average of historical years) to the ultimate value
+#' using asymptotic convergence.
+#'
+#' Per TR2025: "This age-adjusted rate is assumed to reach its ultimate
+#' value in the 25th year of the 75-year projection period. The annual
+#' rate of change decreases in absolute value as the ultimate year approaches."
+#'
+#' @param starting_adr Numeric: starting ADR (weighted average of recent years)
+#' @param ultimate_adr Numeric: ultimate ADR (default: 1700 per 100,000)
+#' @param start_year Integer: first projection year (default: 2023)
+#' @param ultimate_year Integer: year when ultimate is reached (default: 2047)
+#' @param end_year Integer: final projection year (default: 2099)
+#' @param convergence_exp Numeric: convergence exponent (default: 2)
+#'   Higher values = more gradual start, faster finish
+#'
+#' @return data.table with columns:
+#'   - year: Calendar year
+#'   - projected_adr: Projected ADR value
+#'   - adr_change: Year-over-year change
+#'
+#' @details
+#' The convergence formula uses:
+#'   ADR(t) = ultimate + (starting - ultimate) × (1 - progress)^exp
+#'
+#' Where progress = (t - start) / (ultimate_year - start)
+#'
+#' This ensures:
+#' - Gradual initial change (rate of change increases early)
+#' - Decreasing rate of change as ultimate approaches
+#' - Exact arrival at ultimate in ultimate_year
+#' - Constant ultimate value thereafter
+#'
+#' @export
+project_adr <- function(starting_adr,
+                        ultimate_adr = DIVORCE_ULTIMATE_ADR,
+                        start_year = 2023,
+                        ultimate_year = 2047,
+                        end_year = 2099,
+                        convergence_exp = 2) {
+
+  checkmate::assert_number(starting_adr, lower = 0)
+  checkmate::assert_number(ultimate_adr, lower = 0)
+  checkmate::assert_integerish(start_year)
+  checkmate::assert_integerish(ultimate_year)
+  checkmate::assert_integerish(end_year)
+  checkmate::assert_number(convergence_exp, lower = 0.1)
+
+  cli::cli_h2("Projecting ADR ({start_year} to {end_year})")
+  cli::cli_alert_info("Starting: {round(starting_adr, 1)}, Ultimate: {ultimate_adr}, Ultimate year: {ultimate_year}")
+
+  years <- start_year:end_year
+  n_convergence <- ultimate_year - start_year
+
+  projected_adr <- sapply(years, function(yr) {
+    if (yr >= ultimate_year) {
+      # At or past ultimate year: hold at ultimate
+      return(ultimate_adr)
+    }
+
+    # Calculate progress toward ultimate (0 to 1)
+    progress <- (yr - start_year) / n_convergence
+
+    # Apply convergence formula with decreasing rate of change
+    # Uses complement: remaining_gap * (1 - progress)^exp
+    # Higher exponent = more gradual start, faster finish
+    remaining_factor <- (1 - progress)^convergence_exp
+
+    # Interpolation with non-linear progress
+    adr <- ultimate_adr + (starting_adr - ultimate_adr) * remaining_factor
+
+    adr
+  })
+
+  result <- data.table::data.table(
+    year = years,
+    projected_adr = projected_adr
+  )
+
+  # Add rate of change for validation
+  result[, adr_change := c(NA, diff(projected_adr))]
+  result[, pct_change := c(NA, diff(projected_adr) / head(projected_adr, -1) * 100)]
+
+  cli::cli_alert_success(
+    "Projected {length(years)} years, ADR: {round(starting_adr, 1)} -> {ultimate_adr}"
+  )
+
+  result
+}
+
+
+#' Scale DivGrid to target ADR
+#'
+#' @description
+#' Scales all rates in a DivGrid proportionally so that the resulting
+#' ADR matches a target value.
+#'
+#' Per TR2025: "To obtain age-specific rates for use in the projections,
+#' the age-of-husband-age-of-wife-specific rates in DivGrid are adjusted
+#' proportionally so as to produce the age-adjusted rate assumed for
+#' that particular year."
+#'
+#' @param divgrid Matrix: divorce rate grid (87x87)
+#' @param target_adr Numeric: target ADR value
+#' @param standard_pop Matrix: standard population grid for ADR calculation
+#'
+#' @return Scaled DivGrid matrix with attributes:
+#'   - scale_factor: applied scaling factor
+#'   - target_adr: target ADR value
+#'   - achieved_adr: actual ADR after scaling
+#'
+#' @export
+scale_divgrid_to_target_adr <- function(divgrid, target_adr, standard_pop) {
+  checkmate::assert_matrix(divgrid, mode = "numeric")
+  checkmate::assert_number(target_adr, lower = 0)
+  checkmate::assert_matrix(standard_pop, mode = "numeric")
+
+  # Calculate current ADR
+  current_adr <- calculate_adr(divgrid, standard_pop)
+
+  if (current_adr == 0) {
+    cli::cli_warn("Current ADR is 0, cannot scale")
+    return(divgrid)
+  }
+
+  # Calculate scale factor
+  scale_factor <- target_adr / current_adr
+
+  # Apply scaling
+  scaled_grid <- divgrid * scale_factor
+
+  # Verify
+  achieved_adr <- calculate_adr(scaled_grid, standard_pop)
+
+  attr(scaled_grid, "scale_factor") <- scale_factor
+  attr(scaled_grid, "target_adr") <- target_adr
+  attr(scaled_grid, "achieved_adr") <- achieved_adr
+
+  scaled_grid
+}
+
+
+#' Validate ADR projection
+#'
+#' @description
+#' Validates the projected ADR series against expected criteria:
+#' - Monotonic progression (increasing or decreasing toward ultimate)
+#' - Reaches ultimate at ultimate_year
+#' - Rate of change decreases as ultimate approaches
+#' - Values stay within reasonable bounds
+#'
+#' @param adr_projection data.table from project_adr()
+#' @param starting_adr Original starting ADR
+#' @param ultimate_adr Target ultimate ADR
+#' @param ultimate_year Year ultimate should be reached
+#'
+#' @return List with validation results
+#'
+#' @export
+validate_adr_projection <- function(adr_projection,
+                                    starting_adr,
+                                    ultimate_adr = DIVORCE_ULTIMATE_ADR,
+                                    ultimate_year = 2047) {
+
+  cli::cli_h2("ADR Projection Validation")
+
+  checks <- list()
+  n_pass <- 0
+  n_total <- 0
+
+  # Check 1: Projection has expected years
+  n_total <- n_total + 1
+  expected_years <- length(2023:2099)
+  actual_years <- nrow(adr_projection)
+  if (actual_years == expected_years) {
+    cli::cli_alert_success("Year count: {actual_years} (expected {expected_years})")
+    checks$year_count <- TRUE
+    n_pass <- n_pass + 1
+  } else {
+    cli::cli_alert_danger("Year count: {actual_years} (expected {expected_years})")
+    checks$year_count <- FALSE
+  }
+
+  # Check 2: Reaches ultimate at ultimate_year
+  n_total <- n_total + 1
+  adr_at_ultimate <- adr_projection[year == ultimate_year, projected_adr]
+  tolerance <- 0.01  # 1% tolerance
+  if (abs(adr_at_ultimate - ultimate_adr) / ultimate_adr < tolerance) {
+    cli::cli_alert_success("Ultimate ADR at year {ultimate_year}: {round(adr_at_ultimate, 1)} (target: {ultimate_adr})")
+    checks$reaches_ultimate <- TRUE
+    n_pass <- n_pass + 1
+  } else {
+    cli::cli_alert_danger("Ultimate ADR at year {ultimate_year}: {round(adr_at_ultimate, 1)} (target: {ultimate_adr})")
+    checks$reaches_ultimate <- FALSE
+  }
+
+  # Check 3: Holds at ultimate after ultimate_year
+  n_total <- n_total + 1
+  post_ultimate <- adr_projection[year > ultimate_year, projected_adr]
+  if (all(abs(post_ultimate - ultimate_adr) < 0.001)) {
+    cli::cli_alert_success("ADR constant at ultimate after {ultimate_year}")
+    checks$holds_ultimate <- TRUE
+    n_pass <- n_pass + 1
+  } else {
+    cli::cli_alert_danger("ADR varies after ultimate year")
+    checks$holds_ultimate <- FALSE
+  }
+
+  # Check 4: Monotonic progression
+  n_total <- n_total + 1
+  pre_ultimate <- adr_projection[year <= ultimate_year, projected_adr]
+  if (starting_adr < ultimate_adr) {
+    # Increasing trajectory
+    is_monotonic <- all(diff(pre_ultimate) >= -0.001)
+    direction <- "increasing"
+  } else {
+    # Decreasing trajectory
+    is_monotonic <- all(diff(pre_ultimate) <= 0.001)
+    direction <- "decreasing"
+  }
+  if (is_monotonic) {
+    cli::cli_alert_success("Monotonic {direction} progression toward ultimate")
+    checks$monotonic <- TRUE
+    n_pass <- n_pass + 1
+  } else {
+    cli::cli_alert_danger("Non-monotonic progression detected")
+    checks$monotonic <- FALSE
+  }
+
+  # Check 5: Rate of change decreases (in absolute value) as ultimate approaches
+  n_total <- n_total + 1
+  changes <- adr_projection[year > 2023 & year <= ultimate_year, adr_change]
+  abs_changes <- abs(changes)
+  # Check that later changes are smaller (use average of first/last halves)
+  half_n <- length(abs_changes) %/% 2
+  first_half_avg <- mean(abs_changes[1:half_n])
+  second_half_avg <- mean(abs_changes[(half_n + 1):length(abs_changes)])
+  if (first_half_avg > second_half_avg) {
+    cli::cli_alert_success("Rate of change decreases as ultimate approaches ({round(first_half_avg, 2)} -> {round(second_half_avg, 2)})")
+    checks$decreasing_rate <- TRUE
+    n_pass <- n_pass + 1
+  } else {
+    cli::cli_alert_warning("Rate of change not decreasing as expected ({round(first_half_avg, 2)} -> {round(second_half_avg, 2)})")
+    checks$decreasing_rate <- FALSE
+  }
+
+  # Check 6: Values within reasonable bounds
+  n_total <- n_total + 1
+  min_adr <- min(adr_projection$projected_adr)
+  max_adr <- max(adr_projection$projected_adr)
+  if (min_adr >= 100 && max_adr <= 10000) {
+    cli::cli_alert_success("ADR range: {round(min_adr, 1)} - {round(max_adr, 1)} (within 100-10,000)")
+    checks$reasonable_bounds <- TRUE
+    n_pass <- n_pass + 1
+  } else {
+    cli::cli_alert_danger("ADR range: {round(min_adr, 1)} - {round(max_adr, 1)} (outside expected bounds)")
+    checks$reasonable_bounds <- FALSE
+  }
+
+  # Summary
+  cli::cli_alert_info("Passed: {n_pass}/{n_total}")
+
+  list(
+    passed = n_pass == n_total,
+    n_pass = n_pass,
+    n_total = n_total,
+    checks = checks
+  )
+}
+
+
+#' Get projected ADR series
+#'
+#' @description
+#' Main entry point for Phase 7F. Calculates and caches the projected
+#' ADR series from 2023 to 2099.
+#'
+#' @param cache_dir Cache directory path
+#' @param force Logical: force recalculation (default: FALSE)
+#' @param ultimate_adr Numeric: ultimate ADR (default from config or 1700)
+#' @param ultimate_year Integer: year to reach ultimate (default: 2047)
+#'
+#' @return data.table with projected ADR series
+#'
+#' @export
+get_projected_adr <- function(cache_dir = here::here("data/cache"),
+                              force = FALSE,
+                              ultimate_adr = NULL,
+                              ultimate_year = 2047) {
+
+  cache_file <- file.path(cache_dir, "divorce", "projected_adr_2023_2099.rds")
+
+  # Return cached if available
+  if (file.exists(cache_file) && !force) {
+    cli::cli_alert_success("Loading cached projected ADR series")
+    return(readRDS(cache_file))
+  }
+
+  cli::cli_h1("Phase 7F: ADR Projection (2023-2099)")
+
+  # Load config if available
+  if (is.null(ultimate_adr)) {
+    config_path <- here::here("config/assumptions/tr2025.yaml")
+    if (file.exists(config_path)) {
+      config <- yaml::read_yaml(config_path)
+      ultimate_adr <- if (!is.null(config$divorce$ultimate_adr)) {
+        config$divorce$ultimate_adr
+      } else {
+        DIVORCE_ULTIMATE_ADR
+      }
+      ultimate_year <- if (!is.null(config$divorce$ultimate_year)) {
+        config$divorce$ultimate_year
+      } else {
+        2047
+      }
+      cli::cli_alert_info("Loaded config: ultimate_adr = {ultimate_adr}, ultimate_year = {ultimate_year}")
+    } else {
+      ultimate_adr <- DIVORCE_ULTIMATE_ADR
+      cli::cli_alert_info("Using default: ultimate_adr = {ultimate_adr}")
+    }
+  }
+
+  # Get historical data to calculate starting ADR
+  historical_data <- get_historical_divorce_data(cache_dir, force = FALSE)
+  starting_adr <- historical_data$starting_adr
+
+  cli::cli_alert_info("Starting ADR (from historical): {round(starting_adr, 1)}")
+
+  # Project ADR
+  adr_projection <- project_adr(
+    starting_adr = starting_adr,
+    ultimate_adr = ultimate_adr,
+    start_year = 2023,
+    ultimate_year = ultimate_year,
+    end_year = 2099
+  )
+
+  # Validate
+  validation <- validate_adr_projection(
+    adr_projection,
+    starting_adr = starting_adr,
+    ultimate_adr = ultimate_adr,
+    ultimate_year = ultimate_year
+  )
+
+  # Add metadata
+  attr(adr_projection, "starting_adr") <- starting_adr
+  attr(adr_projection, "ultimate_adr") <- ultimate_adr
+  attr(adr_projection, "ultimate_year") <- ultimate_year
+  attr(adr_projection, "validation") <- validation
+  attr(adr_projection, "created") <- Sys.time()
+
+  # Cache result
+  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+  saveRDS(adr_projection, cache_file)
+  cli::cli_alert_success("Cached projected ADR series")
+
+  adr_projection
+}

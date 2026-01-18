@@ -298,6 +298,40 @@ marriage:
   # Standard population year for AMR calculation
   standard_population_year: 2010
 
+# Divorce Configuration (TR2025 Intermediate Assumptions)
+# =========================================================================
+# Source: SSA 2025 Long-Range Model Documentation, Section 1.7
+
+divorce:
+  # Ultimate age-adjusted divorce rate (ADR)
+  # Per 100,000 married couples
+  ultimate_adr: 1700
+
+  # Year when ultimate ADR is reached (year 25 from first projection year)
+  # 2023 + 24 = 2047
+  ultimate_year: 2047
+
+  # Starting rate calculation (weighted average of historical years)
+  starting_rate_years: 5  # Last 5 years of historical data
+  starting_rate_weights: "linear"  # More recent years weighted higher
+
+  # Age range for DivGrid
+  min_age: 14
+  max_age: 100  # 100+ grouped into single age
+
+  # Historical data periods
+  historical_periods:
+    detailed_nchs_start: 1979
+    detailed_nchs_end: 1988
+    totals_start: 1989
+    totals_end: 2022
+    acs_adjustment_start: 2008
+    acs_adjustment_end: 2022
+
+  # Standard population for ADR calculation
+  # Per TR2025: "averaged 2009 and 2010 December 31 marriage grids"
+  standard_population_years: [2009, 2010]
+
 # Data source configuration
 data_sources:
   historical_birth_data:

@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 7E - COMPLETE
-**Subprocess Status:** IN PROGRESS (Phase 7F next)
+**Current Phase:** Phase 7F - COMPLETE
+**Subprocess Status:** IN PROGRESS (Phase 7G next)
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
@@ -998,10 +998,39 @@ We use ACS PUMS divorce data (2018-2022) instead, which is:
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 7F.1 | Implement ADR projection function | None | project_adr() |
-| [ ] | 7F.2 | Calculate starting ADR (5-year weighted average) | 7E.3 | Starting ADR |
-| [ ] | 7F.3 | Project ADR to ultimate (year 25) | 7F.1, 7F.2 | Projected ADR |
-| [ ] | 7F.4 | Validate ADR projection | 7F.3 | Validation report |
+| [x] | 7F.1 | Implement ADR projection function | None | project_adr() |
+| [x] | 7F.2 | Calculate starting ADR (5-year weighted average) | 7E.3 | Starting ADR |
+| [x] | 7F.3 | Project ADR to ultimate (year 25) | 7F.1, 7F.2 | Projected ADR |
+| [x] | 7F.4 | Validate ADR projection | 7F.3 | Validation report |
+
+**Phase 7F Notes (January 18, 2026):**
+- Implemented TR2025 Section 1.7.c ADR projection methodology
+- Key functions added to `R/demography/divorce.R`:
+  - `project_adr()`: Projects ADR from starting to ultimate using asymptotic convergence
+  - `scale_divgrid_to_target_adr()`: Scales DivGrid proportionally to match target ADR
+  - `validate_adr_projection()`: Validates projection results (6 checks)
+  - `get_projected_adr()`: Main entry point with caching and config loading
+- Added divorce configuration to `config/assumptions/tr2025.yaml`:
+  - `ultimate_adr: 1700` (per 100,000 married couples)
+  - `ultimate_year: 2047` (year 25 of projection)
+  - `starting_rate_years: 5` (weighted average of historical)
+- Convergence formula per TR2025:
+  - "The annual rate of change decreases in absolute value as ultimate year approaches"
+  - ADR(t) = ultimate + (starting - ultimate) × (1 - progress)^2
+  - Ensures gradual initial change, decreasing rate near ultimate
+- Key results:
+  - Starting ADR: 1,119 per 100,000 (from 2018-2022 weighted average)
+  - Ultimate ADR: 1,700 per 100,000 (reached in 2047)
+  - Total ADR increase: 581 points over 24 years
+  - Rate of change: decreases from ~36 to ~12 per year as ultimate approaches
+- Validation: 6/6 checks pass
+  - Year count: 77 (2023-2099)
+  - Ultimate reached at 2047: exact 1700
+  - Holds constant after ultimate: yes
+  - Monotonic increasing: yes
+  - Decreasing rate of change: yes (36.31 → 12.1)
+  - Values within bounds: yes (1119-1700)
+- Cache: `data/cache/divorce/projected_adr_2023_2099.rds`
 
 ### Phase 7G: Divorce Rate Projection
 
