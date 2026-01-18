@@ -60,10 +60,17 @@ calculate_o_immigration <- function(acs_new_arrivals,
   acs_filtered <- acs_corrected[year %in% years]
   lpr_filtered <- lpr_single_age[year %in% years]
 
+  # Determine the LPR count column name (could be 'count', 'new_arrivals', or 'immigration')
+  lpr_count_col <- intersect(c("new_arrivals", "count", "immigration"), names(lpr_filtered))[1]
+  if (is.na(lpr_count_col)) {
+    cli::cli_abort("LPR data must have column 'new_arrivals', 'count', or 'immigration'")
+  }
+
   # Merge and calculate O immigration
+  lpr_for_merge <- lpr_filtered[, .(year, age, sex, lpr_new = get(lpr_count_col))]
   merged <- merge(
     acs_filtered[, .(year, age, sex, acs_arrivals = adjusted_population)],
-    lpr_filtered[, .(year, age, sex, lpr_new = count)],
+    lpr_for_merge,
     by = c("year", "age", "sex"),
     all.x = TRUE
   )

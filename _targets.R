@@ -607,12 +607,27 @@ list(
   ),
 
   # Step 6: Split LPR into NEW and AOS
+  # Method controlled by config: "assumption" (default, uses TR2025 V.A2 values)
+  # or "ratio" (uses historical DHS ratio)
   tar_target(
     lpr_new_aos_split,
-    split_lpr_new_aos(
-      lpr_immigration = lpr_immigration_projected,
-      new_ratio = new_aos_ratio$new_ratio
-    )
+    {
+      method <- config_assumptions$immigration$lpr$new_aos_split_method
+      if (is.null(method)) method <- "assumption"
+      if (method == "assumption") {
+        split_lpr_new_aos(
+          lpr_immigration = lpr_immigration_projected,
+          assumptions = lpr_assumptions,
+          method = "assumption"
+        )
+      } else {
+        split_lpr_new_aos(
+          lpr_immigration = lpr_immigration_projected,
+          new_ratio = new_aos_ratio$new_ratio,
+          method = "ratio"
+        )
+      }
+    }
   ),
 
   # Extract NEW arrivals
@@ -779,6 +794,228 @@ list(
         comparison = comparison
       )
     }
+  ),
+
+  # ===========================================================================
+  # DATA ACQUISITION TARGETS - O IMMIGRATION (Phase 5)
+  # ===========================================================================
+  # Data for temporary/unlawfully present immigration projection
+
+  # DHS Nonimmigrant stock data (3 reference dates)
+  tar_target(
+    dhs_nonimmigrant_stock,
+    {
+      cache_file <- "data/cache/dhs/nonimmigrant_stock_age_sex.rds"
+      if (file.exists(cache_file)) {
+        readRDS(cache_file)
+      } else {
+        fetch_dhs_nonimmigrant_stock()
+      }
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # DHS Beginning-of-year nonimmigrant totals
+  tar_target(
+    dhs_boy_nonimmigrants,
+    {
+      cache_file <- "data/cache/dhs/boy_nonimmigrants.rds"
+      if (file.exists(cache_file)) {
+        readRDS(cache_file)
+      } else {
+        fetch_dhs_boy_nonimmigrants()
+      }
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # DHS DACA grants and stock
+  tar_target(
+    dhs_daca_data,
+    {
+      grants_file <- "data/cache/dhs/daca_grants.rds"
+      stock_file <- "data/cache/dhs/daca_stock.rds"
+      if (file.exists(grants_file) && file.exists(stock_file)) {
+        list(
+          grants = readRDS(grants_file),
+          stock = readRDS(stock_file)
+        )
+      } else {
+        list(
+          grants = fetch_dhs_daca_grants(),
+          stock = fetch_dhs_daca_stock()
+        )
+      }
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # ACS Foreign-born new arrivals (2006-2023)
+  # Load cached foreign-born flows data
+  tar_target(
+    acs_foreign_born_flows,
+    {
+      cache_dir <- "data/cache/acs_pums"
+      years <- c(2006:2019, 2021:2023)  # Skip 2020 (COVID data issues)
+
+      data.table::rbindlist(lapply(years, function(yr) {
+        cache_file <- file.path(cache_dir, sprintf("foreign_born_flows_%d.rds", yr))
+        if (file.exists(cache_file)) {
+          readRDS(cache_file)
+        } else {
+          NULL
+        }
+      }), fill = TRUE)
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # Calculate new arrivals from foreign-born flows
+  tar_target(
+    acs_foreign_born_arrivals,
+    {
+      arrivals <- calculate_acs_new_arrivals(
+        foreign_born_flows = acs_foreign_born_flows,
+        entry_window = 1
+      )
+      # Aggregate to remove is_cuban dimension (sum Cuban and non-Cuban)
+      arrivals[, .(population = sum(population)), by = .(year, age, sex)]
+    }
+  ),
+
+  # ACS undercount factors for O immigration
+  tar_target(
+    acs_undercount_factors,
+    calculate_acs_undercount_factors(
+      years = 2017:2019,
+      use_fallback = TRUE  # Use DHS hardcoded factors
+    )
+  ),
+
+  # ===========================================================================
+  # O IMMIGRATION SUBPROCESS TARGETS (Phase 5)
+  # ===========================================================================
+  # Implements Equations 1.5.1 - 1.5.4 from TR2025 Documentation
+  # Produces: OI (O Immigration), OE (O Emigration), NO (Net O), OP (O Population)
+
+  # Step 1: Calculate O immigration distribution (ODIST)
+  # From ACS new arrivals minus LPR NEW arrivals
+  tar_target(
+    o_immigration_odist,
+    {
+      # Calculate ODIST from ACS and LPR data
+      calculate_odist(
+        acs_arrivals = acs_foreign_born_arrivals,
+        lpr_new = new_arrivals_projected,
+        reference_years = 2015:2019,
+        dhs_nonimmigrant = dhs_nonimmigrant_stock
+      )
+    }
+  ),
+
+  # Step 2: Get TR2025 O immigration assumptions
+  tar_target(
+    o_immigration_assumptions,
+    get_tr2025_o_assumptions(
+      years = config_assumptions$metadata$projection_period$start_year:
+              config_assumptions$metadata$projection_period$end_year
+    )
+  ),
+
+  # Step 3: Project O immigration (Equation 1.5.1)
+  # OI = TO × ODIST
+  tar_target(
+    o_immigration_projected,
+    project_o_immigration(
+      assumptions = o_immigration_assumptions,
+      odist = o_immigration_odist,
+      projection_years = config_assumptions$metadata$projection_period$start_year:
+                         config_assumptions$metadata$projection_period$end_year
+    )
+  ),
+
+  # Step 4: Calculate departure rates for O emigration
+  tar_target(
+    o_departure_rates,
+    calculate_simplified_departure_rates(
+      config = config_assumptions
+    )
+  ),
+
+  # Step 5: Run full O immigration projection (Equations 1.5.1-1.5.4)
+  # This orchestrates OI, OE, NO, and OP calculations
+  tar_target(
+    o_immigration_projection,
+    run_full_o_projection(
+      historical_o_pop = historical_temp_unlawful,
+      acs_new_arrivals = acs_foreign_born_arrivals,
+      lpr_new_arrivals = new_arrivals_projected,
+      lpr_aos = aos_projected,
+      mortality_qx = mortality_qx_historical,
+      undercount_factors = acs_undercount_factors,
+      projection_years = config_assumptions$metadata$projection_period$start_year:
+                         config_assumptions$metadata$projection_period$end_year,
+      config = config_assumptions
+    )
+  ),
+
+  # Extract individual outputs from projection
+  tar_target(
+    o_immigration_oi,
+    o_immigration_projection$o_immigration
+  ),
+
+  tar_target(
+    o_emigration_oe,
+    o_immigration_projection$o_emigration
+  ),
+
+  tar_target(
+    net_o_immigration,
+    o_immigration_projection$net_o
+  ),
+
+  tar_target(
+    o_population_stock,
+    o_immigration_projection$o_population
+  ),
+
+  # ===========================================================================
+  # DACA PROJECTION TARGETS (Phase 5F)
+  # ===========================================================================
+
+  # Run DACA population projection
+  tar_target(
+    daca_projection,
+    run_daca_projection(
+      acs_2012_data = NULL,  # Use internal estimates
+      dhs_stock = dhs_daca_data$stock,
+      dhs_grants = dhs_daca_data$grants,
+      projection_years = config_assumptions$metadata$projection_period$start_year:
+                         config_assumptions$metadata$projection_period$end_year,
+      config = config_assumptions
+    )
+  ),
+
+  # Extract DACA population
+  tar_target(
+    daca_population_projected,
+    daca_projection$daca_population
+  ),
+
+  # ===========================================================================
+  # O IMMIGRATION VALIDATION TARGETS (Phase 5G)
+  # ===========================================================================
+
+  # Comprehensive validation of O immigration outputs
+  tar_target(
+    o_immigration_validation,
+    validate_o_immigration_comprehensive(
+      projection = o_immigration_projection,
+      daca_projection = daca_projection,
+      tolerance_strict = 0.001,
+      tolerance_relaxed = 0.15
+    )
   ),
 
   # ===========================================================================

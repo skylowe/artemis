@@ -492,26 +492,98 @@ project_legal_emigration <- function(assumptions, distribution) {
 
 #' Split LPR immigration into NEW and AOS
 #'
+#' Splits total LPR immigration into NEW arrivals and Adjustments of Status (AOS).
+#' AOS represents people transitioning from temporary/unlawful (O) status to LPR.
+#'
 #' @param lpr_immigration Projected LPR by year, age, sex
-#' @param new_ratio Ratio of new arrivals (from DHS)
+#' @param assumptions LPR assumptions with year-specific lpr_new and lpr_aos columns
+#'   (required when method = "assumption")
+#' @param new_ratio Ratio of new arrivals from DHS historical data
+#'   (required when method = "ratio")
+#' @param method Split method: "assumption" uses TR2025 V.A2 year-specific values,
+#'   "ratio" uses single historical ratio for all years. Default: "assumption"
 #' @return list with new_arrivals and aos data.tables
 #' @export
-split_lpr_new_aos <- function(lpr_immigration, new_ratio) {
+split_lpr_new_aos <- function(lpr_immigration,
+                              assumptions = NULL,
+                              new_ratio = NULL,
+                              method = c("assumption", "ratio")) {
+  method <- match.arg(method)
   lpr_immigration <- data.table::as.data.table(lpr_immigration)
 
-  aos_ratio <- 1 - new_ratio
+  if (method == "assumption") {
+    # Use TR2025 V.A2 year-specific values
+    if (is.null(assumptions)) {
+      cli::cli_abort("assumptions required when method = 'assumption'")
+    }
 
-  # Create NEW arrivals
-  new_arrivals <- data.table::copy(lpr_immigration)
-  new_arrivals[, new_arrivals := immigration * new_ratio]
-  new_arrivals[, immigration := NULL]
+    assumptions <- data.table::as.data.table(assumptions)
 
-  # Create AOS
-  aos <- data.table::copy(lpr_immigration)
-  aos[, aos := immigration * aos_ratio]
-  aos[, immigration := NULL]
+    # Calculate year-specific ratios from assumptions
+    year_ratios <- assumptions[, .(
+      year = year,
+      new_ratio = lpr_new / total_lpr,
+      aos_ratio = lpr_aos / total_lpr
+    )]
 
-  cli::cli_alert_info("Split LPR: NEW={round(new_ratio*100, 1)}%, AOS={round(aos_ratio*100, 1)}%")
+    # Merge ratios into immigration data
+    lpr_with_ratios <- merge(
+      lpr_immigration,
+      year_ratios,
+      by = "year",
+      all.x = TRUE
+    )
+
+    # Check for missing years
+    missing_years <- lpr_with_ratios[is.na(new_ratio), unique(year)]
+    if (length(missing_years) > 0) {
+      cli::cli_abort("No assumptions found for years: {paste(missing_years, collapse = ', ')}")
+    }
+
+    # Create NEW arrivals
+    new_arrivals <- data.table::copy(lpr_with_ratios)
+    new_arrivals[, new_arrivals := immigration * new_ratio]
+    new_arrivals[, c("immigration", "new_ratio", "aos_ratio") := NULL]
+
+    # Create AOS
+    aos <- data.table::copy(lpr_with_ratios)
+    aos[, aos := immigration * aos_ratio]
+    aos[, c("immigration", "new_ratio", "aos_ratio") := NULL]
+
+    # Report totals
+    total_new <- sum(new_arrivals$new_arrivals)
+    total_aos <- sum(aos$aos)
+    min_year <- min(lpr_immigration$year)
+    max_year <- max(lpr_immigration$year)
+    cli::cli_alert_info("Split LPR using TR2025 assumptions ({min_year}-{max_year})")
+    cli::cli_alert_info("Total NEW: {format(round(total_new), big.mark = ',')} | Total AOS: {format(round(total_aos), big.mark = ',')}")
+
+    # Sample year validation
+    if (2025 %in% assumptions$year) {
+      aos_2025 <- assumptions[year == 2025, lpr_aos]
+      cli::cli_alert_info("2025 AOS target: {format(aos_2025, big.mark = ',')}")
+    }
+
+  } else {
+    # Use single historical ratio for all years (original method)
+    if (is.null(new_ratio)) {
+      cli::cli_abort("new_ratio required when method = 'ratio'")
+    }
+
+    aos_ratio <- 1 - new_ratio
+
+    # Create NEW arrivals
+    new_arrivals <- data.table::copy(lpr_immigration)
+    new_arrivals[, new_arrivals := immigration * new_ratio]
+    new_arrivals[, immigration := NULL]
+
+    # Create AOS
+    aos <- data.table::copy(lpr_immigration)
+    aos[, aos := immigration * aos_ratio]
+    aos[, immigration := NULL]
+
+    cli::cli_alert_info("Split LPR using historical ratio: NEW={round(new_ratio*100, 1)}%, AOS={round(aos_ratio*100, 1)}%")
+  }
 
   list(
     new_arrivals = new_arrivals,

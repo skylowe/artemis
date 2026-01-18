@@ -215,7 +215,13 @@ immigration:
     distribution_source: "cbo"
     distribution_years: [2021, 2022, 2023, 2024]
 
+    # NEW/AOS split method:
+    # - "assumption": Use TR2025 V.A2 values directly (450K AOS, recommended)
+    # - "ratio": Use historical ratio from DHS data (produces ~533K-616K AOS)
+    new_aos_split_method: "assumption"
+
     # NEW/AOS ratio source and reference years (DHS aggregate data)
+    # Only used when new_aos_split_method = "ratio"
     # Ratio calculated from DHS 2016-2019 (excluding COVID-affected 2020)
     new_aos_ratio_source: "dhs"
     new_aos_ratio_years: [2016, 2017, 2018, 2019]

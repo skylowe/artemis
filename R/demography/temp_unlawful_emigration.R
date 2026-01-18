@@ -544,9 +544,13 @@ adjust_rates_for_recession <- function(rates, recession_factor = 0.85) {
 apply_type_adjustments <- function(base_rates, year, config = NULL) {
   dt <- data.table::copy(base_rates)
 
-  # Get configuration parameters
-  if (is.null(config)) {
-    config <- get_default_rate_config()
+  # Get rate configuration parameters
+  # Check if config has rate parameters, otherwise get defaults
+  # (handles case where YAML config is passed instead of rate config)
+  if (is.null(config) || is.null(config$n_post_2015_multiplier)) {
+    # Either no config passed, or it's a YAML config without rate parameters
+    # Pass the config to get_default_rate_config so it can check for departure_rates section
+    config <- get_default_rate_config(config)
   }
 
   # -------------------------------------------------------------------------
@@ -559,6 +563,9 @@ apply_type_adjustments <- function(base_rates, year, config = NULL) {
   # -------------------------------------------------------------------------
   # Type-specific adjustments
   # -------------------------------------------------------------------------
+
+  # Initialize rate column with base rate
+  dt[, rate := base_rate]
 
   # NEVER-AUTHORIZED (N)
   # - Recent arrivals (proxy: ages 18-35) get 2× rate
@@ -673,8 +680,9 @@ get_default_rate_config <- function(config = NULL) {
 #'
 #' @export
 apply_daca_rate_adjustment <- function(rates, daca_eligible = NULL, config = NULL) {
-  if (is.null(config)) {
-    config <- get_default_rate_config()
+  # Get rate configuration parameters (handles YAML config case)
+  if (is.null(config) || is.null(config$daca_rate_reduction)) {
+    config <- get_default_rate_config(config)
   }
 
   dt <- data.table::copy(rates)
@@ -686,8 +694,10 @@ apply_daca_rate_adjustment <- function(rates, daca_eligible = NULL, config = NUL
 
     # DACA eligibility: ages roughly 15-40 (born after June 15, 1981)
     # As of 2024, this means ages up to about 43
-    dt[type %in% c("N", "V") & age >= 15 & age <= 43,
-       rate := rate * daca_reduction]
+    daca_rows <- dt[, which(type %in% c("N", "V") & age >= 15 & age <= 43)]
+    if (length(daca_rows) > 0) {
+      dt[daca_rows, rate := rate * daca_reduction]
+    }
   } else {
     # Use provided DACA-eligible population
     # Merge and apply reduction where eligible
@@ -696,8 +706,10 @@ apply_daca_rate_adjustment <- function(rates, daca_eligible = NULL, config = NUL
     dt[is.na(daca_pct), daca_pct := 0]
 
     # Weighted average rate: (1 - daca_pct) * rate + daca_pct * rate * reduction
-    dt[type %in% c("N", "V"),
-       rate := rate * (1 - daca_pct + daca_pct * config$daca_rate_reduction)]
+    nv_rows <- dt[, which(type %in% c("N", "V"))]
+    if (length(nv_rows) > 0) {
+      dt[nv_rows, rate := rate * (1 - daca_pct + daca_pct * config$daca_rate_reduction)]
+    }
 
     dt[, daca_pct := NULL]
   }
@@ -873,8 +885,12 @@ add_new_arrivals_with_cohort <- function(o_population, o_immigration, year) {
   # Mark new arrivals
   # Type N arrivals enter as "recent" (subject to 2× rate)
   # Types I and V enter as "non_recent" (don't get 2× rate per TR2025)
-  imm[type == "N", arrival_status := "recent"]
-  imm[type != "N", arrival_status := "non_recent"]
+  # Initialize column first to avoid zero-length assignment issues
+  imm[, arrival_status := "non_recent"]
+  n_rows <- imm[, which(type == "N")]
+  if (length(n_rows) > 0) {
+    imm[n_rows, arrival_status := "recent"]
+  }
 
   # Add year if not present
   if (!"year" %in% names(imm)) {
@@ -936,8 +952,10 @@ transition_recent_to_non_recent <- function(o_population, recent_threshold = 5) 
   transitioning[, arrival_status := "non_recent"]
 
   # Reduce recent population
-  dt[type == "N" & arrival_status == "recent",
-     population := population * (1 - transition_rate)]
+  recent_rows <- dt[, which(type == "N" & arrival_status == "recent")]
+  if (length(recent_rows) > 0) {
+    dt[recent_rows, population := population * (1 - transition_rate)]
+  }
 
   # Add transitioning to non-recent
   result <- data.table::rbindlist(list(dt, transitioning), fill = TRUE)
@@ -974,8 +992,9 @@ calculate_emigration_with_cohorts <- function(o_population,
                                                base_rates,
                                                year,
                                                config = NULL) {
-  if (is.null(config)) {
-    config <- get_default_rate_config()
+  # Get rate configuration parameters (handles YAML config case)
+  if (is.null(config) || is.null(config$n_post_2015_multiplier)) {
+    config <- get_default_rate_config(config)
   }
 
   # First apply standard type adjustments (pre/post 2015, NI transition, etc.)
@@ -998,8 +1017,10 @@ calculate_emigration_with_cohorts <- function(o_population,
 
   # Apply 2× rate multiplier for recent never-authorized
   # Per TR2025: "recent arrivals are exposed to twice the rates"
-  rates_expanded[type == "N" & arrival_status == "recent",
-                 rate := rate * config$n_recent_arrival_multiplier]
+  recent_n_rows <- rates_expanded[, which(type == "N" & arrival_status == "recent")]
+  if (length(recent_n_rows) > 0) {
+    rates_expanded[recent_n_rows, rate := rate * config$n_recent_arrival_multiplier]
+  }
 
   # Merge population with rates
   merged <- merge(
@@ -1048,8 +1069,9 @@ run_o_emigration_with_cohorts <- function(starting_population,
                                            recent_threshold = 5) {
   cli::cli_h2("Running O Emigration Projection (Cohort Tracking)")
 
-  if (is.null(config)) {
-    config <- get_default_rate_config()
+  # Get rate configuration parameters (handles YAML config case)
+  if (is.null(config) || is.null(config$n_post_2015_multiplier)) {
+    config <- get_default_rate_config(config)
   }
 
   # Initialize cohort tracking on starting population
@@ -1156,9 +1178,30 @@ update_o_population_with_cohorts <- function(current_pop, immigration, emigratio
   aged_pop[, population := pmax(0, population - emigration)]
   aged_pop[, emigration := NULL]
 
-  # Subtract AOS (only from I and V)
+  # Subtract AOS (only from I and V - type N cannot directly adjust to LPR)
   if (!is.null(aos) && nrow(aos) > 0) {
-    aos_agg <- aos[, .(aos = sum(aos)), by = .(age, sex, type)]
+    aos_dt <- data.table::copy(aos)
+
+    # If AOS doesn't have type column, distribute to I and V proportionally
+    if (!"type" %in% names(aos_dt)) {
+      # Get proportions of I and V in population at each age/sex
+      iv_pop <- aged_pop[type %in% c("I", "V"),
+                         .(iv_pop = sum(population)),
+                         by = .(age, sex, type)]
+      iv_total <- iv_pop[, .(total = sum(iv_pop)), by = .(age, sex)]
+      iv_pct <- merge(iv_pop, iv_total, by = c("age", "sex"))
+      iv_pct[, pct := iv_pop / total]
+      iv_pct[is.na(pct), pct := 0.5]  # Default to 50/50 if no population
+
+      # Expand AOS to types I and V
+      aos_expanded <- merge(aos_dt, iv_pct[, .(age, sex, type, pct)],
+                           by = c("age", "sex"), allow.cartesian = TRUE)
+      aos_expanded[, aos := aos * pct]
+      aos_expanded[, pct := NULL]
+      aos_dt <- aos_expanded
+    }
+
+    aos_agg <- aos_dt[, .(aos = sum(aos)), by = .(age, sex, type)]
     aged_pop <- merge(aged_pop, aos_agg,
                       by = c("age", "sex", "type"),
                       all.x = TRUE)

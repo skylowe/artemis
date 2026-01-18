@@ -4,9 +4,9 @@
 R-based replication of the SSA Office of the Chief Actuary's long-range OASDI projection model. Uses `{targets}` for pipeline orchestration and `{renv}` for dependency management.
 
 ## Current Status
-**Phase:** 5 - Temporary/Unlawfully Present Immigration Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 5G - Validation (January 18, 2026)
-**Current Step:** Phase 5H - Targets Integration
+**Phase:** 5 - Temporary/Unlawfully Present Immigration Subprocess (COMPLETE)
+**Most Recent Completion:** Phase 5H - Targets Integration (January 18, 2026)
+**Next Step:** Phase 6 - Population Projection
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -58,8 +58,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - **Key files:** `R/demography/historical_population.R`, `historical_marital_status.R`, `historical_temp_unlawful.R`, `historical_civilian_noninst.R`
 - **Pipeline targets:** `historical_population`, `historical_population_marital`, `historical_temp_unlawful`, `historical_civilian_noninst`
 
-### Temp/Unlawfully Present Immigration Subprocess Status (IN PROGRESS)
-- **Purpose:** Project non-LPR immigration (nonimmigrants, unauthorized, visa-overstayers) for 2023-2099
+### Temp/Unlawfully Present Immigration Subprocess Status (COMPLETE)
+- **Purpose:** Project non-LPR immigration (nonimmigrants, unauthorized, visa-overstayers) for 2025-2099
 - **Key Outputs:**
   - OI^z_{x,s,t} - O immigration by age/sex/type (Eq 1.5.1)
   - OE^z_{x,s,t} - O emigration by age/sex/type (Eq 1.5.2)
@@ -67,8 +67,7 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - OP^z_{x,s,t} - O population stock (Eq 1.5.4)
   - DACA population by age/sex
 - **TR2025 Assumptions:** Ultimate 1,350,000/year starting 2026
-- **Current Phase:** 5H - Targets Integration
-- **Completed Phases:** 5A (DHS Data), 5B (ACS Data), 5C (Distribution), 5D (Departure Rates), 5E (Core Projection), 5F (DACA Projection), 5G (Validation)
+- **Completed Phases:** 5A-5H (all complete)
 - **Key files:**
   - `R/data_acquisition/dhs_nonimmigrant.R` - Nonimmigrant stock/admissions
   - `R/data_acquisition/dhs_daca.R` - DACA grants and stock
@@ -78,6 +77,29 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - `R/demography/temp_unlawful_stock.R` - Net O, population stock, main entry point
   - `R/demography/daca_projection.R` - DACA eligibility, attainment, and population projection
   - `R/validation/validate_o_immigration.R` - Comprehensive O immigration validation
+- **Pipeline targets:** `o_immigration_projection`, `daca_projection`, `o_immigration_validation`
+
+**AOS Fix (January 18, 2026):**
+- Fixed NEW/AOS split to use TR2025 V.A2 assumption values instead of historical ratio
+- Previous bug: Calculated AOS from DHS 2016-2019 ratio (~50.8% AOS) producing 533K-616K AOS
+- TR2025 expects: Fixed 450K AOS regardless of total LPR
+- Impact: Net O improved from 20-45% error to -2.2% average error
+- Configuration option `new_aos_split_method` in `config/assumptions/tr2025.yaml`:
+  - `"assumption"` (default): Uses TR2025 V.A2 values (450K AOS)
+  - `"ratio"`: Uses historical DHS ratio (for backward compatibility)
+- Modified files: `R/demography/lpr_immigration.R`, `_targets.R`, `config/assumptions/tr2025.yaml`
+
+**Phase 5H Implementation (January 18, 2026):**
+- All O immigration targets integrated into `_targets.R` pipeline
+- Data acquisition targets: `dhs_nonimmigrant_stock`, `dhs_daca_data`, `acs_foreign_born_*`
+- Projection targets: `o_immigration_projection` (runs full projection 2025-2099)
+- DACA targets: `daca_projection`, `daca_population_projected`
+- Validation target: `o_immigration_validation`
+- Key results (2025-2099 projection):
+  - O Immigration: 2,000,000 (2025) → 1,350,000 (2026+)
+  - O Emigration: ~304K (2025) → ~601K (2099)
+  - Net O: ~1.25M (2025) → ~299K (2099)
+  - O Population: 12.13M (2025) → 23.28M (2099)
 
 **Phase 5G Implementation (January 18, 2026):**
 - Comprehensive validation module created with 12 validation functions
