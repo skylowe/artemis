@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 7A - Not started
-**Subprocess Status:** PLANNING
+**Current Phase:** Phase 7A - COMPLETE
+**Subprocess Status:** IN PROGRESS (Phase 7B next)
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
@@ -206,13 +206,14 @@ The Divorce subprocess requires **11 distinct data inputs**:
 
 | # | Data | Years | Detail | Status |
 |---|------|-------|--------|--------|
-| 7 | Divorces in DRA by age-of-husband × age-of-wife | 1979-1988 | Single year ages | To implement |
-| 8 | Total divorces in U.S. | 1979-2022 | Annual totals | To implement |
-| 9 | Total divorces in PR and VI | 1988, 1998-2000 | Annual totals | To implement |
+| 7 | Divorces in DRA by age-of-husband × age-of-wife | 1979-1995 | Single year ages | ✓ Complete |
+| 8 | Total divorces in U.S. | 1979-2022 | Annual totals | ✓ Complete |
+| 9 | Total divorces in PR and VI | 1988, 1998-2000 | Annual totals | ✓ Complete (limited) |
 
 **NCHS Notes:**
-- DRA coverage is only ~48% of U.S. divorces (vs ~80% for MRA)
-- Detailed age data NOT available after 1988
+- DRA coverage: 42.6% (1979-1988) and 48.9% (1989-1995) of U.S. divorces
+- Detailed age data available through 1995 from NBER archive
+- Weight field at position 40-41 in NBER 117-char format (not position 8-9)
 - From 1992+, total U.S. divorces derived from rate × population
 
 ### 3.5 State Divorce Data
@@ -851,12 +852,21 @@ validate_divorce_comprehensive <- function(divorce_projection, config)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 7A.1 | Research NCHS DRA data availability (1979-1988) | None | Data source assessment |
-| [ ] | 7A.2 | Implement NCHS divorce data loader | 7A.1 | nchs_divorce.R |
-| [ ] | 7A.3 | Load/parse NCHS DRA divorces (1979-1988) | 7A.2 | Detailed divorce grids |
-| [ ] | 7A.4 | Load NCHS total U.S. divorces (1979-2022) | 7A.2 | Annual totals |
-| [ ] | 7A.5 | Load PR/VI divorce data | 7A.2 | PR/VI totals |
-| [ ] | 7A.6 | Validate NCHS data completeness | 7A.3-7A.5 | Validation report |
+| [x] | 7A.1 | Research NCHS DRA data availability (1979-1988) | None | Data source assessment |
+| [x] | 7A.2 | Implement NCHS divorce data loader | 7A.1 | nchs_divorce.R |
+| [x] | 7A.3 | Load/parse NCHS DRA divorces (1979-1988) | 7A.2 | Detailed divorce grids |
+| [x] | 7A.4 | Load NCHS total U.S. divorces (1979-2022) | 7A.2 | Annual totals |
+| [x] | 7A.5 | Load PR/VI divorce data | 7A.2 | PR/VI totals |
+| [x] | 7A.6 | Validate NCHS data completeness | 7A.3-7A.5 | Validation report |
+
+**Phase 7A Notes (January 18, 2026):**
+- NBER divorce files (div79-div88.dat) have 117-character records with different layout than NCHS tape format
+- Weight field is at positions 40-41 (NOT 8-9 which contains state code)
+- 1979-1988 DRA coverage: 42.6% of U.S. total divorces
+- 1989-1995 DRA coverage: 48.9% of U.S. total divorces
+- All 17 years of microdata (1979-1995) successfully parsed
+- U.S. total divorces 1979-2022 hardcoded from NCHS NVSR reports
+- PR/VI data available for 1988, 1998-2000 (limited)
 
 **Expected Data Sources:**
 - NBER archive (similar to marriage data): https://www.nber.org/research/data/marriage-and-divorce-data-1968-1995
