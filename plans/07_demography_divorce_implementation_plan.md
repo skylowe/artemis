@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 7D - COMPLETE
-**Subprocess Status:** IN PROGRESS (Phase 7E next)
+**Current Phase:** Phase 7E - COMPLETE
+**Subprocess Status:** IN PROGRESS (Phase 7F next)
 
 ### Critical Rule: Real Data Only
 **No synthetic or mock data is permitted.** A task cannot be marked as completed until it is working with real data from actual data sources.
@@ -963,10 +963,36 @@ We use ACS PUMS divorce data (2018-2022) instead, which is:
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 7E.1 | Estimate SS area total divorces (1989-2022) | 7A.4, 7A.5, 7B.4 | SS area totals |
-| [ ] | 7E.2 | Scale DivGrid to match totals | 7C.5, 7D.4, 7E.1 | Scaled rates |
-| [ ] | 7E.3 | Calculate historical ADR series | 7E.2, 7B.2 | Historical ADR |
-| [ ] | 7E.4 | Validate historical ADR | 7E.3 | Validation report |
+| [x] | 7E.1 | Estimate SS area total divorces (1989-2022) | 7A.4, 7A.5, 7B.4 | SS area totals |
+| [x] | 7E.2 | Scale DivGrid to match totals | 7C.5, 7D.4, 7E.1 | Scaled rates |
+| [x] | 7E.3 | Calculate historical ADR series | 7E.2, 7B.2 | Historical ADR |
+| [x] | 7E.4 | Validate historical ADR | 7E.3 | Validation report |
+
+**Phase 7E Notes (January 18, 2026):**
+- Implemented TR2025 Section 1.7.c methodology for historical period (1989-2022)
+- Key functions added to `R/demography/divorce.R`:
+  - `estimate_ss_area_divorces()`: Estimates SS area divorces = (US + PR/VI) × SS area factor
+  - `get_pr_vi_divorces_for_year()`: Returns PR/VI divorces using NCHS (1988, 1998-2000) or ACS (2008-2022)
+  - `calculate_expected_divorces()`: Applies DivGrid rates to married population
+  - `scale_divgrid_to_divorces()`: Scales DivGrid proportionally to match target totals
+  - `calculate_historical_year_rates()`: Calculates rates for a single year
+  - `calculate_historical_adr_series()`: Main function for 1989-2022 ADR series
+  - `calculate_starting_adr()`: Weighted average of recent years for projection start
+  - `validate_historical_adr()`: Validation checks
+  - `get_historical_divorce_data()`: Main entry point with caching
+- Key results:
+  - Historical ADR calculated for 34 years (1989-2022)
+  - ADR range: 1033.9 (2020 COVID dip) to 1804.9 (1992 peak)
+  - Clear declining trend: 1989-1995 avg ~1758 → 2018-2022 avg ~1156
+  - Starting ADR (linear weighted 5-year): 1,119.7 per 100,000
+  - Ultimate target: 1,700 per 100,000 (ADR must increase in projections)
+- Validation: 5/5 checks pass
+  - 34/34 years available
+  - ADR range within expected bounds (200-5000)
+  - Max year-to-year change 17.3% (≤30% expected)
+  - Scale factor range 0.421-0.982 (0.3-3.0 expected)
+  - Declining trend confirmed
+- Cache: `data/cache/divorce/historical_adr_1989_2022.rds`
 
 ### Phase 7F: ADR Projection
 
