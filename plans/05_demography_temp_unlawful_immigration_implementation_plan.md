@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 5D - Departure Rate Development (COMPLETE)
-**Next Phase:** Phase 5E - Core Projection Functions
+**Current Phase:** Phase 5E - Core Projection Functions (COMPLETE)
+**Next Phase:** Phase 5F - DACA Projection
 
 ### Phase 5C Progress Notes - UPDATED (January 18, 2026)
 
@@ -142,6 +142,57 @@ has been removed in favor of cohort-tracking approach which is more faithful to 
 **Configuration Options:**
 - `get_default_rate_config(config=)` - Override all rate multipliers
 - Recession factor, type multipliers, DACA reduction, recent_threshold all configurable
+
+### Phase 5E Progress Notes - COMPLETED (January 18, 2026)
+
+**Files Created:**
+- `R/demography/temp_unlawful_stock.R` - Core projection functions for Equations 1.5.3 and 1.5.4
+
+**Functions Implemented (Equation 1.5.3 - Net O Immigration):**
+- `calculate_net_o_immigration()` - NO = OI - OE - AOS per TR2025
+- `distribute_aos_to_types()` - Distributes AOS to types I and V (N cannot directly adjust)
+
+**Functions Implemented (Equation 1.5.4 - O Population Stock):**
+- `project_o_population_stock()` - Full cohort-component stock projection
+- `age_o_population()` - Ages population by one year (x-1 → x)
+- `add_type_dimension()` - Applies type splits to population without types
+- `prepare_aos_for_projection()` - Prepares AOS data with type distribution
+
+**Functions Implemented (Historical Type Splits):**
+- `calculate_historical_type_splits()` - Applies TR2025 interpolation to historical population
+- `calibrate_to_dhs_nonimmigrant()` - Calibrates NI totals to DHS stock
+
+**Functions Implemented (Main Entry Point):**
+- `run_full_o_projection()` - Complete O immigration projection orchestration
+- `calculate_simplified_departure_rates()` - Fallback rates when detailed data unavailable
+- `get_default_odist()` - Default ODIST when ACS/LPR data not available
+- `validate_o_projection()` - Validates projection outputs
+
+**TR2025 Equations Implemented:**
+1. **Equation 1.5.1:** OI = TO × ODIST (O Immigration)
+2. **Equation 1.5.2:** OE = ORate × OP (O Emigration with cohort tracking)
+3. **Equation 1.5.3:** NO = OI - OE - AOS (Net O Immigration)
+4. **Equation 1.5.4:** OP = OP(z-1) + OI - OE - AOS - OD (O Population Stock)
+
+**Key Implementation Details:**
+- Deaths use total population mortality: OD = qx × OP
+- AOS distributed 60% to type I (nonimmigrant), 40% to type V (overstayer)
+- Type N (never-authorized) cannot directly adjust to LPR status
+- Cohort tracking preserves 2× rate for recent never-authorized arrivals
+- Mid-year population exposure used for death calculation
+
+**Test Results (5/5 passed):**
+1. Net O Immigration: NO = OI - OE - AOS calculated correctly
+2. ODIST with Interpolation: Sums to 1.0, type proportions reasonable
+3. O Immigration Projection: Totals match TR assumptions exactly
+4. O Population Stock: Projected for all years, no negative values
+5. Full Integration: All components present, 4/4 validation checks passed
+
+**Validation Checks:**
+- O immigration totals match TR assumptions exactly
+- ODIST sums to 1.0
+- All population values non-negative
+- Type proportions reasonable (N=50%, I=15%, V=35%)
 
 ### Phase 5B Progress Notes - COMPLETED (January 18, 2026)
 
@@ -1172,16 +1223,16 @@ validate_o_distribution <- function(distribution)
 | [x] | 5D.4 | Implement policy-period rate transitions | 5D.3 | temp_unlawful_emigration.R |
 | [x] | 5D.5 | Calculate and validate departure rates | 5D.1-5D.4 | Rate data |
 
-### Phase 5E: Core Projection Functions
+### Phase 5E: Core Projection Functions - COMPLETED (January 18, 2026)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 5E.1 | Implement project_o_immigration (Eq 1.5.1) | 5C | temp_unlawful_immigration.R |
-| [ ] | 5E.2 | Implement project_o_emigration (Eq 1.5.2) | 5D | temp_unlawful_emigration.R |
-| [ ] | 5E.3 | Implement calculate_net_o_immigration (Eq 1.5.3) | 5E.1, 5E.2 | temp_unlawful_stock.R |
-| [ ] | 5E.4 | Implement historical type splits | 5A | temp_unlawful_stock.R |
-| [ ] | 5E.5 | Implement project_o_population_stock (Eq 1.5.4) | 5E.1-5E.4 | temp_unlawful_stock.R |
-| [ ] | 5E.6 | Implement run_o_immigration_projection | All above | temp_unlawful_immigration.R |
+| [x] | 5E.1 | Implement project_o_immigration (Eq 1.5.1) | 5C | temp_unlawful_immigration.R |
+| [x] | 5E.2 | Implement project_o_emigration (Eq 1.5.2) | 5D | temp_unlawful_emigration.R |
+| [x] | 5E.3 | Implement calculate_net_o_immigration (Eq 1.5.3) | 5E.1, 5E.2 | temp_unlawful_stock.R |
+| [x] | 5E.4 | Implement historical type splits | 5A | temp_unlawful_stock.R |
+| [x] | 5E.5 | Implement project_o_population_stock (Eq 1.5.4) | 5E.1-5E.4 | temp_unlawful_stock.R |
+| [x] | 5E.6 | Implement run_full_o_projection | All above | temp_unlawful_stock.R |
 
 ### Phase 5F: DACA Projection
 

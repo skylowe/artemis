@@ -5,8 +5,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ## Current Status
 **Phase:** 5 - Temporary/Unlawfully Present Immigration Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 4H - Targets Integration (January 18, 2026)
-**Current Step:** Phase 5A - DHS Data Acquisition
+**Most Recent Completion:** Phase 5E - Core Projection Functions (January 18, 2026)
+**Current Step:** Phase 5F - DACA Projection
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -67,13 +67,22 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - OP^z_{x,s,t} - O population stock (Eq 1.5.4)
   - DACA population by age/sex
 - **TR2025 Assumptions:** Ultimate 1,350,000/year starting 2026
-- **Current Phase:** 5C - Distribution Development
-- **Completed Phases:** 5A (DHS Data), 5B (ACS Data)
+- **Current Phase:** 5F - DACA Projection
+- **Completed Phases:** 5A (DHS Data), 5B (ACS Data), 5C (Distribution), 5D (Departure Rates), 5E (Core Projection)
 - **Key files:**
   - `R/data_acquisition/dhs_nonimmigrant.R` - Nonimmigrant stock/admissions
   - `R/data_acquisition/dhs_daca.R` - DACA grants and stock
   - `R/data_acquisition/acs_foreign_born.R` - New arrivals, DACA eligibility, undercount
-  - `R/demography/temp_unlawful_immigration.R` (to be created)
+  - `R/demography/temp_unlawful_immigration.R` - ODIST calculation, O immigration projection
+  - `R/demography/temp_unlawful_emigration.R` - Departure rates, cohort-tracking emigration
+  - `R/demography/temp_unlawful_stock.R` - Net O, population stock, main entry point
+
+**Phase 5E Implementation (January 18, 2026):**
+- All TR2025 equations implemented: 1.5.1 (OI), 1.5.2 (OE), 1.5.3 (NO), 1.5.4 (OP)
+- `run_full_o_projection()` orchestrates complete O immigration subprocess
+- Cohort-tracking for recent never-authorized arrivals (2× departure rate)
+- Historical type interpolation per TR2025 (1963→2010→2015 anchor points)
+- 5/5 tests passed, 4/4 validation checks passed
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)
