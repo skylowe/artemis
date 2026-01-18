@@ -5,8 +5,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ## Current Status
 **Phase:** 5 - Temporary/Unlawfully Present Immigration Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 5F - DACA Projection (January 18, 2026)
-**Current Step:** Phase 5G - Validation
+**Most Recent Completion:** Phase 5G - Validation (January 18, 2026)
+**Current Step:** Phase 5H - Targets Integration
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -67,8 +67,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - OP^z_{x,s,t} - O population stock (Eq 1.5.4)
   - DACA population by age/sex
 - **TR2025 Assumptions:** Ultimate 1,350,000/year starting 2026
-- **Current Phase:** 5G - Validation
-- **Completed Phases:** 5A (DHS Data), 5B (ACS Data), 5C (Distribution), 5D (Departure Rates), 5E (Core Projection), 5F (DACA Projection)
+- **Current Phase:** 5H - Targets Integration
+- **Completed Phases:** 5A (DHS Data), 5B (ACS Data), 5C (Distribution), 5D (Departure Rates), 5E (Core Projection), 5F (DACA Projection), 5G (Validation)
 - **Key files:**
   - `R/data_acquisition/dhs_nonimmigrant.R` - Nonimmigrant stock/admissions
   - `R/data_acquisition/dhs_daca.R` - DACA grants and stock
@@ -77,6 +77,16 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - `R/demography/temp_unlawful_emigration.R` - Departure rates, cohort-tracking emigration
   - `R/demography/temp_unlawful_stock.R` - Net O, population stock, main entry point
   - `R/demography/daca_projection.R` - DACA eligibility, attainment, and population projection
+  - `R/validation/validate_o_immigration.R` - Comprehensive O immigration validation
+
+**Phase 5G Implementation (January 18, 2026):**
+- Comprehensive validation module created with 12 validation functions
+- TR2025 assumption validation: OI totals must match exactly
+- DHS comparison: O population vs unauthorized estimates (10% tolerance)
+- DHS comparison: DACA population vs stock (5% tolerance)
+- Equation validation: Net O (1.5.3) and Stock (1.5.4) balance checks
+- Distribution validation: ODIST sums to 1.0, all types/ages/sexes present
+- 7/7 unit tests passed
 
 **Phase 5E Implementation (January 18, 2026):**
 - All TR2025 equations implemented: 1.5.1 (OI), 1.5.2 (OE), 1.5.3 (NO), 1.5.4 (OP)

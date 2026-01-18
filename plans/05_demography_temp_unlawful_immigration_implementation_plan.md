@@ -19,8 +19,8 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 5F - DACA Projection (COMPLETE)
-**Next Phase:** Phase 5G - Validation
+**Current Phase:** Phase 5G - Validation (COMPLETE)
+**Next Phase:** Phase 5H - Targets Integration
 
 ### Phase 5F Progress Notes - COMPLETED (January 18, 2026)
 
@@ -92,6 +92,51 @@
 - 2020: 640K recipients
 - 2030: 422K recipients
 - 2040: 220K recipients (aging cohort)
+
+### Phase 5G Progress Notes - COMPLETED (January 18, 2026)
+
+**Files Created:**
+- `R/validation/validate_o_immigration.R` - Comprehensive validation module
+
+**Functions Implemented (TR2025 Assumption Validation):**
+- `get_tr2025_o_validation_targets()` - TR2025 O immigration targets by year
+- `get_dhs_unauthorized_validation_targets()` - DHS unauthorized estimates
+- `get_dhs_daca_validation_targets()` - DHS DACA stock estimates
+- `validate_oi_totals()` - Validate OI totals match TR2025 (Eq 1.5.1)
+
+**Functions Implemented (DHS Comparison):**
+- `validate_op_against_dhs()` - O population vs DHS unauthorized estimates
+- `validate_daca_against_dhs()` - DACA vs DHS stock estimates
+
+**Functions Implemented (Distribution & Equation Validation):**
+- `validate_odist()` - ODIST distribution properties (sums to 1, all types/ages)
+- `validate_net_o_equation()` - Verify NO = OI - OE - AOS (Eq 1.5.3)
+- `validate_stock_equation()` - Verify OP balance (Eq 1.5.4)
+
+**Functions Implemented (DACA-Specific):**
+- `validate_daca_assumptions()` - Age bounds, declining trend, peak timing
+
+**Functions Implemented (Main Entry Points):**
+- `validate_o_immigration_comprehensive()` - Full validation suite
+- `validate_o_quick()` - Quick validation for development
+
+**Validation Targets (TR2025):**
+| Output | Metric | Tolerance | Source |
+|--------|--------|-----------|--------|
+| Total OI | Annual total | Exact (0.1%) | TR assumptions |
+| Total NO | Net O immigration | 5% | TR2025 V.A2 |
+| OP total | O population stock | 10-15% | DHS unauthorized |
+| DACA pop | DACA stock | 5% | DHS DACA |
+| Type split | Nonimmigrant share | 15% | DHS estimates |
+
+**Test Results (7/7 passed):**
+1. OI Totals: Exact match to TR2025 assumptions
+2. ODIST: Sums to 1.0, all ages/sexes/types present
+3. O Population vs DHS: Within 10% tolerance
+4. DACA vs DHS: Within 5% tolerance
+5. Net O Equation: NO = OI - OE - AOS verified
+6. DACA Assumptions: Age range, declining trend, peak timing
+7. Quick Validation: Runs without error
 
 ### Phase 5C Progress Notes - UPDATED (January 18, 2026)
 
@@ -1314,14 +1359,14 @@ validate_o_distribution <- function(distribution)
 | [x] | 5F.3 | Implement project_daca_population | 5F.1, 5F.2 | daca_projection.R |
 | [x] | 5F.4 | Calibrate DACA to DHS stock | 5F.3 | daca_projection.R |
 
-### Phase 5G: Validation
+### Phase 5G: Validation - COMPLETED (January 18, 2026)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 5G.1 | Implement validation functions | All above | validate_o_immigration.R |
-| [ ] | 5G.2 | Validate OI totals against TR assumptions | 5G.1 | Validation report |
-| [ ] | 5G.3 | Validate O population against DHS | 5G.1 | Validation report |
-| [ ] | 5G.4 | Validate DACA against DHS stock | 5G.1 | Validation report |
+| [x] | 5G.1 | Implement validation functions | All above | validate_o_immigration.R |
+| [x] | 5G.2 | Validate OI totals against TR assumptions | 5G.1 | Validation report |
+| [x] | 5G.3 | Validate O population against DHS | 5G.1 | Validation report |
+| [x] | 5G.4 | Validate DACA against DHS stock | 5G.1 | Validation report |
 
 ### Phase 5H: Targets Integration
 
