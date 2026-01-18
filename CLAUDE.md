@@ -4,9 +4,9 @@
 R-based replication of the SSA Office of the Chief Actuary's long-range OASDI projection model. Uses `{targets}` for pipeline orchestration and `{renv}` for dependency management.
 
 ## Current Status
-**Phase:** 4 - Historical Population Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 4F - Temporary/Unlawful Population (January 17, 2026)
-**Next Step:** Phase 4G - Civilian Noninstitutionalized (Eq 1.4.4)
+**Phase:** 4 - Historical Population Subprocess (COMPLETE)
+**Most Recent Completion:** Phase 4G - Civilian Noninstitutionalized (January 18, 2026)
+**Next Step:** Phase 4H - Targets Integration or Phase 5 - Immigration Projections
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -46,7 +46,7 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 1. Emigration distribution uses CBO 2021-2024 data instead of unpublished Census 1980-1990 estimates
 2. Refugee/asylee reclassification not implemented (DHS expanded tables don't separate by refugee status)
 
-### Historical Population Subprocess Status (IN PROGRESS)
+### Historical Population Subprocess Status (COMPLETE)
 - **Purpose:** Estimate Social Security area population for Dec 31, 1940 through Dec 31, 2022
 - **Key Outputs:**
   - P^z_{x,s} - Population by age/sex (Eq 1.4.1)
@@ -158,6 +158,28 @@ Reviewed TR2025 documentation against implementation. Added missing data for 8 o
   - 16,600 rows output (year × age × sex)
   - Peak: 12.2M (2007), Current: 11M (2022)
 - Key output: O^z_{x,s} cached in `o_population_1940_2022.rds`
+
+**Phase 4G Complete (January 18, 2026):**
+- Civilian noninstitutionalized population: `R/demography/historical_civilian_noninst.R`
+- Implements Equation 1.4.4: C^z_{x,s,m} = CivNonInst^z_{x,s} × MaritalPct^z_{x,s,m}
+- Data sources: ACS PUMS for totals (2010-2022) and marital proportions (2006-2022)
+- Key functions:
+  - `calculate_historical_civilian_noninst()` - main entry point
+  - `load_civilian_noninst_totals()` - fetches totals from ACS PUMS
+  - `load_civilian_noninst_marital_proportions()` - fetches marital proportions
+  - `balance_c_married_populations()` - ensures married males ≈ married females
+  - `add_c_orientation()` - adds gay/lesbian orientation for 2013+
+- Marital status split (differs from Eq 1.4.2):
+  - married_spouse_present, separated, widowed, divorced, never_married
+- Same-sex marriage (2013+): 2.5% gay males, 4.5% lesbian females
+- Validation:
+  - Mean diff: 0.18%, max: 1.05%
+  - 12 years processed (2010-2022, excluding 2020)
+- Results:
+  - Population: 304M (2010) → 328M (2022)
+  - Married: 39.7%, Never married: 46%, Divorced: 8.5%
+  - 17,747 rows output (year × age × sex × marital_status × orientation)
+- Key output: C^z_{x,s,m} cached in `civilian_noninst_marital_2010_2022.rds`
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)
