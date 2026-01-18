@@ -19,8 +19,53 @@
 
 ### Current Status
 **Last Updated:** January 18, 2026
-**Current Phase:** Phase 5B - ACS Data Acquisition (COMPLETE)
-**Next Phase:** Phase 5C - Distribution Development
+**Current Phase:** Phase 5C - Distribution Development (COMPLETE)
+**Next Phase:** Phase 5D - Departure Rate Development
+
+### Phase 5C Progress Notes - COMPLETED (January 18, 2026)
+
+**Files Created:**
+- `R/demography/temp_unlawful_immigration.R` - Core O immigration projection functions
+
+**Functions Implemented:**
+- `calculate_o_immigration()` - O = ACS new arrivals (with undercount) - LPR NEW arrivals
+- `calculate_odist()` - ODIST distribution from 2015-2019 average (Eq 1.5.1)
+- `get_default_type_splits()` - Type proportions (N/I/V) by age/sex
+- `get_overstay_percentages()` - Age-specific overstay percentages (RAND-based)
+- `project_o_immigration()` - Apply ODIST to TR assumptions
+- `run_o_immigration_projection()` - Full projection pipeline
+- `validate_odist()` - Validation checks
+- `get_overstay_percentage_sources()` - Documentation of data sources
+
+**Key Results:**
+- O immigration (2015-2019 avg): 2.12M/year
+- ODIST validated: sums to 1.0, all non-negative
+- Type proportions: N=53.2%, I=15.2%, V=31.7%
+- Sex proportions: Female=50.6%, Male=49.4%
+- Age distribution: 20% ages 0-17, 47% ages 18-34, 18% ages 35-49
+
+**TR2025 Assumptions Implemented:**
+- 2022: 2,200,000
+- 2023: 2,700,000
+- 2024: 2,600,000
+- 2025: 2,000,000
+- 2026+: 1,350,000 (ultimate)
+
+**Hardcoded Data with Configuration Options:**
+All hardcoded values are clearly marked with `# HARDCODED` comments and block headers.
+The following functions accept `config` parameter to override defaults:
+- `get_tr2025_o_immigration_assumptions(config=)` - TR2025 assumptions by year
+- `get_overstay_percentages(config=)` - Age-specific overstay percentages
+- `get_nonimmigrant_stock_distribution(config=)` - Total O population estimate
+
+**Sources for Hardcoded Values:**
+| Value | Source | Notes |
+|-------|--------|-------|
+| TR2025 O immigration totals | TR2025 Section 1.5 | Official Trustees assumptions |
+| Overstay percentages by age | Warren & Kerwin (2017), DHS Overstay Reports | SSA internal RAND values not public |
+| Type splits (N/I/V) | DHS unauthorized + nonimmigrant estimates | ~53% N, 15% I, 32% V |
+| Total O population (~13M) | DHS unauthorized (~11M) + nonimmigrant (~2M) | For proportion calculations |
+| Default NI distribution | DHS Yearbook + visa category patterns | F-1 students, H-1B workers concentrated |
 
 ### Phase 5B Progress Notes - COMPLETED (January 18, 2026)
 
@@ -1036,10 +1081,10 @@ validate_o_distribution <- function(distribution)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 5C.1 | Implement O immigration distribution calculation | 5A, 5B, Phase 3 | temp_unlawful_immigration.R |
-| [ ] | 5C.2 | Implement type split function | 5C.1 | temp_unlawful_immigration.R |
-| [ ] | 5C.3 | Implement overstay percentage estimation | DHS data | temp_unlawful_immigration.R |
-| [ ] | 5C.4 | Calculate and validate ODIST | 5C.1-5C.3 | Distribution data |
+| [x] | 5C.1 | Implement O immigration distribution calculation | 5A, 5B, Phase 3 | temp_unlawful_immigration.R |
+| [x] | 5C.2 | Implement type split function | 5C.1 | temp_unlawful_immigration.R |
+| [x] | 5C.3 | Implement overstay percentage estimation | DHS data | temp_unlawful_immigration.R |
+| [x] | 5C.4 | Calculate and validate ODIST | 5C.1-5C.3 | Distribution data |
 
 ### Phase 5D: Departure Rate Development
 
