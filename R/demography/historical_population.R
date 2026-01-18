@@ -76,8 +76,27 @@ calculate_historical_population <- function(start_year = 1940,
                                              end_year = 2022,
                                              ages = 0:100,
                                              config = NULL,
-                                             cache_dir = here::here("data/cache")) {
+                                             cache_dir = here::here("data/cache"),
+                                             use_cache = TRUE) {
   cli::cli_h1("Calculating Historical Population (Eq 1.4.1)")
+
+  # Check cache first
+  cache_subdir <- file.path(cache_dir, "historical_population")
+  if (!dir.exists(cache_subdir)) dir.create(cache_subdir, recursive = TRUE)
+
+  cache_file <- file.path(
+    cache_subdir,
+    sprintf("ss_population_%d_%d.rds", start_year, end_year)
+  )
+
+  if (use_cache && file.exists(cache_file)) {
+    cli::cli_alert_success("Loading cached historical population")
+    cached <- readRDS(cache_file)
+    target_ages <- ages
+    result <- cached[age %in% target_ages]
+    cli::cli_alert_info("Loaded {nrow(result)} cells for {start_year}-{end_year}")
+    return(result)
+  }
 
   # Get tab years
   tab_years <- get_tab_years()
@@ -129,6 +148,10 @@ calculate_historical_population <- function(start_year = 1940,
   cli::cli_alert_success("Calculated {nrow(all_pop)} population cells")
   cli::cli_alert_info("1940 total: {format(total_by_year[year == min(year), total], big.mark = ',', scientific = FALSE)}")
   cli::cli_alert_info("{end_year} total: {format(total_by_year[year == max(year), total], big.mark = ',', scientific = FALSE)}")
+
+  # Save to cache
+  saveRDS(all_pop, cache_file)
+  cli::cli_alert_success("Saved to cache: {cache_file}")
 
   all_pop
 }
@@ -501,6 +524,10 @@ fetch_territory_for_historical <- function(years, ages, cache_dir) {
   territories <- c("PR", "VI", "GU", "MP", "AS")
   ss_start_years <- sapply(territories, get_territory_ss_start_year)
 
+  # IDB API first year of coverage by territory
+  # Based on testing: AS/GU/MP/VI have data from 2000+, PR from 2010+
+  idb_start_years <- c("PR" = 2010, "VI" = 2000, "GU" = 2000, "MP" = 2000, "AS" = 2000)
+
   result_list <- list()
 
   for (i in seq_along(territories)) {
@@ -510,35 +537,56 @@ fetch_territory_for_historical <- function(years, ages, cache_dir) {
 
     if (length(terr_years) == 0) next
 
-    # Split into pre-1990 and 1990+ years
-    pre1990_years <- terr_years[terr_years < 1990]
-    post1990_years <- terr_years[terr_years >= 1990]
+    # Split into pre-IDB and IDB-covered years
+    idb_start <- idb_start_years[[terr]]
+    interpolation_years <- terr_years[terr_years < idb_start]
+    idb_years <- terr_years[terr_years >= idb_start]
 
-    # Pre-1990: Use historical decennial data with interpolation
-    if (length(pre1990_years) > 0) {
-      pre1990_pop <- get_territory_population_pre1990(terr, pre1990_years, ages)
-      if (!is.null(pre1990_pop) && nrow(pre1990_pop) > 0) {
-        pre1990_pop[, territory := terr]
-        result_list[[paste0(terr, "_pre1990")]] <- pre1990_pop
+    # Pre-IDB: Use historical decennial data with interpolation
+    if (length(interpolation_years) > 0) {
+      interp_pop <- get_territory_population_interpolated(terr, interpolation_years, ages)
+      if (!is.null(interp_pop) && nrow(interp_pop) > 0) {
+        interp_pop[, territory := terr]
+        result_list[[paste0(terr, "_interp")]] <- interp_pop
       }
     }
 
-    # 1990+: Use IDB API
-    if (length(post1990_years) > 0) {
-      post1990_pop <- tryCatch({
+    # IDB-covered years: Use IDB API with fallback to interpolation
+    if (length(idb_years) > 0) {
+      idb_pop <- tryCatch({
         fetch_territory_populations_by_age_sex(
-          years = post1990_years,
+          years = idb_years,
           territories = terr,
           cache_dir = cache_dir
         )
       }, error = function(e) {
-        cli::cli_alert_warning("Territory {terr} data error (1990+): {conditionMessage(e)}")
+        cli::cli_alert_warning("Territory {terr} IDB error: {conditionMessage(e)}")
         NULL
       })
 
-      if (!is.null(post1990_pop) && nrow(post1990_pop) > 0) {
-        post1990_pop[, territory := terr]
-        result_list[[paste0(terr, "_post1990")]] <- post1990_pop
+      if (!is.null(idb_pop) && nrow(idb_pop) > 0) {
+        idb_pop[, territory := terr]
+        result_list[[paste0(terr, "_idb")]] <- idb_pop
+
+        # Check for missing years and use fallback
+        years_with_data <- unique(idb_pop$year)
+        missing_years <- setdiff(idb_years, years_with_data)
+        if (length(missing_years) > 0) {
+          cli::cli_alert_info("Territory {terr}: Interpolating {length(missing_years)} years missing from IDB")
+          fallback_pop <- get_territory_population_interpolated(terr, missing_years, ages)
+          if (!is.null(fallback_pop) && nrow(fallback_pop) > 0) {
+            fallback_pop[, territory := terr]
+            result_list[[paste0(terr, "_fallback")]] <- fallback_pop
+          }
+        }
+      } else {
+        # IDB returned nothing, use interpolation for all
+        cli::cli_alert_info("Territory {terr}: Using interpolation (no IDB data)")
+        fallback_pop <- get_territory_population_interpolated(terr, idb_years, ages)
+        if (!is.null(fallback_pop) && nrow(fallback_pop) > 0) {
+          fallback_pop[, territory := terr]
+          result_list[[paste0(terr, "_fallback")]] <- fallback_pop
+        }
       }
     }
   }
@@ -561,14 +609,15 @@ fetch_territory_for_historical <- function(years, ages, cache_dir) {
   ), by = .(year, age, sex)]
 }
 
-#' Get Territory Population for Pre-1990 Years
+#' Get Territory Population via Interpolation
 #'
 #' @description
-#' Uses historical decennial census totals and interpolates between
+#' Uses historical decennial census totals (1950-2020) and interpolates between
 #' census years, distributing by age using standard age distribution.
+#' Used as fallback when IDB API doesn't have data for a territory/year.
 #'
 #' @keywords internal
-get_territory_population_pre1990 <- function(territory, years, ages) {
+get_territory_population_interpolated <- function(territory, years, ages) {
   # Get historical territory data (decennial census totals)
   hist_data <- get_territory_historical_population()
   target_terr <- territory
@@ -775,10 +824,13 @@ get_other_citizens_overseas <- function(years) {
   yearly_pop <- get_us_resident_population_by_year(years)
   pop_1990 <- get_us_resident_population_by_year(1990)[, population]
 
- # Scale OTH proportionally to population ratio vs 1990
+  # Scale OTH at HALF the rate of population growth vs 1990
+  # Formula: OTH = base * (1 + 0.5 * (pop_ratio - 1))
+  #        = base * (0.5 + 0.5 * pop_ratio)
+  # This means if population grows 10%, OTH grows only 5%
   result <- yearly_pop[, .(
     year = year,
-    other_overseas = base_1990 * (population / pop_1990)
+    other_overseas = base_1990 * (0.5 + 0.5 * (population / pop_1990))
   )]
 
   result
@@ -1316,30 +1368,30 @@ interpolate_populations <- function(tab_year_pops,
 
   modern_list <- list()
   if (length(modern_non_tab) > 0) {
-    cli::cli_alert("  Using Census data directly for {length(modern_non_tab)} modern years")
+    cli::cli_alert("  Using Census data with full components for {length(modern_non_tab)} modern years")
     census_data <- components$census_usaf[year %in% modern_non_tab]
 
     if (nrow(census_data) > 0) {
-      # Apply adjustments similar to tab year calculation
+      # Apply FULL adjustments like tab year calculation to avoid discontinuities
       for (yr in modern_non_tab) {
         year_data <- census_data[year == yr]
         if (nrow(year_data) == 0) next
 
         # Get base population
         pop <- data.table::copy(year_data)
-        data.table::setnames(pop, "population", "base_pop", skip_absent = TRUE)
+        data.table::setnames(pop, "population", "usaf_pop", skip_absent = TRUE)
 
-        # Apply undercount (simplified for non-tab years)
+        # Apply undercount adjustment
         uc <- components$undercount[year == yr]
         if (nrow(uc) > 0) {
           pop <- merge(pop, uc[, .(age, sex, undercount_rate)], by = c("age", "sex"), all.x = TRUE)
           pop[is.na(undercount_rate), undercount_rate := 0]
-          pop[, uc_adj := base_pop * undercount_rate / (1 - undercount_rate)]
+          pop[, uc_adjustment := usaf_pop * undercount_rate / (1 - undercount_rate)]
         } else {
-          pop[, uc_adj := 0]
+          pop[, uc_adjustment := 0]
         }
 
-        # Add territory population (simplified)
+        # Add territory population
         terr <- components$territories[year == yr]
         if (nrow(terr) > 0) {
           pop <- merge(pop, terr[, .(age, sex, territory_pop)], by = c("age", "sex"), all.x = TRUE)
@@ -1348,15 +1400,37 @@ interpolate_populations <- function(tab_year_pops,
           pop[, territory_pop := 0]
         }
 
-        # Calculate total
-        pop[, population := base_pop + uc_adj + territory_pop]
+        # Add federal employees (distributed by age using armed forces distribution)
+        fed_total <- components$fed_employees[year == yr, employees_overseas]
+        if (length(fed_total) == 0 || is.na(fed_total)) fed_total <- 0
+        pop[, fed_emp := distribute_overseas_by_age(fed_total, age, sex, "federal")]
+
+        # Calculate dependents (50% of armed forces + federal employees)
+        af_total <- components$armed_forces[year == yr, sum(population, na.rm = TRUE)]
+        if (length(af_total) == 0 || is.na(af_total)) af_total <- 0
+        dep_total <- 0.5 * (af_total + fed_total)
+        pop[, dependents := distribute_overseas_by_age(dep_total, age, sex, "dependents")]
+
+        # Add beneficiaries abroad
+        ben_total <- components$beneficiaries[year == yr, total_beneficiaries]
+        if (length(ben_total) == 0) ben_total <- 0
+        pop[, beneficiaries := distribute_overseas_by_age(ben_total, age, sex, "beneficiaries")]
+
+        # Add other citizens overseas
+        oth_total <- components$other_overseas[year == yr, other_overseas]
+        if (length(oth_total) == 0) oth_total <- 0
+        pop[, other_overseas := distribute_overseas_by_age(oth_total, age, sex, "other")]
+
+        # Calculate total population (Eq 1.4.1) - same as tab year
+        pop[, population := usaf_pop + uc_adjustment + territory_pop +
+              fed_emp + dependents + beneficiaries + other_overseas]
 
         modern_list[[as.character(yr)]] <- pop[, .(
           year = yr,
           age = age,
           sex = sex,
           population = population,
-          source = "census_direct"
+          source = "census_with_components"
         )]
       }
     }

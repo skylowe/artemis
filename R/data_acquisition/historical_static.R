@@ -585,88 +585,108 @@ get_territory_historical_population <- function(target_census_year = NULL,
 
   territory_data <- data.table::data.table(
     census_year = c(
-      # Puerto Rico (Source: PC-S1-15, Statistical Abstract)
-      1950, 1960, 1970, 1980, 1990, 2000,
-      # Virgin Islands (Source: PC-S1-14, Statistical Abstract)
-      1950, 1960, 1970, 1980, 1990, 2000,
-      # Guam (Source: PC-S1-14, Statistical Abstract)
-      1950, 1960, 1970, 1980, 1990, 2000,
-      # American Samoa (Source: PC-S1-14, Statistical Abstract)
+      # Puerto Rico (Source: PC-S1-15, Statistical Abstract, 2010/2020 Decennial Census)
+      1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020,
+      # Virgin Islands (Source: PC-S1-14, Statistical Abstract, 2010/2020 Island Areas Census)
+      1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020,
+      # Guam (Source: PC-S1-14, Statistical Abstract, 2010/2020 Island Areas Census)
+      1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020,
+      # American Samoa (Source: PC-S1-14, Statistical Abstract, 2010/2020 Island Areas Census)
       # Note: 1950 census conducted but AS not in SS area until 1961
-      1960, 1970, 1980, 1990, 2000,
-      # Northern Mariana Islands (Source: Statistical Abstract)
+      1960, 1970, 1980, 1990, 2000, 2010, 2020,
+      # Northern Mariana Islands (Source: Statistical Abstract, 2010/2020 Island Areas Census)
       # Note: First census in CNMI was 1970
-      1980, 1990, 2000
+      1980, 1990, 2000, 2010, 2020
     ),
     territory = c(
-      rep("PR", 6), rep("VI", 6), rep("GU", 6), rep("AS", 5), rep("MP", 3)
+      rep("PR", 8), rep("VI", 8), rep("GU", 8), rep("AS", 7), rep("MP", 5)
     ),
     population = c(
       # Puerto Rico
-      # Source: 1960 Census PC-S1-15; Statistical Abstract Section 29
+      # Source: 1960 Census PC-S1-15; Statistical Abstract Section 29; 2010/2020 Decennial Census API
       2210703,  # 1950
       2349544,  # 1960
       2712033,  # 1970 (2,722 thousands in StatAb)
       3196520,  # 1980 (3,210 thousands in StatAb)
       3522037,  # 1990 (3,537 thousands in StatAb)
       3808610,  # 2000
+      3725789,  # 2010 (Census API P001001)
+      3285874,  # 2020 (Census API P1_001N)
 
       # Virgin Islands
-      # Source: 1960 Census PC-S1-14; Statistical Abstract Section 29
+      # Source: 1960 Census PC-S1-14; Statistical Abstract Section 29; 2010/2020 Island Areas Census
       26665,    # 1950
       32099,    # 1960
       62468,    # 1970 (63 thousands in StatAb)
       96569,    # 1980 (98 thousands in StatAb)
       101809,   # 1990 (104 thousands in StatAb)
       108612,   # 2000
+      106405,   # 2010 (2010 Island Areas Census)
+      87146,    # 2020 (2020 Island Areas Census)
 
       # Guam
-      # Source: 1960 Census PC-S1-14; Statistical Abstract Section 29
+      # Source: 1960 Census PC-S1-14; Statistical Abstract Section 29; 2010/2020 Island Areas Census
       59498,    # 1950
       67044,    # 1960
       84996,    # 1970 (86 thousands in StatAb)
       105979,   # 1980 (107 thousands in StatAb)
       133152,   # 1990 (134 thousands in StatAb)
       154805,   # 2000
+      159358,   # 2010 (2010 Island Areas Census)
+      153836,   # 2020 (2020 Island Areas Census)
 
       # American Samoa
-      # Source: 1960 Census PC-S1-14; Statistical Abstract Section 29
+      # Source: 1960 Census PC-S1-14; Statistical Abstract Section 29; 2010/2020 Island Areas Census
       20051,    # 1960 (first census after SS area inclusion)
       27259,    # 1970 (27 thousands in StatAb)
       32297,    # 1980 (32 thousands in StatAb)
       46773,    # 1990 (47 thousands in StatAb)
       57291,    # 2000
+      55519,    # 2010 (2010 Island Areas Census)
+      49710,    # 2020 (2020 Island Areas Census)
 
       # Northern Mariana Islands
-      # Source: Statistical Abstract Section 29
+      # Source: Statistical Abstract Section 29; 2010/2020 Island Areas Census
       # Note: Census Bureau first conducted CNMI census in 1970
       16780,    # 1980 (17 thousands in StatAb)
       43345,    # 1990 (44 thousands in StatAb)
-      69221     # 2000
+      69221,    # 2000
+      53883,    # 2010 (2010 Island Areas Census)
+      47329     # 2020 (2020 Island Areas Census)
     ),
     ss_area_start = c(
       # Puerto Rico - 1951
-      rep(1951L, 6),
+      rep(1951L, 8),
       # Virgin Islands - 1951
-      rep(1951L, 6),
+      rep(1951L, 8),
       # Guam - 1951
-      rep(1951L, 6),
+      rep(1951L, 8),
       # American Samoa - 1961
-      rep(1961L, 5),
+      rep(1961L, 7),
       # Northern Mariana Islands - 1978 (Covenant effective)
-      rep(1978L, 3)
+      rep(1978L, 5)
     ),
     source = c(
       # Puerto Rico
       rep("Census PC-S1-15 / Statistical Abstract", 6),
+      "2010 Decennial Census API",
+      "2020 Decennial Census API",
       # Virgin Islands
       rep("Census PC-S1-14 / Statistical Abstract", 6),
+      "2010 Island Areas Census",
+      "2020 Island Areas Census",
       # Guam
       rep("Census PC-S1-14 / Statistical Abstract", 6),
+      "2010 Island Areas Census",
+      "2020 Island Areas Census",
       # American Samoa
       rep("Census PC-S1-14 / Statistical Abstract", 5),
+      "2010 Island Areas Census",
+      "2020 Island Areas Census",
       # Northern Mariana Islands
-      rep("Statistical Abstract Section 29", 3)
+      rep("Statistical Abstract Section 29", 3),
+      "2010 Island Areas Census",
+      "2020 Island Areas Census"
     )
   )
 
