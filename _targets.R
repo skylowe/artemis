@@ -394,6 +394,10 @@ list(
   ),
 
   # Step 5: Run full mortality projection
+  # Note: starting_aax_method controls how starting AAx values are determined:
+  #   "regression" - Use historical regression (original method)
+  #   "capped"     - Cap starting AAx at multiple of ultimate (recommended)
+  #   "tr2025"     - Derive from TR2025 death probabilities
   tar_target(
     mortality_mx_projected,
     run_mortality_projection(
@@ -401,7 +405,9 @@ list(
       population = census_population_both,
       base_year = config_assumptions$mortality$base_year,
       projection_end = config_assumptions$metadata$projection_period$end_year,
-      by_cause = FALSE
+      by_cause = FALSE,
+      starting_aax_method = if (is.null(config_assumptions$mortality$starting_aax_method)) "regression" else config_assumptions$mortality$starting_aax_method,
+      mortality_config = config_assumptions$mortality
     )
   ),
 
@@ -471,6 +477,7 @@ list(
 
   # Step 9: Extract and adjust projected qx (2024-2099)
   # The projection already has qx, but we need to apply HMD calibration for ages 85+
+  # EXCEPTION: Skip HMD calibration for tr_qx method since TR2025 already has calibrated qx
   tar_target(
     mortality_qx_projected,
     {
@@ -480,7 +487,15 @@ list(
       # Filter to projection years only (2024+, since 2020-2023 are in historical)
       qx_proj <- qx_proj[year >= 2024]
 
-      # Apply HMD calibration for ages 85+
+      # Check if using tr_qx method - if so, skip HMD calibration
+      # TR2025 qx values are already properly calibrated for all ages
+      method <- config_assumptions$mortality$starting_aax_method
+      if (!is.null(method) && method == "tr_qx") {
+        cli::cli_alert_info("Skipping HMD calibration for tr_qx method (using TR2025 qx directly)")
+        return(qx_proj)
+      }
+
+      # Apply HMD calibration for ages 85+ (for regression/capped methods)
       adjust_qx_with_hmd(
         qx = qx_proj,
         transition_age = 85,

@@ -231,6 +231,365 @@ calculate_annual_reduction_rates <- function(mx,
   result
 }
 
+# =============================================================================
+# Starting AAx Method Functions
+# =============================================================================
+
+#' Apply capped starting AAx method
+#'
+#' @description
+#' Caps starting AAx values at a configurable multiple of ultimate AAx.
+#' This prevents unrealistically high starting improvement rates while
+#' preserving the relative pattern across ages.
+#'
+#' @param starting_aax data.table with starting AAx by age, sex, [cause]
+#' @param ultimate_aax data.table from get_ultimate_aax_assumptions()
+#' @param cap_multiplier Numeric: cap starting AAx at this multiple of ultimate (default: 1.5)
+#'
+#' @return data.table with capped starting_aax values
+#'
+#' @details
+#' For each age-sex combination:
+#' - If starting_aax > ultimate_aax * cap_multiplier: cap at ultimate * multiplier
+#' - If starting_aax <= 0: use ultimate_aax (no negative improvement)
+#' - Otherwise: keep original starting_aax
+#'
+#' @export
+apply_capped_starting_aax <- function(starting_aax,
+                                       ultimate_aax = NULL,
+                                       cap_multiplier = 1.5) {
+  checkmate::assert_data_table(starting_aax)
+  checkmate::assert_number(cap_multiplier, lower = 1.0, upper = 10.0)
+
+  if (is.null(ultimate_aax)) {
+    ultimate_aax <- get_ultimate_aax_assumptions()
+  }
+
+  dt <- data.table::copy(starting_aax)
+
+  # Determine if we have cause-specific data
+  has_cause <- "cause" %in% names(dt)
+
+  # Map ages to ultimate age groups
+  dt[, age_group := map_age_to_ultimate_group(age)]
+
+  # Get cause-weighted ultimate AAx by age group and sex
+  cause_props <- tryCatch(
+    get_cause_of_death_proportions(),
+    error = function(e) {
+      cli::cli_alert_warning("Could not load cause-of-death proportions, using simple average")
+      NULL
+    }
+  )
+
+  if (!is.null(cause_props)) {
+    # Merge proportions with ultimate AAx values
+    weighted_data <- merge(
+      ultimate_aax[, .(age_group, cause, ultimate_aax)],
+      cause_props,
+      by = c("age_group", "cause"),
+      all.x = TRUE
+    )
+    weighted_data[is.na(proportion), proportion := 1/6]
+
+    # Calculate weighted average by age_group and sex
+    ultimate_avg <- weighted_data[, .(
+      ultimate_aax_weighted = sum(ultimate_aax * proportion)
+    ), by = .(age_group, sex)]
+  } else {
+    # Simple average fallback
+    ultimate_avg <- ultimate_aax[, .(ultimate_aax_weighted = mean(ultimate_aax)), by = age_group]
+  }
+
+  # Merge ultimate values
+  if ("sex" %in% names(ultimate_avg) && "sex" %in% names(dt)) {
+    dt <- merge(dt, ultimate_avg, by = c("age_group", "sex"), all.x = TRUE)
+  } else {
+    dt <- merge(dt, ultimate_avg[, .(age_group, ultimate_aax_weighted)], by = "age_group", all.x = TRUE)
+  }
+
+  # Handle missing ultimate values
+  dt[is.na(ultimate_aax_weighted), ultimate_aax_weighted := 0.005]
+
+  # Calculate cap value
+  dt[, cap_value := ultimate_aax_weighted * cap_multiplier]
+
+  # Apply cap: limit starting_aax to cap_value
+  # Also ensure starting_aax is at least 0 (no negative improvement allowed)
+  original_aax <- dt$starting_aax
+  dt[, starting_aax := pmax(0, pmin(starting_aax, cap_value))]
+
+  # Count how many were capped
+  n_capped <- sum(original_aax > dt$cap_value, na.rm = TRUE)
+  n_negative <- sum(original_aax < 0, na.rm = TRUE)
+
+  # Clean up temporary columns
+  dt[, c("age_group", "ultimate_aax_weighted", "cap_value") := NULL]
+
+  cli::cli_alert_success(
+    "Applied capped starting AAx (multiplier={cap_multiplier}): {n_capped} capped, {n_negative} negative values zeroed"
+  )
+
+  dt
+}
+
+#' Load starting values from TR2025 death probabilities
+#'
+#' @description
+#' Loads TR2025's qx values and converts to mx for use as starting values.
+#' Also calculates implied AAx from year-over-year change in qx.
+#' This ensures our mortality projection starts from and aligns with TR2025.
+#'
+#' @param male_qx_file Character: path to TR2025 male death probability file
+#' @param female_qx_file Character: path to TR2025 female death probability file
+#' @param base_year Integer: year to use for starting qx (default: 2024)
+#' @param aax_reference_years Integer vector: years for calculating implied AAx (default: c(2024, 2025))
+#' @param ages Integer vector: ages to include (default: 0:99)
+#'
+#' @return list with:
+#'   - starting_mx: data.table with mx by age and sex
+#'   - starting_aax: data.table with AAx by age and sex
+#'
+#' @details
+#' TR2025 death probability files contain projected qx by year and age.
+#' Starting mx is converted from qx using: mx = -log(1 - qx)
+#' Implied AAx is calculated as: AAx = 1 - (qx_year2 / qx_year1)
+#'
+#' Note: TR2025 files have years in rows, ages in columns (0-119).
+#'
+#' @export
+load_tr2025_starting_values <- function(
+    male_qx_file = "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv",
+    female_qx_file = "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv",
+    base_year = 2024,
+    aax_reference_years = c(2024, 2025),
+    ages = 0:99
+) {
+  checkmate::assert_file_exists(male_qx_file)
+  checkmate::assert_file_exists(female_qx_file)
+  checkmate::assert_int(base_year)
+  checkmate::assert_integerish(aax_reference_years, len = 2)
+  checkmate::assert_integerish(ages)
+
+  year1 <- min(aax_reference_years)
+  year2 <- max(aax_reference_years)
+
+  # Load TR2025 death probabilities
+  tr_m <- data.table::fread(male_qx_file)
+  tr_f <- data.table::fread(female_qx_file)
+
+  # Rename first column to "year"
+  data.table::setnames(tr_m, names(tr_m)[1], "year")
+  data.table::setnames(tr_f, names(tr_f)[1], "year")
+
+  # Melt to long format
+  tr_m_long <- data.table::melt(tr_m, id.vars = "year",
+                                 variable.name = "age", value.name = "qx")
+  tr_m_long[, age := as.integer(as.character(age))]
+  tr_m_long[, sex := "male"]
+
+  tr_f_long <- data.table::melt(tr_f, id.vars = "year",
+                                 variable.name = "age", value.name = "qx")
+  tr_f_long[, age := as.integer(as.character(age))]
+  tr_f_long[, sex := "female"]
+
+  tr <- data.table::rbindlist(list(tr_m_long, tr_f_long))
+
+  # Filter to relevant years and specified ages
+  all_years <- unique(c(base_year, aax_reference_years))
+  tr <- tr[year %in% all_years & age %in% ages]
+
+  # --- Calculate starting mx from base year qx ---
+  tr_base <- tr[year == base_year, .(age, sex, qx)]
+
+  # Convert qx to mx: mx = -log(1 - qx)
+  # For qx close to 1, cap at 0.999 to avoid infinite mx
+  tr_base[, qx_capped := pmin(qx, 0.999)]
+  tr_base[, starting_mx := -log(1 - qx_capped)]
+
+  starting_mx <- tr_base[, .(age, sex, starting_mx)]
+  data.table::setorder(starting_mx, sex, age)
+
+  # --- Calculate implied AAx from year-over-year change ---
+  tr_aax <- tr[year %in% aax_reference_years]
+  tr_wide <- data.table::dcast(tr_aax, age + sex ~ year, value.var = "qx")
+  col_names <- names(tr_wide)
+  data.table::setnames(tr_wide, col_names[3:4], c("qx_year1", "qx_year2"))
+
+  # Calculate implied AAx = 1 - (qx_year2 / qx_year1)
+  tr_wide[, starting_aax := 1 - (qx_year2 / qx_year1)]
+
+  # Handle edge cases (division by zero, negative qx, etc.)
+  tr_wide[is.na(starting_aax) | !is.finite(starting_aax), starting_aax := 0]
+  tr_wide[starting_aax < -0.1, starting_aax := -0.1]  # Cap extreme negative values
+  tr_wide[starting_aax > 0.1, starting_aax := 0.1]   # Cap extreme positive values
+
+  starting_aax <- tr_wide[, .(age, sex, starting_aax)]
+  data.table::setorder(starting_aax, sex, age)
+
+  cli::cli_alert_success(
+    "Loaded TR2025 starting values: {nrow(starting_mx)} mx values (year {base_year}), {nrow(starting_aax)} AAx values ({year1}-{year2})"
+  )
+
+  list(
+    starting_mx = starting_mx,
+    starting_aax = starting_aax
+  )
+}
+
+#' Load complete TR2025 death probabilities for all years
+#'
+#' @description
+#' Loads TR2025's qx values for all projection years. This provides exact
+#' alignment with TR2025 mortality projections by using their values directly
+#' instead of our own AAx trajectory projection.
+#'
+#' @param male_qx_file Character: path to TR2025 male death probability file
+#' @param female_qx_file Character: path to TR2025 female death probability file
+#' @param start_year Integer: first year to include (default: 2024)
+#' @param end_year Integer: last year to include (default: 2099)
+#' @param ages Integer vector: ages to include (default: 0:119)
+#'
+#' @return data.table with qx by year, age, and sex
+#'
+#' @details
+#' TR2025 death probability files contain projected qx by year and age.
+#' This function loads all years to enable direct use of TR2025 values.
+#'
+#' @export
+load_tr2025_qx_all_years <- function(
+    male_qx_file = "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv",
+    female_qx_file = "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv",
+    start_year = 2024,
+    end_year = 2099,
+    ages = 0:119
+) {
+  checkmate::assert_file_exists(male_qx_file)
+  checkmate::assert_file_exists(female_qx_file)
+  checkmate::assert_int(start_year)
+  checkmate::assert_int(end_year)
+  checkmate::assert_integerish(ages)
+
+  # Load TR2025 death probabilities
+  tr_m <- data.table::fread(male_qx_file)
+  tr_f <- data.table::fread(female_qx_file)
+
+  # Rename first column to "year"
+  data.table::setnames(tr_m, names(tr_m)[1], "year")
+  data.table::setnames(tr_f, names(tr_f)[1], "year")
+
+  # Melt to long format
+  tr_m_long <- data.table::melt(tr_m, id.vars = "year",
+                                 variable.name = "age", value.name = "qx")
+  tr_m_long[, age := as.integer(as.character(age))]
+  tr_m_long[, sex := "male"]
+
+  tr_f_long <- data.table::melt(tr_f, id.vars = "year",
+                                 variable.name = "age", value.name = "qx")
+  tr_f_long[, age := as.integer(as.character(age))]
+  tr_f_long[, sex := "female"]
+
+  tr <- data.table::rbindlist(list(tr_m_long, tr_f_long))
+
+  # Filter to requested years and ages
+  tr <- tr[year >= start_year & year <= end_year & age %in% ages]
+  data.table::setorder(tr, year, sex, age)
+
+  cli::cli_alert_success(
+    "Loaded TR2025 qx for {length(unique(tr$year))} years ({start_year}-{max(tr$year)}), ages {min(tr$age)}-{max(tr$age)}"
+  )
+
+  tr
+}
+
+#' Apply configured starting AAx method
+#'
+#' @description
+#' Applies the configured starting AAx method (regression, capped, or tr_qx).
+#'
+#' @param regression_aax data.table with regression-based AAx (from calculate_annual_reduction_rates)
+#' @param method Character: method to apply ("regression", "capped", "tr_qx")
+#' @param config List: mortality configuration (from load_mortality_config)
+#'
+#' @return For "regression" and "capped": data.table with starting_aax by age, sex
+#'         For "tr_qx": list with starting_mx and starting_aax data.tables
+#'
+#' @export
+apply_starting_aax_method <- function(regression_aax,
+                                       method = "regression",
+                                       config = NULL) {
+  checkmate::assert_data_table(regression_aax)
+  checkmate::assert_choice(method, c("regression", "capped", "tr_qx"))
+
+  # Start with regression-based AAx
+  dt <- data.table::copy(regression_aax)
+
+  if (method == "regression") {
+    # Original method: use regression-based starting_aax as-is
+    cli::cli_alert_info("Using regression-based starting AAx (original method)")
+    return(dt[, .(age, sex, starting_aax)])
+  }
+
+  if (method == "capped") {
+    # Capped method: limit starting AAx to multiple of ultimate
+    cap_multiplier <- 1.5
+    if (!is.null(config) && !is.null(config$starting_aax_cap$multiplier)) {
+      cap_multiplier <- config$starting_aax_cap$multiplier
+    }
+
+    result <- apply_capped_starting_aax(
+      starting_aax = dt[, .(age, sex, starting_aax)],
+      cap_multiplier = cap_multiplier
+    )
+    return(result)
+  }
+
+  if (method == "tr_qx") {
+    # TR_QX method: use TR2025's actual qx as starting point
+    # Returns both starting_mx AND starting_aax from TR2025 files
+    male_file <- "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
+    female_file <- "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
+    base_year <- 2024
+    aax_ref_years <- c(2024, 2025)
+
+    if (!is.null(config) && !is.null(config$starting_tr_qx)) {
+      if (!is.null(config$starting_tr_qx$male_qx_file)) {
+        male_file <- config$starting_tr_qx$male_qx_file
+      }
+      if (!is.null(config$starting_tr_qx$female_qx_file)) {
+        female_file <- config$starting_tr_qx$female_qx_file
+      }
+      if (!is.null(config$starting_tr_qx$base_year)) {
+        base_year <- config$starting_tr_qx$base_year
+      }
+      if (!is.null(config$starting_tr_qx$aax_reference_years)) {
+        aax_ref_years <- config$starting_tr_qx$aax_reference_years
+      }
+    }
+
+    # Check if files exist
+    if (!file.exists(male_file) || !file.exists(female_file)) {
+      cli::cli_alert_warning("TR2025 qx files not found, falling back to capped method")
+      return(apply_capped_starting_aax(
+        starting_aax = dt[, .(age, sex, starting_aax)],
+        cap_multiplier = 1.5
+      ))
+    }
+
+    # Load both starting mx and starting aax from TR2025
+    result <- load_tr2025_starting_values(
+      male_qx_file = male_file,
+      female_qx_file = female_file,
+      base_year = base_year,
+      aax_reference_years = aax_ref_years
+    )
+    return(result)
+  }
+
+  # Should never reach here
+  cli::cli_abort("Unknown starting AAx method: {method}")
+}
+
 #' Whittaker-Henderson smoothing
 #'
 #' @description
@@ -1042,19 +1401,23 @@ apply_covid_adjustments <- function(qx, covid_factors = NULL) {
 #' @description
 #' Executes the full SSA mortality projection methodology:
 #' 1. Calculate historical mx and AAx
-#' 2. Determine starting mx from regression fitted values
-#' 3. Calculate AAx trajectory to ultimate values
-#' 4. Project mx forward
-#' 5. Overwrite with actual data (2020-2023)
-#' 6. Apply WH smoothing
-#' 7. Convert to qx
-#' 8. Apply COVID adjustments
+#' 2. Determine starting mx from regression fitted values (or TR2025 for tr_qx method)
+#' 3. Apply configured starting AAx method
+#' 4. Calculate AAx trajectory to ultimate values
+#' 5. Project mx forward
+#' 6. Overwrite with actual data (2020-2023)
+#' 7. Apply WH smoothing
+#' 8. Convert to qx
+#' 9. Apply COVID adjustments
 #'
 #' @param deaths data.table with historical deaths by year, age, sex, [cause]
 #' @param population data.table with historical population by year, age, sex
 #' @param base_year Integer: last year for regression (default: 2019)
 #' @param projection_end Integer: last projection year (default: 2100)
 #' @param by_cause Logical: project by cause of death (default: FALSE for total)
+#' @param starting_aax_method Character: method for starting values
+#'   ("regression", "capped", "tr_qx"). Default: "regression"
+#' @param mortality_config List: mortality configuration from config file (optional)
 #'
 #' @return list with projected_mx, projected_qx, aax_trajectory, and life_tables
 #'
@@ -1063,8 +1426,11 @@ run_mortality_projection <- function(deaths,
                                       population,
                                       base_year = 2019,
                                       projection_end = 2100,
-                                      by_cause = FALSE) {
+                                      by_cause = FALSE,
+                                      starting_aax_method = "regression",
+                                      mortality_config = NULL) {
   cli::cli_h1("SSA Mortality Projection Pipeline")
+  cli::cli_alert_info("Starting AAx method: {starting_aax_method}")
 
   # Step 1: Calculate historical mx
   cli::cli_h2("Step 1: Calculate historical central death rates")
@@ -1079,31 +1445,115 @@ run_mortality_projection <- function(deaths,
   cli::cli_h2("Step 2: Apply Whittaker-Henderson smoothing")
   mx_smooth <- smooth_death_rates(mx_historical)
 
-  # Step 3: Calculate AAx from 2008-2019
+  # Step 3: Calculate AAx from 2008-2019 regression
   cli::cli_h2("Step 3: Calculate AAx (2008-2019 regression)")
   aax <- calculate_annual_reduction_rates(mx_smooth,
                                            start_year = 2008,
                                            end_year = base_year,
                                            by_cause = by_cause)
 
-  # Step 4: Calculate starting mx from regression
+  # Step 4: Calculate starting mx from regression (may be overridden by tr_qx method)
   cli::cli_h2("Step 4: Calculate starting mx from regression fitted values")
   starting_mx <- calculate_starting_mx(aax, base_year = base_year)
 
-  # Step 5: Calculate AAx trajectory
-  cli::cli_h2("Step 5: Calculate AAx trajectory to ultimate")
-  projection_years <- (base_year + 1):projection_end
+  # Step 5: Apply configured starting AAx method
+  cli::cli_h2(paste0("Step 5: Apply starting AAx method (", starting_aax_method, ")"))
+  starting_values <- apply_starting_aax_method(
+    regression_aax = aax,
+    method = starting_aax_method,
+    config = mortality_config
+  )
+
+  # Handle tr_qx method which returns both starting_mx and starting_aax
+  # For other methods, starting_values is just starting_aax
+  if (starting_aax_method == "tr_qx" && is.list(starting_values) && "starting_mx" %in% names(starting_values)) {
+    # Use TR2025's starting mx and AAx
+    starting_mx <- starting_values$starting_mx
+    starting_aax <- starting_values$starting_aax
+
+    # For tr_qx method, the effective base year is 2024 (TR2025's base year)
+    # Adjust projection years accordingly
+    tr_base_year <- 2024
+    if (!is.null(mortality_config) && !is.null(mortality_config$starting_tr_qx$base_year)) {
+      tr_base_year <- mortality_config$starting_tr_qx$base_year
+    }
+    cli::cli_alert_info("Using TR2025 starting values from year {tr_base_year}")
+    effective_base_year <- tr_base_year
+  } else {
+    starting_aax <- starting_values
+    effective_base_year <- base_year
+  }
+
+  # For tr_qx method, skip projection steps and load TR2025 qx directly
+  if (starting_aax_method == "tr_qx") {
+    cli::cli_h2("Step 6: Load TR2025 qx directly (skipping projection)")
+
+    # Get config for file paths
+    male_file <- "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
+    female_file <- "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
+    if (!is.null(mortality_config) && !is.null(mortality_config$starting_tr_qx)) {
+      if (!is.null(mortality_config$starting_tr_qx$male_qx_file)) {
+        male_file <- mortality_config$starting_tr_qx$male_qx_file
+      }
+      if (!is.null(mortality_config$starting_tr_qx$female_qx_file)) {
+        female_file <- mortality_config$starting_tr_qx$female_qx_file
+      }
+    }
+
+    # Load TR2025 qx for all years
+    tr_qx <- load_tr2025_qx_all_years(
+      male_qx_file = male_file,
+      female_qx_file = female_file,
+      start_year = effective_base_year,
+      end_year = projection_end
+    )
+
+    # TR2025 files only go to age 119, no conversion needed
+    projected_qx <- tr_qx
+
+    # Create empty mx placeholder (we're using qx directly)
+    projected_mx_smooth <- data.table::data.table(
+      year = integer(),
+      sex = character(),
+      age = integer(),
+      mx_smooth = numeric()
+    )
+
+    # Create empty AAx trajectory placeholder
+    aax_trajectory <- data.table::data.table(
+      year = integer(),
+      age = integer(),
+      sex = character(),
+      aax_projected = numeric()
+    )
+
+    cli::cli_alert_success("Using TR2025 qx values directly (no projection)")
+    cli::cli_h1("Projection complete")
+
+    return(list(
+      projected_mx = projected_mx_smooth,
+      projected_qx = projected_qx,
+      aax_trajectory = aax_trajectory,
+      starting_mx = starting_mx,
+      historical_aax = aax
+    ))
+  }
+
+  # Standard projection path (regression or capped methods)
+  # Step 6: Calculate AAx trajectory
+  cli::cli_h2("Step 6: Calculate AAx trajectory to ultimate")
+  projection_years <- (effective_base_year + 1):projection_end
   aax_trajectory <- calculate_aax_trajectory(
-    starting_aax = aax[, .(age, sex, starting_aax)],
-    base_year = base_year,
+    starting_aax = starting_aax,
+    base_year = effective_base_year,
     projection_years = projection_years
   )
 
-  # Step 6: Project mx forward
-  cli::cli_h2("Step 6: Project mx forward")
-  # Get actual mx for 2020-2023 to overwrite projections
+  # Step 7: Project mx forward
+  cli::cli_h2("Step 7: Project mx forward")
+  # Get actual mx for years after effective base year to overwrite projections
   actual_years <- unique(deaths$year)
-  actual_years <- actual_years[actual_years > base_year]
+  actual_years <- actual_years[actual_years > effective_base_year]
 
   actual_mx <- NULL
   if (length(actual_years) > 0) {
@@ -1115,8 +1565,8 @@ run_mortality_projection <- function(deaths,
 
   projected_mx <- project_death_rates(starting_mx, aax_trajectory, actual_mx)
 
-  # Step 7: Apply WH smoothing to projected mx
-  cli::cli_h2("Step 7: Apply WH smoothing to projections")
+  # Step 8: Apply WH smoothing to projected mx
+  cli::cli_h2("Step 8: Apply WH smoothing to projections")
   projected_mx_smooth <- projected_mx[, {
     if (.N >= 3) {
       mx_vals <- mx[order(age)]
@@ -1133,8 +1583,8 @@ run_mortality_projection <- function(deaths,
     }
   }, by = .(year, sex)]
 
-  # Step 8: Convert to qx
-  cli::cli_h2("Step 8: Convert mx to qx")
+  # Step 9: Convert to qx
+  cli::cli_h2("Step 9: Convert mx to qx")
   # Process each year
   qx_list <- list()
   for (yr in unique(projected_mx_smooth$year)) {
@@ -1145,8 +1595,8 @@ run_mortality_projection <- function(deaths,
   }
   projected_qx <- data.table::rbindlist(qx_list, fill = TRUE)
 
-  # Step 9: Apply COVID adjustments
-  cli::cli_h2("Step 9: Apply COVID-19 adjustments")
+  # Step 10: Apply COVID adjustments
+  cli::cli_h2("Step 10: Apply COVID-19 adjustments")
   projected_qx <- apply_covid_adjustments(projected_qx)
 
   cli::cli_h1("Projection complete")

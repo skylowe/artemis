@@ -59,6 +59,37 @@ mortality:
   transition_years: 24   # Years until ultimate values reached
   ultimate_year: 2043    # base_year + transition_years = 2019 + 24
 
+  # =========================================================================
+  # Starting AAx Method Configuration
+  # =========================================================================
+  # Controls how starting values are determined for the mortality projection.
+  #
+  # Options:
+  #   "regression" - Use historical regression-based AAx (original implementation)
+  #                  Calculates starting AAx from weighted regression on 2008-2019 data
+  #   "capped"     - Cap starting AAx at a multiple of ultimate AAx
+  #                  Prevents unrealistically high starting improvement rates
+  #   "tr_qx"      - Use TR2025's actual qx values as starting point
+  #                  Both starting qx AND starting AAx come from TR2025 files
+  #                  Ensures full alignment with TR2025 mortality trajectory
+  # =========================================================================
+  starting_aax_method: "tr_qx"  # Options: "regression", "capped", "tr_qx"
+
+  # Configuration for "capped" method
+  starting_aax_cap:
+    multiplier: 1.5  # Cap starting AAx at this multiple of ultimate AAx
+    # Example: If ultimate AAx is 0.5%, cap starting at 0.75% (1.5 × 0.5%)
+
+  # Configuration for "tr_qx" method
+  starting_tr_qx:
+    # Path to TR2025 death probability files (relative to project root)
+    male_qx_file: "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
+    female_qx_file: "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
+    # Base year for starting qx (typically 2024)
+    base_year: 2024
+    # Years to use for calculating implied AAx (2024-2025 gives first year improvement)
+    aax_reference_years: [2024, 2025]
+
   # Whittaker-Henderson smoothing parameters (per SSA documentation)
   whittaker_henderson:
     degree: 2           # d parameter (difference order)
