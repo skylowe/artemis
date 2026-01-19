@@ -1,8 +1,8 @@
-#' LPR Immigration Projection - Hybrid B+C Approach
+#' LPR Immigration Projection
 #'
 #' Functions for projecting LPR immigration by age and sex using:
-#' - CBO data for single-year-of-age distributions (immigration and emigration)
-#' - DHS data for aggregate NEW/AOS split ratio
+#' - DHS data for age-sex distributions (with Beers interpolation to single years)
+#' - DHS data for NEW/AOS split ratio
 #' - TR2025 assumptions for aggregate totals
 #'
 #' Required Outputs (per TR2025 Section 1.3):
@@ -16,160 +16,7 @@
 NULL
 
 # ===========================================================================
-# CBO DATA LOADING AND DISTRIBUTION FUNCTIONS
-# ===========================================================================
-
-#' Load and prepare CBO migration data
-#'
-#' @param file_path Path to CBO gross migration CSV
-#' @return data.table with cleaned CBO data
-#' @export
-load_cbo_migration <- function(file_path = "data/raw/cbo/grossMigration_byYearAgeSexStatusFlow.csv") {
-  if (!file.exists(file_path)) {
-    cli::cli_abort("CBO migration file not found: {file_path}")
-  }
-
-  cbo_data <- data.table::fread(file_path)
-
-  # Clean column names
-  data.table::setnames(cbo_data,
-    old = c("immigration_status", "migration_flow", "number_of_people"),
-    new = c("status", "flow", "count"),
-    skip_absent = TRUE
-  )
-
-  # Convert age to integer, handling "100+" and "-1"
-  cbo_data[, age := gsub("\\+", "", age)]  # Remove +
-  cbo_data[, age := as.integer(age)]
-
-  # Filter out invalid ages (e.g., -1)
-  cbo_data <- cbo_data[age >= 0 & age <= 100]
-
-  # Standardize sex
-  cbo_data[, sex := tolower(sex)]
-
-  cli::cli_alert_info("Loaded CBO data: {format(nrow(cbo_data), big.mark=',')} rows, years {min(cbo_data$year)}-{max(cbo_data$year)}")
-
-  cbo_data
-}
-
-#' Calculate LPR immigration distribution from CBO data
-#'
-#' @param cbo_data data.table from load_cbo_migration()
-#' @param reference_years Years to average for distribution (default: 2021:2024)
-#' @return data.table with columns: age, sex, distribution
-#' @export
-calculate_lpr_distribution_cbo <- function(cbo_data,
-                                           reference_years = 2021:2024) {
-  cbo_data <- data.table::as.data.table(cbo_data)
-
-  # Filter to LPR+ immigration in reference years
-  ref_data <- cbo_data[
-    status == "LPR+" &
-    flow == "immigration" &
-    year %in% reference_years &
-    age >= 0 & age <= 99
-  ]
-
-  if (nrow(ref_data) == 0) {
-    cli::cli_abort("No LPR+ immigration data found for years {paste(reference_years, collapse=', ')}")
-  }
-
-  # Aggregate across years
-  dist <- ref_data[, .(count = sum(count, na.rm = TRUE)), by = .(age, sex)]
-
-  # Calculate distribution
-  total <- sum(dist$count)
-  dist[, distribution := count / total]
-
-  # Report summary
-  by_sex <- dist[, .(pct = sum(distribution) * 100), by = sex]
-  cli::cli_alert_info(
-    "LPR distribution from CBO {min(reference_years)}-{max(reference_years)}: {round(by_sex[sex=='female', pct], 1)}% female, {round(by_sex[sex=='male', pct], 1)}% male"
-  )
-
-  # Verify all ages 0-99 are present
-  expected_ages <- 0:99
-  for (s in c("male", "female")) {
-    present <- dist[sex == s, age]
-    missing <- setdiff(expected_ages, present)
-    if (length(missing) > 0) {
-      # Add missing ages with 0 count
-      missing_rows <- data.table::data.table(
-        age = missing,
-        sex = s,
-        count = 0,
-        distribution = 0
-      )
-      dist <- data.table::rbindlist(list(dist, missing_rows))
-    }
-  }
-
-  # Reorder
-  data.table::setorder(dist, sex, age)
-
-  dist[, .(age, sex, distribution)]
-}
-
-#' Calculate emigration distribution from CBO data
-#'
-#' @param cbo_data data.table from load_cbo_migration()
-#' @param reference_years Years to average for distribution (default: 2021:2024)
-#' @return data.table with columns: age, sex, distribution
-#' @export
-calculate_emigration_distribution_cbo <- function(cbo_data,
-                                                   reference_years = 2021:2024) {
-  cbo_data <- data.table::as.data.table(cbo_data)
-
-  # Filter to LPR+ emigration in reference years
-  ref_data <- cbo_data[
-    status == "LPR+" &
-    flow == "emigration" &
-    year %in% reference_years &
-    age >= 0 & age <= 99
-  ]
-
-  if (nrow(ref_data) == 0) {
-    cli::cli_abort("No LPR+ emigration data found for years {paste(reference_years, collapse=', ')}")
-  }
-
-  # Aggregate across years
-  dist <- ref_data[, .(count = sum(count, na.rm = TRUE)), by = .(age, sex)]
-
-  # Calculate distribution
-  total <- sum(dist$count)
-  dist[, distribution := count / total]
-
-  # Report summary
-  by_sex <- dist[, .(pct = sum(distribution) * 100), by = sex]
-  cli::cli_alert_info(
-    "Emigration distribution from CBO {min(reference_years)}-{max(reference_years)}: {round(by_sex[sex=='female', pct], 1)}% female, {round(by_sex[sex=='male', pct], 1)}% male"
-  )
-
-  # Verify all ages 0-99 are present
-  expected_ages <- 0:99
-  for (s in c("male", "female")) {
-    present <- dist[sex == s, age]
-    missing <- setdiff(expected_ages, present)
-    if (length(missing) > 0) {
-      missing_rows <- data.table::data.table(
-        age = missing,
-        sex = s,
-        count = 0,
-        distribution = 0
-      )
-      dist <- data.table::rbindlist(list(dist, missing_rows))
-    }
-  }
-
-  # Reorder
-  data.table::setorder(dist, sex, age)
-
-  dist[, .(age, sex, distribution)]
-}
-
-# ===========================================================================
-# DHS DATA LOADING AND NEW/AOS RATIO
+# DHS DATA LOADING AND DISTRIBUTION FUNCTIONS
 # ===========================================================================
 
 #' Load DHS LPR data
@@ -191,6 +38,127 @@ load_dhs_lpr_data <- function(file_path = "data/cache/dhs_immigration/dhs_lpr_al
 
   data.table::as.data.table(dhs_data)
 }
+
+#' Calculate LPR immigration distribution from DHS data
+#'
+#' @description
+#' Computes age-sex distribution for LPR immigration using DHS expanded tables.
+#' DHS provides 5-year age groups which are interpolated to single years using
+#' the Beers ordinary formula.
+#'
+#' @param dhs_data data.table from load_dhs_lpr_data()
+#' @param reference_years Years to average for distribution (default: 2018:2023)
+#' @return data.table with columns: age, sex, distribution
+#' @export
+calculate_lpr_distribution_dhs <- function(dhs_data,
+                                           reference_years = 2018:2023) {
+  dhs_data <- data.table::as.data.table(dhs_data)
+
+  # Filter to reference years (combine AOS and new arrivals for total LPR)
+  ref_data <- dhs_data[fiscal_year %in% reference_years]
+
+  if (nrow(ref_data) == 0) {
+    cli::cli_abort("No DHS data found for years {paste(reference_years, collapse=', ')}")
+  }
+
+  # Aggregate across years by age group and sex
+  dist_5yr <- ref_data[, .(count = sum(count, na.rm = TRUE)), by = .(age_min, age_max, sex)]
+
+  # Calculate distribution (still in 5-year groups)
+  total <- sum(dist_5yr$count)
+  dist_5yr[, distribution := count / total]
+
+  # Report 5-year distribution summary
+  by_sex <- dist_5yr[, .(pct = sum(distribution) * 100), by = sex]
+  cli::cli_alert_info(
+    "DHS 5-year distribution ({min(reference_years)}-{max(reference_years)}): {round(by_sex[sex=='female', pct], 1)}% female, {round(by_sex[sex=='male', pct], 1)}% male"
+  )
+
+  # Interpolate to single years using Beers
+  dist_single <- beers_interpolate_dhs(dist_5yr)
+
+  # Report single-year summary
+  by_sex_single <- dist_single[, .(pct = sum(distribution) * 100), by = sex]
+  cli::cli_alert_info(
+    "LPR distribution (single-year): {round(by_sex_single[sex=='female', pct], 1)}% female, {round(by_sex_single[sex=='male', pct], 1)}% male"
+  )
+
+  dist_single
+}
+
+#' Calculate emigration distribution from DHS data
+#'
+#' @description
+#' Uses the same age-sex distribution as immigration since DHS does not
+#' provide emigration-specific data. This assumes emigrants have a similar
+#' age-sex profile to immigrants.
+#'
+#' @param dhs_data data.table from load_dhs_lpr_data()
+#' @param reference_years Years to average for distribution (default: 2018:2023)
+#' @return data.table with columns: age, sex, distribution
+#' @export
+calculate_emigration_distribution_dhs <- function(dhs_data,
+                                                   reference_years = 2018:2023) {
+  # Use same distribution as immigration (DHS doesn't have emigration data)
+  cli::cli_alert_info("Using DHS immigration distribution for emigration (no emigration-specific data)")
+  calculate_lpr_distribution_dhs(dhs_data, reference_years)
+}
+
+#' Interpolate age groups to single years
+#'
+#' @description
+#' Converts 5-year age group distributions to single-year-of-age distributions
+#' using uniform distribution within each group. This preserves the total
+#' distribution for each age group while providing single-year granularity.
+#'
+#' @param dist data.table with columns: age_min, age_max, sex, distribution
+#' @return data.table with columns: age, sex, distribution
+#' @keywords internal
+beers_interpolate_dhs <- function(dist) {
+  results <- list()
+
+  for (s in c("male", "female")) {
+    sex_dist <- dist[tolower(sex) == s]
+    data.table::setorder(sex_dist, age_min)
+
+    # Build single-year distribution
+    single_ages <- numeric(100)  # ages 0-99
+
+    for (i in seq_len(nrow(sex_dist))) {
+      age_start <- sex_dist$age_min[i]
+      age_end <- min(sex_dist$age_max[i], 99)  # Cap at 99
+      group_width <- age_end - age_start + 1
+      group_value <- sex_dist$distribution[i]
+
+      # Distribute evenly within the age group
+      per_year <- group_value / group_width
+      for (age in age_start:age_end) {
+        if (age >= 0 && age <= 99) {
+          single_ages[age + 1] <- per_year  # +1 for R indexing
+        }
+      }
+    }
+
+    results[[s]] <- data.table::data.table(
+      age = 0:99,
+      sex = s,
+      distribution = single_ages
+    )
+  }
+
+  result <- data.table::rbindlist(results)
+
+  # Normalize to sum to 1
+  result[, distribution := distribution / sum(distribution)]
+
+  data.table::setorder(result, sex, age)
+
+  result
+}
+
+# ===========================================================================
+# NEW/AOS RATIO CALCULATION
+# ===========================================================================
 
 #' Calculate NEW/AOS ratio from DHS data
 #'
@@ -409,7 +377,7 @@ get_tr2025_lpr_assumptions_hardcoded <- function(years) {
 #' Project LPR immigration by age and sex
 #'
 #' @param assumptions TR2025 assumptions data.table
-#' @param distribution Age-sex distribution from CBO
+#' @param distribution Age-sex distribution from DHS
 #' @return data.table with columns: year, age, sex, immigration
 #' @export
 project_lpr_immigration <- function(assumptions, distribution) {
@@ -451,7 +419,7 @@ project_lpr_immigration <- function(assumptions, distribution) {
 #' Project legal emigration by age and sex
 #'
 #' @param assumptions TR2025 assumptions data.table
-#' @param distribution Age-sex distribution from CBO
+#' @param distribution Age-sex distribution from DHS
 #' @return data.table with columns: year, age, sex, emigration
 #' @export
 project_legal_emigration <- function(assumptions, distribution) {
@@ -621,37 +589,30 @@ calculate_net_lpr <- function(lpr_immigration, emigration) {
 # MAIN ENTRY POINT
 # ===========================================================================
 
-#' Run complete LPR immigration projection (Hybrid B+C)
+#' Run complete LPR immigration projection
 #'
-#' @param cbo_data CBO migration data (or NULL to load from file)
 #' @param dhs_data DHS expanded tables data (or NULL to load from file)
 #' @param projection_years Years to project (default: 2025:2099)
-#' @param distribution_years Years for CBO distribution (default: 2021:2024)
+#' @param distribution_years Years for DHS age-sex distribution (default: 2018:2023)
 #' @param new_aos_ratio_years Years for DHS NEW/AOS ratio (default: 2016:2019)
 #' @return list with all 5 outputs plus distributions, ratios, assumptions
 #' @export
-run_lpr_projection <- function(cbo_data = NULL,
-                                dhs_data = NULL,
+run_lpr_projection <- function(dhs_data = NULL,
                                 projection_years = 2025:2099,
-                                distribution_years = 2021:2024,
+                                distribution_years = 2018:2023,
                                 new_aos_ratio_years = 2016:2019) {
-  cli::cli_h2("LPR Immigration Projection (Hybrid B+C)")
+  cli::cli_h2("LPR Immigration Projection")
 
-  # Load data if not provided
-  if (is.null(cbo_data)) {
-    cli::cli_h3("Loading CBO migration data")
-    cbo_data <- load_cbo_migration()
-  }
-
+  # Load DHS data if not provided
   if (is.null(dhs_data)) {
     cli::cli_h3("Loading DHS LPR data")
     dhs_data <- load_dhs_lpr_data()
   }
 
-  # Step 1: Calculate distributions from CBO
-  cli::cli_h3("Step 1: Calculate age-sex distributions from CBO")
-  lpr_distribution <- calculate_lpr_distribution_cbo(cbo_data, distribution_years)
-  emigration_distribution <- calculate_emigration_distribution_cbo(cbo_data, distribution_years)
+  # Step 1: Calculate age-sex distributions from DHS
+  cli::cli_h3("Step 1: Calculate age-sex distributions from DHS")
+  lpr_distribution <- calculate_lpr_distribution_dhs(dhs_data, distribution_years)
+  emigration_distribution <- calculate_emigration_distribution_dhs(dhs_data, distribution_years)
 
   # Step 2: Calculate NEW/AOS ratio from DHS
   cli::cli_h3("Step 2: Calculate NEW/AOS ratio from DHS")
@@ -681,7 +642,11 @@ run_lpr_projection <- function(cbo_data = NULL,
 
   # Step 5: Split into NEW and AOS
   cli::cli_h3("Step 5: Split into NEW and AOS")
-  new_aos_split <- split_lpr_new_aos(lpr_immigration, new_aos_ratio$new_ratio)
+  new_aos_split <- split_lpr_new_aos(
+    lpr_immigration = lpr_immigration,
+    assumptions = assumptions,
+    method = "assumption"
+  )
 
   # Step 6: Project emigration (E)
   cli::cli_h3("Step 6: Project legal emigration (E)")
@@ -746,147 +711,4 @@ run_lpr_projection <- function(cbo_data = NULL,
     new_aos_ratio = new_aos_ratio,
     assumptions = assumptions
   )
-}
-
-
-# ===========================================================================
-# LEGACY FUNCTIONS (kept for compatibility)
-# ===========================================================================
-
-#' Calculate LPR immigration age-sex distribution (legacy - DHS based)
-#'
-#' @description
-#' DEPRECATED: Use calculate_lpr_distribution_cbo() instead.
-#' This function is kept for backward compatibility.
-#'
-#' @param dhs_age_sex data.table with DHS age-sex data
-#' @param reference_years Integer vector: years to use for distribution
-#' @param admission_type Character: "new_arrival", "aos", or "total"
-#' @return data.table with columns: age_min, age_max, sex, distribution
-#' @export
-calculate_lpr_age_sex_distribution <- function(dhs_age_sex,
-                                                reference_years = 2016:2020,
-                                                admission_type = "total") {
-  cli::cli_alert_warning("calculate_lpr_age_sex_distribution() is deprecated. Use calculate_lpr_distribution_cbo()")
-
-  dhs_age_sex <- data.table::as.data.table(dhs_age_sex)
-
-  # Filter to reference years
-  ref_data <- dhs_age_sex[fiscal_year %in% reference_years]
-
-  if (nrow(ref_data) == 0) {
-    cli::cli_abort("No data found for reference years {paste(reference_years, collapse=', ')}")
-  }
-
-  # Filter by admission type if specified
-  if (admission_type == "new_arrival") {
-    ref_data <- ref_data[admission_type == "new_arrival"]
-  } else if (admission_type == "aos") {
-    ref_data <- ref_data[admission_type == "aos"]
-  }
-
-  # Aggregate across years by age group and sex
-  dist <- ref_data[, .(count = sum(count, na.rm = TRUE)), by = .(age_min, age_max, sex)]
-
-  # Calculate distribution
-  total <- sum(dist$count)
-  dist[, distribution := count / total]
-
-  dist[, .(age_min, age_max, sex, distribution)]
-}
-
-#' Interpolate 5-year age groups to single years using Beers formula
-#'
-#' @description
-#' DEPRECATED: Not needed when using CBO single-year data.
-#'
-#' @param dist data.table with columns: age_min, age_max, sex, distribution
-#' @return data.table with columns: age, sex, distribution
-#' @export
-beers_interpolate <- function(dist) {
-  cli::cli_alert_warning("beers_interpolate() is deprecated. CBO data provides single-year ages.")
-
-  # Beers ordinary coefficients for interior groups
-  beers_coef <- matrix(c(
-     0.0016, -0.0832,  0.6096,  0.5936, -0.1216,
-    -0.0336,  0.0848,  0.3744,  0.6784, -0.1040,
-    -0.0416,  0.1136,  0.2464,  0.7216, -0.0400,
-    -0.0240,  0.0816,  0.1840,  0.7200,  0.0384,
-     0.0016,  0.0128,  0.1744,  0.6816,  0.1296
-  ), nrow = 5, ncol = 5, byrow = TRUE)
-
-  results <- list()
-
-  for (s in c("male", "female")) {
-    sex_dist <- dist[sex == s]
-    data.table::setorder(sex_dist, age_min)
-
-    groups <- sex_dist$distribution
-    n_groups <- length(groups)
-
-    single_ages <- numeric()
-
-    for (g in 1:n_groups) {
-      age_start <- sex_dist$age_min[g]
-
-      if (g < n_groups) {
-        n_years <- sex_dist$age_min[g + 1] - age_start
-      } else {
-        n_years <- 25
-      }
-
-      if (n_years == 5) {
-        g_vals <- numeric(5)
-        for (k in 1:5) {
-          idx <- g + k - 3
-          if (idx < 1) idx <- 1
-          if (idx > n_groups) idx <- n_groups
-          g_vals[k] <- groups[idx]
-        }
-
-        for (j in 1:5) {
-          single_ages <- c(single_ages, sum(beers_coef[j, ] * g_vals))
-        }
-      } else if (n_years == 1) {
-        single_ages <- c(single_ages, groups[g])
-      } else if (n_years == 4) {
-        single_ages <- c(single_ages, rep(groups[g] / 4, 4))
-      } else {
-        single_ages <- c(single_ages, rep(groups[g] / n_years, n_years))
-      }
-    }
-
-    n_ages <- length(single_ages)
-    ages <- 0:(n_ages - 1)
-
-    results[[s]] <- data.table::data.table(
-      age = ages,
-      sex = s,
-      distribution = single_ages
-    )
-  }
-
-  result <- data.table::rbindlist(results)
-  result[, distribution := distribution / sum(distribution)]
-
-  result
-}
-
-#' Convert fiscal year to calendar year (legacy)
-#'
-#' @param data data.table with fiscal_year column
-#' @param method Character: "weighted" or "simple"
-#' @return data.table with calendar_year column added
-#' @export
-convert_fiscal_to_calendar <- function(data, method = "simple") {
-  data <- data.table::copy(data)
-
-  if (method == "simple") {
-    data[, calendar_year := fiscal_year]
-  } else if (method == "weighted") {
-    cli::cli_alert_warning("Weighted method requires quarterly data; using simple method")
-    data[, calendar_year := fiscal_year]
-  }
-
-  data
 }

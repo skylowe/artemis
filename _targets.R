@@ -619,35 +619,26 @@ list(
     cue = tar_cue(mode = "thorough")
   ),
 
-  # CBO migration data (for emigration distribution)
-  tar_target(
-    cbo_migration_data,
-    load_cbo_migration(
-      file_path = "data/raw/cbo/grossMigration_byYearAgeSexStatusFlow.csv"
-    ),
-    cue = tar_cue(mode = "thorough")
-  ),
-
   # ===========================================================================
-  # LPR IMMIGRATION SUBPROCESS TARGETS (Hybrid B+C Approach)
+  # LPR IMMIGRATION SUBPROCESS TARGETS
   # ===========================================================================
-  # Uses CBO data for age-sex distributions, DHS for NEW/AOS ratio, TR2025 for totals
+  # Uses DHS data for age-sex distributions and NEW/AOS ratio, TR2025 for totals
   # Produces all 5 required outputs: L (LPR), NEW, AOS, E (Emigration), NL (Net LPR)
 
-  # Step 1: Calculate LPR immigration distribution from CBO data
+  # Step 1: Calculate LPR immigration distribution from DHS data
   tar_target(
     lpr_distribution,
-    calculate_lpr_distribution_cbo(
-      cbo_data = cbo_migration_data,
+    calculate_lpr_distribution_dhs(
+      dhs_data = load_dhs_lpr_data(),
       reference_years = config_assumptions$immigration$lpr$distribution_years
     )
   ),
 
-  # Step 2: Calculate emigration distribution from CBO data
+  # Step 2: Calculate emigration distribution from DHS data
   tar_target(
     emigration_distribution,
-    calculate_emigration_distribution_cbo(
-      cbo_data = cbo_migration_data,
+    calculate_emigration_distribution_dhs(
+      dhs_data = load_dhs_lpr_data(),
       reference_years = config_assumptions$immigration$emigration$distribution_years
     )
   ),

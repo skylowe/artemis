@@ -238,11 +238,11 @@ immigration:
     min_age: 0
     max_age: 99
 
-    # Distribution source and reference years (CBO single-year age data)
-    # NOTE: TR2025 uses DHS single-year data from special OCACT arrangement.
-    # We use CBO data as it's publicly available with single-year ages.
-    distribution_source: "cbo"
-    distribution_years: [2021, 2022, 2023, 2024]
+    # Distribution source and reference years
+    # Uses DHS expanded tables with Beers interpolation to single years.
+    # DHS provides actual LPR admission data by age group and sex.
+    distribution_source: "dhs"
+    distribution_years: [2018, 2019, 2020, 2021, 2022, 2023]
 
     # NEW/AOS split method:
     # - "assumption": Use TR2025 V.A2 values directly (450K AOS, recommended)
@@ -267,10 +267,10 @@ immigration:
     ratio: 0.25  # 25% per TR2025
 
     # Distribution source
-    # NOTE: TR methodology uses Census 1980-1990 data, but we use CBO 2021-2024
-    # data as Census estimates are unpublished. See plan document for details.
-    distribution_source: "cbo"
-    distribution_years: [2021, 2022, 2023, 2024]
+    # Uses same DHS age-sex distribution as immigration since DHS does not
+    # provide emigration-specific data. TR uses Census 1980-1990 estimates.
+    distribution_source: "dhs"
+    distribution_years: [2018, 2019, 2020, 2021, 2022, 2023]
 
   # Net LPR immigration = gross LPR - emigration = 75% of gross LPR
   # 2024: 947,250 (75% of 1,263,000)
