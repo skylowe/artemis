@@ -354,6 +354,7 @@ get_mortality_file_layout <- function(year) {
       detail_age = c(start = 70, end = 73),   # Detail age (4 chars)
       sex = c(start = 69, end = 69),          # Sex (M/F)
       ucod = c(start = 146, end = 149),       # Underlying cause ICD-10
+      marital_status = c(start = 84, end = 84),  # S=single, M=married, W=widowed, D=divorced, U=unknown
       record_type = c(start = 1, end = 1)
     )
   } else if (year >= 2003) {
@@ -362,10 +363,12 @@ get_mortality_file_layout <- function(year) {
     #   Sex: position 69 (M/F)
     #   Detail Age: positions 70-73 (4 chars: unit + 3-digit value)
     #   Underlying Cause: positions 146-149
+    #   Marital Status: position 84 (S/M/W/D/U)
     list(
       detail_age = c(start = 70, end = 73),   # Detail age (4 chars)
       sex = c(start = 69, end = 69),          # Sex (M/F)
       ucod = c(start = 146, end = 149),       # Underlying cause ICD-10
+      marital_status = c(start = 84, end = 84),  # S=single, M=married, W=widowed, D=divorced, U=unknown
       record_type = c(start = 1, end = 1)
     )
   } else if (year >= 1979) {
@@ -378,10 +381,12 @@ get_mortality_file_layout <- function(year) {
     #     - Position 64: unit (0=years<100, 1=years 100+, 2=months, 3=weeks, 4=days, 5=hours, 6=minutes, 9=not stated)
     #     - Positions 65-66: number of units
     #   Underlying Cause ICD-9: positions 142-145
+    #   Marital Status: position 77 (1=single, 2=married, 3=widowed, 4=divorced, 8/9=unknown)
     list(
       detail_age = c(start = 64, end = 66),  # 3 chars for ICD-9 era
       sex = c(start = 59, end = 59),
       ucod = c(start = 142, end = 145),  # ICD-9 code (4 chars)
+      marital_status = c(start = 77, end = 77),  # 1=single, 2=married, 3=widowed, 4=divorced, 8/9=unknown
       record_type = c(start = 20, end = 20)
     )
   } else {
@@ -391,10 +396,12 @@ get_mortality_file_layout <- function(year) {
     #   Age: Location 39-41 (39=unit, 40-41=value)
     #     - Unit: 0=years<1, 1=years, 2=months, 3=weeks, 4=days, 5=hours, 6=minutes, 9=not stated
     #   Underlying Cause: Location 60-63 (ICD-8 code)
+    # Note: Marital status NOT available for 1968-1978
     list(
       detail_age = c(start = 39, end = 41),  # 3 chars: unit + 2-digit value
       sex = c(start = 35, end = 35),
       ucod = c(start = 60, end = 63),  # ICD-8 code (4 chars)
+      marital_status = NULL,  # Not available for ICD-8 era
       record_type = c(start = 11, end = 11)
     )
   }
@@ -438,11 +445,17 @@ read_mortality_fixed_width <- function(file_path, layout, year) {
     raw[line_len == 440, detail_age := substr(line, layout$detail_age[1], layout$detail_age[2])]
     raw[line_len == 440, sex := substr(line, layout$sex[1], layout$sex[2])]
     raw[line_len == 440, ucod := trimws(substr(line, layout$ucod[1], layout$ucod[2]))]
+    if (!is.null(layout$marital_status)) {
+      raw[line_len == 440, marital_status := substr(line, layout$marital_status[1], layout$marital_status[2])]
+    }
 
     # For 439-char records: use -1 offset
     raw[line_len == 439, detail_age := substr(line, layout$detail_age[1] - 1, layout$detail_age[2] - 1)]
     raw[line_len == 439, sex := substr(line, layout$sex[1] - 1, layout$sex[2] - 1)]
     raw[line_len == 439, ucod := trimws(substr(line, layout$ucod[1] - 1, layout$ucod[2] - 1))]
+    if (!is.null(layout$marital_status)) {
+      raw[line_len == 439, marital_status := substr(line, layout$marital_status[1] - 1, layout$marital_status[2] - 1)]
+    }
 
     raw[, line_len := NULL]
   } else {
@@ -451,6 +464,11 @@ read_mortality_fixed_width <- function(file_path, layout, year) {
     raw[, detail_age := substr(line, layout$detail_age[1], layout$detail_age[2])]
     raw[, sex := substr(line, layout$sex[1], layout$sex[2])]
     raw[, ucod := trimws(substr(line, layout$ucod[1], layout$ucod[2]))]
+
+    # Extract marital status if available (1979+)
+    if (!is.null(layout$marital_status)) {
+      raw[, marital_status := substr(line, layout$marital_status[1], layout$marital_status[2])]
+    }
   }
 
   # Remove the raw line column to save memory
@@ -1009,4 +1027,156 @@ aggregate_infant_deaths_to_groups <- function(infant_detail) {
   data.table::setorder(agg, year, sex, age_group, cause)
 
   agg
+}
+
+
+#' Fetch NCHS deaths by marital status
+#'
+#' @description
+#' Downloads and processes NCHS mortality microdata to extract deaths
+#' by single year of age, sex, and marital status. Used for calculating
+#' mortality differentials per TR2025 methodology.
+#'
+#' @param years Integer vector of years (1979-2022). Marital status not available before 1979.
+#' @param cache_dir Character: cache directory
+#' @param force_download Logical: if TRUE, re-download even if cached
+#'
+#' @return data.table with columns: year, age, sex, marital_status, deaths
+#'
+#' @details
+#' Marital status codes in NCHS files:
+#' - 2003-2022: S=Never married, M=Married, W=Widowed, D=Divorced, U=Unknown
+#' - 1979-2002: 1=Never married, 2=Married, 3=Widowed, 4=Divorced, 8/9=Unknown
+#'
+#' Deaths with unknown/not stated marital status are excluded from the output.
+#'
+#' @export
+fetch_nchs_deaths_by_marital_status <- function(
+    years = 2015:2019,
+    cache_dir = here::here("data/cache/nchs_deaths"),
+    force_download = FALSE
+) {
+  # Validate years - marital status only available from 1979
+  if (any(years < 1979)) {
+    cli::cli_abort("Marital status not available before 1979. Years must be >= 1979.")
+  }
+  if (any(years > 2022)) {
+    cli::cli_abort("Marital status data currently available through 2022.")
+  }
+
+  if (!dir.exists(cache_dir)) {
+    dir.create(cache_dir, recursive = TRUE)
+  }
+
+  results <- list()
+
+  for (yr in years) {
+    # Check for cached results
+    cache_file <- file.path(cache_dir, sprintf("deaths_by_marital_%d.rds", yr))
+
+    if (file.exists(cache_file) && !force_download) {
+      cli::cli_alert_success("Loading cached marital status deaths for {yr}")
+      results[[as.character(yr)]] <- readRDS(cache_file)
+      next
+    }
+
+    cli::cli_alert_info("Processing deaths by marital status for {yr}...")
+
+    # Get or download the mortality file
+    mort_file <- get_cached_mortality_file(yr, cache_dir)
+
+    if (is.null(mort_file)) {
+      cli::cli_alert_info("Downloading NCHS mortality data for {yr}...")
+      mort_file <- download_mortality_file(yr, cache_dir)
+    }
+
+    # Read fixed-width data with marital status
+    layout <- get_mortality_file_layout(yr)
+    raw <- read_mortality_fixed_width(mort_file, layout, yr)
+
+    # Process the data
+    result <- process_mortality_data_by_marital(raw, yr)
+
+    # Cache and store
+    saveRDS(result, cache_file)
+    cli::cli_alert_success("Cached marital status deaths for {yr}: {format(sum(result$deaths), big.mark=',')} deaths")
+    results[[as.character(yr)]] <- result
+  }
+
+  if (length(results) == 0) {
+    cli::cli_abort("No mortality data by marital status retrieved")
+  }
+
+  data.table::rbindlist(results, use.names = TRUE)
+}
+
+
+#' Process mortality data by marital status
+#'
+#' @param dt data.table from read_mortality_fixed_width
+#' @param year Data year
+#'
+#' @return data.table with year, age, sex, marital_status, deaths
+#'
+#' @keywords internal
+process_mortality_data_by_marital <- function(dt, year) {
+  cli::cli_alert("Processing mortality data by marital status...")
+
+  # Check that marital_status column exists
+  if (!"marital_status" %in% names(dt)) {
+    cli::cli_abort("Marital status column not found. Year {year} may not support marital status.")
+  }
+
+  # Process age - same as process_mortality_data
+  if (year >= 2003) {
+    dt[, detail_age_num := suppressWarnings(as.integer(detail_age))]
+    dt[detail_age_num >= 1000 & detail_age_num < 2000, age := detail_age_num - 1000L]
+    dt[detail_age_num >= 2000 & detail_age_num < 7000, age := 0L]
+    dt[detail_age_num >= 9000 | is.na(detail_age_num), age := NA_integer_]
+  } else {
+    dt[, age_unit := substr(detail_age, 1, 1)]
+    dt[, age_value := suppressWarnings(as.integer(substr(detail_age, 2, 3)))]
+    dt[age_unit == "0" & !is.na(age_value), age := age_value]
+    dt[age_unit == "1" & !is.na(age_value), age := 100L + age_value]
+    dt[age_unit %in% c("2", "3", "4", "5", "6"), age := 0L]
+    dt[age_unit == "9" | is.na(age_value), age := NA_integer_]
+    dt[, c("age_unit", "age_value") := NULL]
+  }
+
+  # Process sex
+  dt[, sex := data.table::fifelse(sex %in% c("M", "1"), "male",
+                       data.table::fifelse(sex %in% c("F", "2"), "female", NA_character_))]
+
+  # Process marital status
+  # Map codes to standard labels
+  if (year >= 2003) {
+    # 2003+: letter codes
+    dt[, marital_status_mapped := data.table::fcase(
+      marital_status == "S", "never_married",
+      marital_status == "M", "married",
+      marital_status == "W", "widowed",
+      marital_status == "D", "divorced",
+      default = NA_character_
+    )]
+  } else {
+    # 1979-2002: numeric codes
+    dt[, marital_status_mapped := data.table::fcase(
+      marital_status == "1", "never_married",
+      marital_status == "2", "married",
+      marital_status == "3", "widowed",
+      marital_status == "4", "divorced",
+      default = NA_character_
+    )]
+  }
+
+  # Filter to valid data (excluding unknown marital status)
+  dt <- dt[!is.na(age) & !is.na(sex) & !is.na(marital_status_mapped) & age >= 0 & age <= 119]
+
+  # Aggregate
+  result <- dt[, .(deaths = .N), by = .(age, sex, marital_status = marital_status_mapped)]
+  result[, year := year]
+  data.table::setcolorder(result, c("year", "age", "sex", "marital_status", "deaths"))
+  data.table::setorder(result, age, sex, marital_status)
+
+  result
 }

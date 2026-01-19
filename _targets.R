@@ -528,6 +528,34 @@ list(
   ),
 
   # ===========================================================================
+  # MORTALITY MARITAL STATUS DIFFERENTIALS (TR2025 Section 1.2.c)
+  # ===========================================================================
+
+  # NCHS deaths by marital status (2015-2019)
+  tar_target(
+    nchs_deaths_by_marital,
+    fetch_nchs_deaths_by_marital_status(years = 2015:2019),
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # ACS PUMS population by marital status (2015-2019)
+  tar_target(
+    acs_pop_by_marital,
+    fetch_acs_pums_marital_status(years = 2015:2019, ages = 0:99),
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # Calculate marital mortality factors per TR2025 methodology
+  tar_target(
+    mortality_marital_factors,
+    calculate_marital_mortality_factors(
+      nchs_deaths = nchs_deaths_by_marital,
+      acs_population = acs_pop_by_marital,
+      reference_years = 2015:2019
+    )
+  ),
+
+  # ===========================================================================
   # DATA ACQUISITION TARGETS - IMMIGRATION
   # ===========================================================================
 

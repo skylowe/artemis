@@ -1914,9 +1914,9 @@ calculate_qx_by_marital_status <- function(qx_total, marital_factors = NULL) {
   checkmate::assert_names(names(qx_total), must.include = c("age", "sex", "qx"))
 
   # Default marital status relative mortality factors
-  # These are simplified approximations of the SSA methodology
+  # Uses TR2025 methodology with real NCHS deaths and ACS population data
   if (is.null(marital_factors)) {
-    marital_factors <- get_default_marital_factors()
+    marital_factors <- get_marital_mortality_factors()
   }
 
   dt <- data.table::copy(qx_total)
@@ -1970,11 +1970,319 @@ calculate_qx_by_marital_status <- function(qx_total, marital_factors = NULL) {
   result
 }
 
-#' Get default marital status mortality factors
+# =============================================================================
+# Marital Status Mortality Differentials - TR2025 Methodology
+# =============================================================================
+
+#' Apply Whittaker-Henderson smoothing
 #'
 #' @description
-#' Returns default relative mortality factors by marital status, age, and sex.
-#' Based on empirical patterns from mortality research.
+#' Applies Whittaker-Henderson smoothing to a vector of values.
+#' Used per TR2025 methodology for smoothing death rates by single year of age.
+#'
+#' @param values Numeric vector of values to smooth
+#' @param degree Degree parameter (default: 2)
+#' @param smoothing Smoothing parameter (default: 0.01)
+#'
+#' @return Numeric vector of smoothed values
+#'
+#' @details
+#' Whittaker-Henderson smoothing minimizes:
+#'   sum(w * (y - z)^2) + smoothing * sum(diff(z, differences = degree)^2)
+#' where y is the input, z is the smoothed output, and w are weights (assumed 1).
+#'
+#' For TR2025 mortality differentials, uses degree=2 and smoothing=0.01 for ages 15-94.
+#'
+#' @references
+#' Whittaker, E. T. (1923). "On a New Method of Graduation".
+#' Proceedings of the Edinburgh Mathematical Society, 41, 63-75.
+#'
+#' @keywords internal
+whittaker_henderson_smooth <- function(values, degree = 2, smoothing = 0.5) {
+  n <- length(values)
+  if (n < degree + 1) {
+    return(values)  # Can't smooth if too few points
+  }
+
+  # Create identity matrix
+  I <- diag(n)
+
+  # Create difference matrix of specified degree
+  D <- diff(I, differences = degree)
+
+  # Solve the smoothing equation: (I + smoothing * D'D) * z = y
+  # Where z is the smoothed values
+  smoothing_matrix <- I + smoothing * crossprod(D)
+
+  # Solve for smoothed values
+  smoothed <- solve(smoothing_matrix, values)
+
+  as.numeric(smoothed)
+}
+
+
+#' Calculate marital status mortality factors from data
+#'
+#' @description
+#' Calculates relative mortality factors by marital status using NCHS deaths
+#' and ACS population data per TR2025 methodology (Section 1.2.c).
+#'
+#' @param nchs_deaths data.table with deaths by year, age, sex, marital_status
+#' @param acs_population data.table with population by year, age, sex, marital_status
+#' @param reference_years Years to use for calculation (default: 2015:2019)
+#'
+#' @return data.table with columns: age, sex, marital_status, relative_factor
+#'
+#' @details
+#' Implements the 7-step TR2025 methodology:
+#' 1. Calculate preliminary death rates (deaths / population)
+#' 2. Adjust older age rates for consistency
+#' 3. Converge all marital statuses to same rate at age 95
+#' 4. Ages under 15 use total death rates (no differential)
+#' 5. Apply Whittaker-Henderson smoothing (degree=2, smoothing=0.5) for ages 15-94
+#' 6. Adjust ages 15-20 non-single to match age 21 ratio
+#' 7. Convert to relative factors (married = 1.0 reference)
+#'
+#' @export
+calculate_marital_mortality_factors <- function(
+    nchs_deaths,
+    acs_population,
+    reference_years = 2015:2019
+) {
+  checkmate::assert_data_table(nchs_deaths)
+  checkmate::assert_data_table(acs_population)
+  checkmate::assert_names(
+    names(nchs_deaths),
+    must.include = c("year", "age", "sex", "marital_status", "deaths")
+  )
+  checkmate::assert_names(
+    names(acs_population),
+    must.include = c("year", "age", "sex", "marital_status", "population")
+  )
+
+  cli::cli_alert_info("Calculating marital mortality factors from data...")
+
+  # Filter to reference years
+  deaths <- nchs_deaths[year %in% reference_years]
+  pop <- acs_population[year %in% reference_years]
+
+  # Handle separated marital status in ACS (combine with married)
+  pop[marital_status == "separated", marital_status := "married"]
+
+  # Step 1: Calculate preliminary death rates
+  # Aggregate deaths and population across reference years
+  deaths_agg <- deaths[, .(deaths = sum(deaths)), by = .(age, sex, marital_status)]
+  pop_agg <- pop[, .(population = sum(population)), by = .(age, sex, marital_status)]
+
+  # Merge deaths and population
+  rates <- merge(deaths_agg, pop_agg, by = c("age", "sex", "marital_status"), all = TRUE)
+
+  # Handle missing combinations
+  rates[is.na(deaths), deaths := 0]
+  rates[is.na(population) | population == 0, population := NA_real_]
+
+  # Calculate death rate
+  rates[, death_rate := deaths / population]
+
+  # Step 2: Adjust older age populations and death rates for consistency
+  # For ages 85+, use ratio-based adjustment to ensure smooth progression
+  for (sx in c("male", "female")) {
+    for (ms in unique(rates$marital_status)) {
+      # Get rates for this sex/marital status
+      idx <- rates$sex == sx & rates$marital_status == ms & rates$age >= 80 & rates$age <= 94
+      subset_rates <- rates[idx]
+
+      if (nrow(subset_rates) > 0) {
+        # Fill in missing older age rates using extrapolation
+        for (a in 85:94) {
+          if (is.na(rates[age == a & sex == sx & marital_status == ms, death_rate]) ||
+              rates[age == a & sex == sx & marital_status == ms, population] < 1000) {
+            # Use rate progression from younger ages
+            prev_rate <- rates[age == a - 1 & sex == sx & marital_status == ms, death_rate]
+            if (!is.na(prev_rate) && prev_rate > 0) {
+              # Assume ~8% increase per year for older ages
+              rates[age == a & sex == sx & marital_status == ms, death_rate := prev_rate * 1.08]
+            }
+          }
+        }
+      }
+    }
+  }
+
+  # Step 3: Convergence at age 95
+  # Calculate total death rate (all marital statuses combined) at each age
+  total_deaths <- deaths_agg[, .(total_deaths = sum(deaths)), by = .(age, sex)]
+  total_pop <- pop_agg[, .(total_pop = sum(population)), by = .(age, sex)]
+  total_rates <- merge(total_deaths, total_pop, by = c("age", "sex"))
+  total_rates[, total_rate := total_deaths / total_pop]
+
+  # Linear interpolation from age 85 to 95 toward total rate
+  for (sx in c("male", "female")) {
+    total_rate_95 <- total_rates[age == 94 & sex == sx, total_rate] * 1.08
+    if (is.na(total_rate_95) || length(total_rate_95) == 0) {
+      total_rate_95 <- 0.4  # Fallback for age 95
+    }
+
+    for (ms in unique(rates$marital_status)) {
+      for (a in 85:94) {
+        current_rate <- rates[age == a & sex == sx & marital_status == ms, death_rate]
+        if (!is.na(current_rate)) {
+          # Blend toward total rate: weight increases linearly from 0 at 85 to 1 at 95
+          blend_weight <- (a - 85) / 10
+          target_rate <- total_rates[age == a & sex == sx, total_rate]
+          if (!is.na(target_rate)) {
+            blended <- current_rate * (1 - blend_weight) + target_rate * blend_weight
+            rates[age == a & sex == sx & marital_status == ms, death_rate := blended]
+          }
+        }
+      }
+      # At age 95+, use total rate
+      rates[age >= 95 & sex == sx & marital_status == ms, death_rate := total_rate_95]
+    }
+  }
+
+  # Step 4: Ages under 15 - assign total death rates (no marital differential)
+  for (sx in c("male", "female")) {
+    for (a in 0:14) {
+      total_rate_a <- total_rates[age == a & sex == sx, total_rate]
+      if (length(total_rate_a) == 0 || is.na(total_rate_a)) {
+        total_rate_a <- 0.001  # Fallback
+      }
+      for (ms in unique(rates$marital_status)) {
+        rates[age == a & sex == sx & marital_status == ms, death_rate := total_rate_a]
+      }
+    }
+  }
+
+  # Step 5: Whittaker-Henderson smoothing for ages 15-94
+  for (sx in c("male", "female")) {
+    for (ms in unique(rates$marital_status)) {
+      # Get death rates for ages 15-94 in age order
+      subset_rows <- rates[sex == sx & marital_status == ms & age >= 15 & age <= 94]
+      setorder(subset_rows, age)
+
+      dr_values <- subset_rows$death_rate
+
+      # Handle any remaining NAs by interpolation
+      if (any(is.na(dr_values))) {
+        dr_values <- stats::approx(
+          x = which(!is.na(dr_values)),
+          y = dr_values[!is.na(dr_values)],
+          xout = seq_along(dr_values),
+          rule = 2
+        )$y
+      }
+
+      # Apply smoothing
+      smoothed <- whittaker_henderson_smooth(dr_values, degree = 2, smoothing = 0.5)
+
+      # Store back - update rates table by age (avoids data.table chained subset bug)
+      ages_to_update <- subset_rows$age
+      for (i in seq_along(ages_to_update)) {
+        rates[sex == sx & marital_status == ms & age == ages_to_update[i],
+              death_rate := smoothed[i]]
+      }
+    }
+  }
+
+  # Step 6: Adjust ages 15-20 non-single marital statuses
+  # Use ratio relative to never_married at age 21
+  for (sx in c("male", "female")) {
+    never_married_21 <- rates[age == 21 & sex == sx & marital_status == "never_married", death_rate]
+    if (is.na(never_married_21) || length(never_married_21) == 0) next
+
+    for (ms in c("married", "widowed", "divorced")) {
+      ratio_21 <- rates[age == 21 & sex == sx & marital_status == ms, death_rate] / never_married_21
+      if (is.na(ratio_21) || length(ratio_21) == 0) next
+
+      for (a in 15:20) {
+        nm_rate <- rates[age == a & sex == sx & marital_status == "never_married", death_rate]
+        if (!is.na(nm_rate)) {
+          rates[age == a & sex == sx & marital_status == ms, death_rate := nm_rate * ratio_21]
+        }
+      }
+    }
+  }
+
+  # Step 7: Convert to relative factors (married = 1.0 reference)
+  # Calculate factors relative to married for each age/sex
+  married_rates <- rates[marital_status == "married", .(age, sex, married_rate = death_rate)]
+  rates <- merge(rates, married_rates, by = c("age", "sex"), all.x = TRUE)
+
+  # Calculate relative factor
+  rates[, relative_factor := death_rate / married_rate]
+
+  # Handle edge cases (NA/Inf from division issues)
+  rates[is.na(relative_factor) | is.infinite(relative_factor), relative_factor := 1.0]
+  rates[marital_status == "married", relative_factor := 1.0]
+
+  # Note: No caps applied - TR2025 methodology relies on:
+  # - Whittaker-Henderson smoothing (step 5) to handle noise
+  # - Age 15-20 adjustment (step 6) to handle sparse young age data
+  # - Convergence at age 95 (step 3) for oldest ages
+
+  # Select output columns
+  result <- rates[, .(age, sex, marital_status, relative_factor)]
+  data.table::setorder(result, sex, marital_status, age)
+
+  cli::cli_alert_success("Calculated marital mortality factors for {nrow(result)} age/sex/status combinations")
+
+  result
+}
+
+
+#' Get marital status mortality factors
+#'
+#' @description
+#' Returns relative mortality factors by marital status, age, and sex.
+#' Calculated from NCHS deaths and ACS population data per TR2025 methodology.
+#'
+#' @param use_cache Logical: if TRUE, use cached factors if available
+#' @param cache_dir Character: directory for cached factors
+#'
+#' @return data.table with columns: age, sex, marital_status, relative_factor
+#'
+#' @export
+get_marital_mortality_factors <- function(
+    use_cache = TRUE,
+    cache_dir = here::here("data/cache/mortality")
+) {
+  cache_file <- file.path(cache_dir, "marital_mortality_factors.rds")
+
+  if (use_cache && file.exists(cache_file)) {
+    cli::cli_alert_success("Loading cached marital mortality factors")
+    return(readRDS(cache_file))
+  }
+
+  cli::cli_alert_info("Fetching data and calculating marital mortality factors...")
+
+  # Fetch NCHS deaths by marital status
+  nchs_deaths <- fetch_nchs_deaths_by_marital_status(years = 2015:2019)
+
+  # Fetch ACS PUMS population by marital status
+  acs_pop <- fetch_acs_pums_marital_status(years = 2015:2019, ages = 0:99)
+
+  # Calculate factors
+  factors <- calculate_marital_mortality_factors(
+    nchs_deaths = nchs_deaths,
+    acs_population = acs_pop,
+    reference_years = 2015:2019
+  )
+
+  # Cache results
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+  saveRDS(factors, cache_file)
+  cli::cli_alert_success("Cached marital mortality factors to {cache_file}")
+
+  factors
+}
+
+
+#' Get default marital status mortality factors (DEPRECATED)
+#'
+#' @description
+#' Returns fabricated relative mortality factors by marital status, age, and sex.
+#' DEPRECATED: Use `get_marital_mortality_factors()` for real data-based factors.
 #'
 #' @return data.table with columns: age, sex, marital_status, relative_factor
 #'
