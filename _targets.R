@@ -495,8 +495,7 @@ list(
         # For tr_qx, aggregate ages 100+ into age 100 to match our 100+ approach
         # TR2025 files have ages 0-119, but we model 100+ as single open-ended group
         qx_proj[age > 100, age := 100L]
-        qx_proj <- qx_proj[, .(qx = weighted.mean(qx, w = 1, na.rm = TRUE)),
-                           by = .(year, age, sex)]
+        qx_proj <- qx_proj[, .(qx = mean(qx, na.rm = TRUE)), by = .(year, age, sex)]
         return(qx_proj)
       }
 
