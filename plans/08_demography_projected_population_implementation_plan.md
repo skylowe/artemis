@@ -1456,7 +1456,7 @@ validate_projected_population_comprehensive <- function(projection_results,
 | [x] | 8B.3 | Implement calculate_net_immigration() | 8A.3, 8A.4 | Net immigration function |
 | [x] | 8B.4 | Implement project_population_year() | 8B.1-8B.3 | Year projection function |
 | [x] | 8B.5 | Implement run_population_projection() | 8B.4 | Full projection (Eq 1.8.4) |
-| [ ] | 8B.6 | Validate against TR2025 population files | 8B.5 | Validation report |
+| [x] | 8B.6 | Validate against TR2025 population files | 8B.5 | Validation report |
 
 ### Phase 8C: Marital Status Projection (Equation 1.8.5)
 

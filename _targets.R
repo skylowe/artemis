@@ -1520,9 +1520,156 @@ list(
   ),
 
   # ===========================================================================
+  # PHASE 8C: MARITAL STATUS DISAGGREGATION (Equation 1.8.5)
+  # ===========================================================================
+  # Disaggregates Phase 8B population totals into marital statuses (single,
+  # married, divorced, widowed). The sum of marital status populations equals
+  # Phase 8B totals exactly - this is a disaggregation, not independent projection.
+
+  # Extract starting marital population (Dec 31 of starting year)
+  tar_target(
+    starting_marital_pop,
+    {
+      cli::cli_h2("Extracting Starting Marital Population")
+      starting_year <- config_assumptions$projected_population$starting_year
+
+      # Get from historical_population_marital
+      marital_data <- historical_population_marital[year == starting_year]
+
+      # Aggregate by age, sex, marital_status (remove orientation if present)
+      if ("orientation" %in% names(marital_data)) {
+        marital_data <- marital_data[, .(population = sum(population, na.rm = TRUE)),
+                                      by = .(year, age, sex, marital_status)]
+      }
+
+      # Standardize marital status names
+      if ("never_married" %in% marital_data$marital_status) {
+        marital_data[marital_status == "never_married", marital_status := "single"]
+      }
+
+      total_pop <- sum(marital_data$population, na.rm = TRUE)
+      married_pop <- marital_data[marital_status == "married", sum(population, na.rm = TRUE)]
+
+      cli::cli_alert_success(
+        "Starting marital population: {format(round(total_pop/1e6, 2), big.mark=',')}M total, {format(round(married_pop/1e6, 2), big.mark=',')}M married"
+      )
+
+      marital_data
+    }
+  ),
+
+  # Run marital status projection (Phase 8C main)
+  tar_target(
+    marital_projection,
+    {
+      run_marital_projection(
+        phase8b_result = population_projection,
+        starting_marital = starting_marital_pop,
+        mortality_differentials = mortality_marital_factors,
+        marriage_rates = marriage_projection,
+        divorce_rates = divorce_projection,
+        mortality_qx = mortality_qx_for_projection,
+        start_year = config_assumptions$projected_population$starting_year,
+        end_year = config_assumptions$projected_population$projection_end,
+        min_age = config_assumptions$projected_population$ages$marriage_min,
+        max_age = config_assumptions$projected_population$ages$max_age_group,
+        verbose = TRUE
+      )
+    }
+  ),
+
+  # Extract projected marital population
+  tar_target(
+    projected_marital_population,
+    {
+      marital_projection$marital_population
+    }
+  ),
+
+  # Extract marital projection summary
+  tar_target(
+    marital_projection_summary,
+    {
+      marital_projection$summary
+    }
+  ),
+
+  # Phase 8C validation: Verify sum of marital statuses equals Phase 8B totals
+  tar_target(
+    marital_validation,
+    {
+      cli::cli_h2("Phase 8C Validation: Marital Status Totals")
+
+      marital_pop <- marital_projection$marital_population
+      phase8b_pop <- population_projection$population
+
+      # Aggregate marital by year, age, sex
+      marital_totals <- marital_pop[, .(marital_total = sum(population, na.rm = TRUE)),
+                                     by = .(year, age, sex)]
+
+      # Aggregate Phase 8B by year, age, sex (ages 14-100)
+      min_age <- config_assumptions$projected_population$ages$marriage_min
+      max_age <- config_assumptions$projected_population$ages$max_age_group
+
+      phase8b_totals <- phase8b_pop[age >= min_age & age <= max_age,
+                                     .(phase8b_total = sum(population, na.rm = TRUE)),
+                                     by = .(year, age, sex)]
+
+      # Merge and compare
+      comparison <- merge(marital_totals, phase8b_totals,
+                          by = c("year", "age", "sex"), all = TRUE)
+
+      comparison[is.na(marital_total), marital_total := 0]
+      comparison[is.na(phase8b_total), phase8b_total := 0]
+
+      comparison[, diff := abs(marital_total - phase8b_total)]
+      comparison[phase8b_total > 0, pct_diff := diff / phase8b_total * 100]
+
+      # Summary statistics
+      max_pct_diff <- comparison[, max(pct_diff, na.rm = TRUE)]
+      mean_pct_diff <- comparison[, mean(pct_diff, na.rm = TRUE)]
+      n_large_diff <- comparison[pct_diff > 1, .N]
+
+      cli::cli_alert_info("Max percentage difference: {round(max_pct_diff, 4)}%")
+      cli::cli_alert_info("Mean percentage difference: {round(mean_pct_diff, 6)}%")
+
+      # Validation passes if difference is essentially zero (within floating point tolerance)
+      tolerance <- 0.01  # 0.01% tolerance
+
+      if (max_pct_diff < tolerance) {
+        cli::cli_alert_success("PASS: Marital totals match Phase 8B totals (max diff < {tolerance}%)")
+        valid <- TRUE
+      } else {
+        cli::cli_alert_warning("WARNING: Some differences > {tolerance}% ({n_large_diff} cells)")
+        valid <- FALSE
+      }
+
+      # Check married population trajectory
+      married_summary <- marital_pop[marital_status == "married",
+                                      .(married = sum(population, na.rm = TRUE) / 1e6),
+                                      by = year]
+
+      years <- c(min(married_summary$year), 2050, max(married_summary$year))
+      for (yr in years) {
+        married_val <- married_summary[year == yr, married]
+        if (length(married_val) > 0) {
+          cli::cli_alert_info("Married population {yr}: {format(round(married_val, 2), nsmall=2)}M")
+        }
+      }
+
+      list(
+        valid = valid,
+        max_pct_diff = max_pct_diff,
+        mean_pct_diff = mean_pct_diff,
+        comparison = comparison,
+        married_trajectory = married_summary
+      )
+    }
+  ),
+
+  # ===========================================================================
   # PLACEHOLDER: Future process targets will be added here
   # ===========================================================================
-  # - Projected population marital status targets (Phase 8C)
   # - Projected population children targets (Phase 8D)
   # - Projected population CNI targets (Phase 8E)
   # - Economics process targets
