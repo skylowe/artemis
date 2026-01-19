@@ -675,6 +675,29 @@ run_full_o_projection <- function(historical_o_pop,
   cli::cli_alert_info("Projection years: {min(projection_years)}-{max(projection_years)}")
 
   # -------------------------------------------------------------------------
+  # Load config if not provided
+  # -------------------------------------------------------------------------
+  if (is.null(config)) {
+    config <- yaml::read_yaml("config/assumptions/tr2025.yaml")
+  }
+
+  # -------------------------------------------------------------------------
+  # Check emigration mode (dynamic vs constant)
+  # -------------------------------------------------------------------------
+  dynamic_setting <- config$immigration$o_immigration$dynamic_emigration
+
+  use_dynamic_emigration <- TRUE
+  if (!is.null(dynamic_setting)) {
+    use_dynamic_emigration <- dynamic_setting
+  }
+
+  if (use_dynamic_emigration) {
+    cli::cli_alert_info("Mode: Dynamic emigration (grows with O stock)")
+  } else {
+    cli::cli_alert_info("Mode: Constant net O (TR2025 assumption)")
+  }
+
+  # -------------------------------------------------------------------------
   # Step 1: Get starting population (last historical year)
   # -------------------------------------------------------------------------
   cli::cli_h2("Step 1: Preparing Starting Population")
@@ -768,48 +791,97 @@ run_full_o_projection <- function(historical_o_pop,
   cli::cli_alert_success("Calculated base departure rates")
 
   # -------------------------------------------------------------------------
-  # Step 5: Project O Emigration (Equation 1.5.2)
+  # Steps 5-7: Emigration, Net O, and Population Stock
   # -------------------------------------------------------------------------
-  cli::cli_h2("Step 5: Projecting O Emigration (Equation 1.5.2)")
+  # Two modes:
+  # 1. Dynamic: Emigration grows with O population stock (more realistic)
+  # 2. Constant: Use fixed net O from TR2025 assumptions (matches official projection)
 
-  # Run emigration projection with cohort tracking
-  emigration_result <- run_o_emigration_with_cohorts(
-    starting_population = starting_pop,
-    base_rates = base_rates,
-    projection_years = projection_years,
-    o_immigration = o_immigration,
-    aos = lpr_aos,
-    mortality_qx = mortality_qx,
-    config = config,
-    recent_threshold = 5
-  )
+  if (use_dynamic_emigration) {
+    # -----------------------------------------------------------------------
+    # DYNAMIC MODE: Calculate emigration from population × departure rates
+    # -----------------------------------------------------------------------
+    cli::cli_h2("Step 5: Projecting O Emigration (Dynamic Mode)")
 
-  o_emigration <- emigration_result$emigration
+    emigration_result <- run_o_emigration_with_cohorts(
+      starting_population = starting_pop,
+      base_rates = base_rates,
+      projection_years = projection_years,
+      o_immigration = o_immigration,
+      aos = lpr_aos,
+      mortality_qx = mortality_qx,
+      config = config,
+      recent_threshold = 5
+    )
 
-  # -------------------------------------------------------------------------
-  # Step 6: Calculate Net O Immigration (Equation 1.5.3)
-  # -------------------------------------------------------------------------
-  cli::cli_h2("Step 6: Calculating Net O Immigration (Equation 1.5.3)")
+    o_emigration <- emigration_result$emigration
+    cohort_stats <- emigration_result$cohort_stats
 
-  net_o <- calculate_net_o_immigration(
-    o_immigration = o_immigration,
-    o_emigration = o_emigration,
-    aos = lpr_aos
-  )
+    cli::cli_h2("Step 6: Calculating Net O Immigration (Dynamic)")
 
-  # -------------------------------------------------------------------------
-  # Step 7: Project O Population Stock (Equation 1.5.4)
-  # -------------------------------------------------------------------------
-  cli::cli_h2("Step 7: Projecting O Population Stock (Equation 1.5.4)")
+    net_o <- calculate_net_o_immigration(
+      o_immigration = o_immigration,
+      o_emigration = o_emigration,
+      aos = lpr_aos
+    )
 
-  o_population <- project_o_population_stock(
-    starting_pop = starting_pop,
-    o_immigration = o_immigration,
-    o_emigration = o_emigration,
-    aos = lpr_aos,
-    mortality_qx = mortality_qx,
-    projection_years = projection_years
-  )
+    cli::cli_h2("Step 7: Projecting O Population Stock")
+
+    o_population <- project_o_population_stock(
+      starting_pop = starting_pop,
+      o_immigration = o_immigration,
+      o_emigration = o_emigration,
+      aos = lpr_aos,
+      mortality_qx = mortality_qx,
+      projection_years = projection_years
+    )
+
+  } else {
+    # -----------------------------------------------------------------------
+    # CONSTANT MODE: Use fixed net O from config (TR2025 assumption)
+    # -----------------------------------------------------------------------
+    cli::cli_h2("Steps 5-6: Using Constant Net O (TR2025 Mode)")
+
+    # Get constant net O values from config
+    ultimate_net_o <- config$immigration$o_immigration$ultimate_net_o
+    transition_net_o <- config$immigration$o_immigration$transition_net_o
+
+    if (is.null(ultimate_net_o)) ultimate_net_o <- 550000
+    if (is.null(transition_net_o)) transition_net_o <- 1250000
+
+    cli::cli_alert_info("Ultimate net O: {format(ultimate_net_o, big.mark = ',')}")
+    cli::cli_alert_info("Transition net O (2025): {format(transition_net_o, big.mark = ',')}")
+
+    # Calculate constant net O by year
+    net_o <- calculate_constant_net_o(
+      o_immigration = o_immigration,
+      odist = odist,
+      projection_years = projection_years,
+      ultimate_net_o = ultimate_net_o,
+      transition_net_o = transition_net_o,
+      transition_year = min(projection_years)
+    )
+
+    # For constant mode, emigration is implied (gross - net - AOS)
+    o_emigration <- calculate_implied_o_emigration(
+      o_immigration = o_immigration,
+      net_o = net_o,
+      aos = lpr_aos
+    )
+
+    cohort_stats <- NULL
+
+    cli::cli_h2("Step 7: Projecting O Population Stock (Constant Net O)")
+
+    o_population <- project_o_population_stock(
+      starting_pop = starting_pop,
+      o_immigration = o_immigration,
+      o_emigration = o_emigration,
+      aos = lpr_aos,
+      mortality_qx = mortality_qx,
+      projection_years = projection_years
+    )
+  }
 
   # -------------------------------------------------------------------------
   # Summary
@@ -833,8 +905,129 @@ run_full_o_projection <- function(historical_o_pop,
     odist = odist,
     departure_rates = base_rates,
     assumptions = assumptions,
-    cohort_stats = emigration_result$cohort_stats
+    cohort_stats = cohort_stats,
+    mode = if (use_dynamic_emigration) "dynamic" else "constant"
   )
+}
+
+#' Calculate constant net O immigration (TR2025 mode)
+#'
+#' @description
+#' Calculates net O immigration using constant annual values matching
+#' TR2025 Table V.A2 assumptions. Distributes the total by age/sex/type
+#' using the ODIST distribution.
+#'
+#' @param o_immigration Gross O immigration with ODIST applied
+#' @param odist ODIST distribution by age, sex, type
+#' @param projection_years Years to project
+#' @param ultimate_net_o Ultimate net O immigration (default: 550,000)
+#' @param transition_net_o Transition year net O (default: 1,250,000)
+#' @param transition_year First projection year (uses transition value)
+#'
+#' @return data.table with net_o_immigration by year, age, sex, type
+#'
+#' @keywords internal
+calculate_constant_net_o <- function(o_immigration,
+                                      odist,
+                                      projection_years,
+                                      ultimate_net_o = 550000,
+                                      transition_net_o = 1250000,
+                                      transition_year = 2023) {
+
+  # Create net O totals by year
+  net_o_by_year <- data.table::data.table(
+    year = projection_years,
+    total_net_o = ifelse(projection_years == transition_year,
+                         transition_net_o,
+                         ultimate_net_o)
+  )
+
+  # Get age/sex/type distribution from ODIST
+  # Normalize ODIST to sum to 1
+  dist <- data.table::copy(odist)
+  if ("odist" %in% names(dist)) {
+    dist[, prop := odist / sum(odist)]
+  } else if ("avg_o_immigration" %in% names(dist)) {
+    dist[, prop := avg_o_immigration / sum(avg_o_immigration)]
+  } else {
+    # Equal distribution as fallback
+    dist[, prop := 1 / .N]
+  }
+
+  # Expand to all years
+  result_list <- list()
+  for (yr in projection_years) {
+    yr_total <- net_o_by_year[year == yr, total_net_o]
+    yr_dist <- data.table::copy(dist)
+    yr_dist[, year := yr]
+    yr_dist[, net_o_immigration := prop * yr_total]
+    result_list[[as.character(yr)]] <- yr_dist[, .(year, age, sex, type, net_o_immigration)]
+  }
+
+  result <- data.table::rbindlist(result_list)
+  data.table::setorder(result, year, type, sex, age)
+
+  cli::cli_alert_success(
+    "Calculated constant net O: {format(sum(result$net_o_immigration), big.mark = ',')} total"
+  )
+
+  result
+}
+
+#' Calculate implied O emigration from gross and net
+#'
+#' @description
+#' When using constant net O mode, calculates the implied emigration
+#' as: emigration = gross_immigration - net_immigration - AOS
+#'
+#' @param o_immigration Gross O immigration
+#' @param net_o Net O immigration
+#' @param aos Adjustments of status (optional)
+#'
+#' @return data.table with emigration by year, age, sex, type
+#'
+#' @keywords internal
+calculate_implied_o_emigration <- function(o_immigration, net_o, aos = NULL) {
+
+  # Merge gross and net by year, age, sex, type
+  merged <- merge(
+    o_immigration[, .(year, age, sex, type, gross = o_immigration)],
+    net_o[, .(year, age, sex, type, net = net_o_immigration)],
+    by = c("year", "age", "sex", "type"),
+    all = TRUE
+  )
+
+  merged[is.na(gross), gross := 0]
+  merged[is.na(net), net := 0]
+
+ # Add AOS if available
+  if (!is.null(aos) && nrow(aos) > 0) {
+    aos_dt <- data.table::copy(aos)
+    if ("aos" %in% names(aos_dt)) {
+      # Aggregate AOS by year, age, sex (type is not typically in AOS)
+      aos_agg <- aos_dt[, .(aos = sum(aos)), by = .(year, age, sex)]
+      merged <- merge(merged, aos_agg, by = c("year", "age", "sex"), all.x = TRUE)
+      merged[is.na(aos), aos := 0]
+    } else {
+      merged[, aos := 0]
+    }
+  } else {
+    merged[, aos := 0]
+  }
+
+  # Calculate implied emigration: emigration = gross - net - AOS
+  # Note: In constant mode, this can be negative if net > gross - AOS
+  # We floor at 0 since negative emigration doesn't make sense
+  merged[, emigration := pmax(0, gross - net - aos)]
+
+  result <- merged[, .(year, age, sex, type, emigration)]
+  data.table::setorder(result, year, type, sex, age)
+
+  cli::cli_alert_success(
+    "Calculated implied emigration: {format(sum(result$emigration), big.mark = ',')} total"
+  )
+
+  result
 }
 
 #' Calculate simplified departure rates
