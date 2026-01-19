@@ -916,3 +916,551 @@ get_projected_population_config <- function() {
     )
   )
 }
+
+# =============================================================================
+# PHASE 8B: CORE POPULATION PROJECTION (Equations 1.8.1-1.8.4)
+# =============================================================================
+
+#' Calculate projected births for a year (Equation 1.8.1)
+#'
+#' @description
+#' Calculates the number of births in the Social Security area for a given year
+#' by applying age-specific birth rates to the midyear female population aged 14-49.
+#'
+#' TR2025 Formula:
+#' B_x^z = b_x^z * ((FP_x^z + FP_x^{z+1}) / 2)
+#'
+#' Where:
+#' - B_x^z = number of births to mothers age x in year z
+#' - b_x^z = birth rate of mothers age x in year z
+#' - FP_x^z = female population age x at beginning of year z
+#'
+#' Total births are disaggregated by:
+#' - Sex: 1,048 males per 1,000 females
+#' - Population status: 2.5% of boys are gay, 4.5% of girls are lesbian
+#'
+#' @param year Integer: projection year
+#' @param birth_rates data.table: birth rates by year and age (14-49)
+#' @param population_start data.table: population at beginning of year by age, sex, pop_status
+#' @param population_end data.table: population at end of year (or NULL to estimate)
+#' @param config List: configuration parameters
+#'
+#' @return data.table with columns: year, sex, pop_status, births
+#'
+#' @details
+#' The midyear female population is estimated as the average of beginning and end
+#' of year populations. If end-of-year population is not available, the beginning
+#' of year population is used (conservative estimate).
+#'
+#' @export
+calculate_projected_births <- function(year,
+                                        birth_rates,
+                                        population_start,
+                                        population_end = NULL,
+                                        config = NULL) {
+
+  if (is.null(config)) {
+    config <- get_projected_population_config()
+  }
+
+  # Get birth rates for this year
+  target_year <- year  # Create local variable for data.table subsetting
+  year_rates <- birth_rates[year == target_year]
+
+  if (nrow(year_rates) == 0) {
+    cli::cli_abort("No birth rates available for year {year}")
+  }
+
+  # Get female population at beginning of year (ages 14-49)
+  female_start <- population_start[
+    sex == "female" & age >= config$ages$mothers_min & age <= config$ages$mothers_max
+  ]
+
+  # Sum across population statuses to get total female population by age
+  female_by_age <- female_start[, .(pop_start = sum(population)), by = age]
+
+  # Estimate midyear population
+  if (!is.null(population_end)) {
+    female_end <- population_end[
+      sex == "female" & age >= config$ages$mothers_min & age <= config$ages$mothers_max
+    ]
+    female_end_by_age <- female_end[, .(pop_end = sum(population)), by = age]
+    female_by_age <- merge(female_by_age, female_end_by_age, by = "age", all.x = TRUE)
+    female_by_age[is.na(pop_end), pop_end := pop_start]
+    female_by_age[, midyear_pop := (pop_start + pop_end) / 2]
+  } else {
+    # Use beginning of year as estimate (will be refined in iterative projection)
+    female_by_age[, midyear_pop := pop_start]
+  }
+
+  # Merge with birth rates
+  births_by_age <- merge(
+    female_by_age,
+    year_rates[, .(age, birth_rate)],
+    by = "age",
+    all.x = TRUE
+  )
+
+  # Calculate births by age of mother: B_x = b_x * midyear_pop
+  births_by_age[, births := birth_rate * midyear_pop]
+
+  # Total births
+
+  total_births <- sum(births_by_age$births, na.rm = TRUE)
+
+  # Disaggregate by sex using sex ratio at birth
+  # TR2025: 1,048 males per 1,000 females
+  sex_ratio <- config$sex_ratio_at_birth
+  male_fraction <- sex_ratio / (sex_ratio + 1000)
+  female_fraction <- 1000 / (sex_ratio + 1000)
+
+  male_births <- total_births * male_fraction
+  female_births <- total_births * female_fraction
+
+  # Disaggregate by population status
+  # TR2025: 2.5% of boys are gay, 4.5% of girls are lesbian
+  gay_pct <- config$population_status$gay_percent
+  lesbian_pct <- config$population_status$lesbian_percent
+
+  result <- data.table::data.table(
+    year = year,
+    sex = c("male", "male", "female", "female"),
+    pop_status = c("heterosexual", "gay", "heterosexual", "lesbian"),
+    births = c(
+      male_births * (1 - gay_pct),      # heterosexual males
+      male_births * gay_pct,             # gay males
+      female_births * (1 - lesbian_pct), # heterosexual females
+      female_births * lesbian_pct        # lesbian females
+    )
+  )
+
+  result
+}
+
+#' Calculate projected deaths for a year (Equation 1.8.2)
+#'
+#' @description
+#' Calculates the number of deaths in the Social Security area for a given year
+#' by applying death probabilities to the exposed population at beginning of year.
+#'
+#' TR2025 Formula:
+#' D_{x,s,p}^z = q_{x,s}^z * P_{x,s,p}^z
+#'
+#' Where:
+#' - D = deaths by age, sex, population status
+#' - q = death probability from MORTALITY subprocess
+#' - P = population at beginning of year
+#'
+#' @param year Integer: projection year
+#' @param mortality_qx data.table: death probabilities by year, age, sex
+#' @param population data.table: population at beginning of year by age, sex, pop_status
+#' @param config List: configuration parameters
+#'
+#' @return data.table with columns: year, age, sex, pop_status, deaths
+#'
+#' @export
+calculate_projected_deaths <- function(year,
+                                        mortality_qx,
+                                        population,
+                                        config = NULL) {
+
+  if (is.null(config)) {
+    config <- get_projected_population_config()
+  }
+
+  target_year <- year  # Create local variable for data.table subsetting
+
+  # Get death probabilities for this year
+  year_qx <- mortality_qx[year == target_year, .(age, sex, qx)]
+
+  if (nrow(year_qx) == 0) {
+    cli::cli_abort("No death probabilities available for year {year}")
+  }
+
+  # Merge population with death probabilities
+  deaths <- merge(
+    population[, .(year = target_year, age, sex, pop_status, population)],
+    year_qx,
+    by = c("age", "sex"),
+    all.x = TRUE
+  )
+
+  # For ages without qx data, use qx = 0 (should not happen for ages 0-119)
+  deaths[is.na(qx), qx := 0]
+
+  # Calculate deaths: D = q * P
+  deaths[, deaths := qx * population]
+
+  # Return result
+  deaths[, .(year, age, sex, pop_status, deaths)]
+}
+
+#' Calculate total net immigration for a year (Equation 1.8.3)
+#'
+#' @description
+#' Combines net LPR immigration and net O (temporary/unlawfully present) immigration
+#' into total net immigration by age, sex, and population status.
+#'
+#' TR2025 Formula:
+#' NI_{x,s}^z = NL_{x,s}^z + NO_{x,s}^z
+#'
+#' Where:
+#' - NI = total net immigration
+#' - NL = net LPR immigration (from LPR IMMIGRATION subprocess)
+#' - NO = net O immigration (from TEMP/UNLAWFUL IMMIGRATION subprocess)
+#'
+#' Net immigration is further disaggregated by population status.
+#' Note: Age -1 represents births occurring during the year to immigrants.
+#'
+#' @param year Integer: projection year
+#' @param net_lpr data.table: net LPR immigration by year, age, sex
+#' @param net_o data.table: net O immigration by year, age, sex
+#' @param config List: configuration parameters
+#'
+#' @return data.table with columns: year, age, sex, pop_status, net_immigration
+#'
+#' @export
+calculate_net_immigration <- function(year,
+                                       net_lpr,
+                                       net_o,
+                                       config = NULL) {
+
+  if (is.null(config)) {
+    config <- get_projected_population_config()
+  }
+
+  target_year <- year  # Create local variable for data.table subsetting
+
+  # Get net LPR for this year
+  # Handle different possible column names
+  lpr_value_col <- intersect(c("net_lpr", "net_immigration"), names(net_lpr))[1]
+  if (is.na(lpr_value_col)) {
+    cli::cli_abort("Cannot find net LPR value column in net_lpr data")
+  }
+
+  year_lpr <- net_lpr[year == target_year, .(age, sex, net_lpr = get(lpr_value_col))]
+
+  # Get net O for this year
+  o_value_col <- intersect(c("net_o", "net_o_immigration", "net_immigration"), names(net_o))[1]
+  if (is.na(o_value_col)) {
+    cli::cli_abort("Cannot find net O value column in net_o data")
+  }
+
+  year_o <- net_o[year == target_year, .(age, sex, net_o = get(o_value_col))]
+
+  # Aggregate net_o by age and sex (may have multiple types)
+  year_o <- year_o[, .(net_o = sum(net_o, na.rm = TRUE)), by = .(age, sex)]
+
+  # Combine LPR and O immigration
+  net_imm <- merge(year_lpr, year_o, by = c("age", "sex"), all = TRUE)
+  net_imm[is.na(net_lpr), net_lpr := 0]
+  net_imm[is.na(net_o), net_o := 0]
+
+  # Total net immigration: NI = NL + NO
+  net_imm[, total_net := net_lpr + net_o]
+
+  # Disaggregate by population status
+  # TR2025: Same percentages as births (2.5% gay males, 4.5% lesbian females)
+  gay_pct <- config$population_status$gay_percent
+  lesbian_pct <- config$population_status$lesbian_percent
+
+  # Create result with population status breakdown
+  result <- data.table::rbindlist(list(
+    # Heterosexual males
+    net_imm[sex == "male", .(
+      year = target_year,
+      age,
+      sex,
+      pop_status = "heterosexual",
+      net_immigration = total_net * (1 - gay_pct)
+    )],
+    # Gay males
+    net_imm[sex == "male", .(
+      year = target_year,
+      age,
+      sex,
+      pop_status = "gay",
+      net_immigration = total_net * gay_pct
+    )],
+    # Heterosexual females
+    net_imm[sex == "female", .(
+      year = target_year,
+      age,
+      sex,
+      pop_status = "heterosexual",
+      net_immigration = total_net * (1 - lesbian_pct)
+    )],
+    # Lesbian females
+    net_imm[sex == "female", .(
+      year = target_year,
+      age,
+      sex,
+      pop_status = "lesbian",
+      net_immigration = total_net * lesbian_pct
+    )]
+  ))
+
+  result
+}
+
+#' Project population for a single year (Equation 1.8.4)
+#'
+#' @description
+#' Projects the Social Security area population for a single year using the
+#' component method: births, deaths, and net immigration.
+#'
+#' TR2025 Formula:
+#' For age 0: P_{0,s,p}^z = B_{s,p}^z - D_{0,s,p}^z + NI_{0,s,p}^z
+#' For ages > 0: P_{x,s,p}^z = P_{x-1,s,p}^{z-1} - D_{x,s,p}^z + NI_{x,s,p}^z
+#'
+#' Where P is population as of December 31 of each year.
+#'
+#' @param year Integer: projection year
+#' @param population_prev data.table: population at end of previous year (Dec 31, z-1)
+#' @param births data.table: births during year by sex, pop_status
+#' @param deaths data.table: deaths during year by age, sex, pop_status
+#' @param net_immigration data.table: net immigration by age, sex, pop_status
+#' @param config List: configuration parameters
+#'
+#' @return data.table: population at end of year (Dec 31, z) by age, sex, pop_status
+#'
+#' @export
+project_population_year <- function(year,
+                                     population_prev,
+                                     births,
+                                     deaths,
+                                     net_immigration,
+                                     config = NULL) {
+
+  if (is.null(config)) {
+    config <- get_projected_population_config()
+  }
+
+  target_year <- year  # Create local variable to avoid data.table column name conflicts
+  max_age <- config$ages$max_age
+
+  # === Age 0: New births minus infant deaths plus infant immigration ===
+  # P_{0,s,p}^z = B_{s,p}^z - D_{0,s,p}^z + NI_{0,s,p}^z
+
+  age0_pop <- births[, .(sex, pop_status, population = births)]
+
+  # Subtract infant deaths
+  infant_deaths <- deaths[age == 0, .(sex, pop_status, deaths)]
+  age0_pop <- merge(age0_pop, infant_deaths, by = c("sex", "pop_status"), all.x = TRUE)
+  age0_pop[is.na(deaths), deaths := 0]
+  age0_pop[, population := population - deaths]
+
+  # Add infant net immigration (age 0)
+  infant_imm <- net_immigration[age == 0, .(sex, pop_status, net_immigration)]
+  age0_pop <- merge(age0_pop, infant_imm, by = c("sex", "pop_status"), all.x = TRUE)
+  age0_pop[is.na(net_immigration), net_immigration := 0]
+  age0_pop[, population := population + net_immigration]
+
+  age0_pop[, `:=`(year = target_year, age = 0L)]
+  age0_pop <- age0_pop[, .(year, age, sex, pop_status, population)]
+
+  # === Ages 1+: Survive from previous year ===
+  # P_{x,s,p}^z = P_{x-1,s,p}^{z-1} - D_{x,s,p}^z + NI_{x,s,p}^z
+
+  # Age population forward: people who were age x-1 last year are now age x
+  aged_pop <- data.table::copy(population_prev)
+  aged_pop[, age := age + 1L]
+  aged_pop[, year := target_year]
+
+  # Cap at max age (100+ group)
+  aged_pop[age > max_age, age := max_age]
+
+  # Aggregate for ages at max_age (people aging into 100+ from 99 and 100+)
+  aged_pop <- aged_pop[, .(population = sum(population)), by = .(year, age, sex, pop_status)]
+
+  # Subtract deaths for ages 1+
+  deaths_1plus <- deaths[age > 0, .(age, sex, pop_status, deaths)]
+  aged_pop <- merge(aged_pop, deaths_1plus, by = c("age", "sex", "pop_status"), all.x = TRUE)
+  aged_pop[is.na(deaths), deaths := 0]
+  aged_pop[, population := population - deaths]
+
+  # Add net immigration for ages 1+
+  imm_1plus <- net_immigration[age > 0, .(age, sex, pop_status, net_immigration)]
+  aged_pop <- merge(aged_pop, imm_1plus, by = c("age", "sex", "pop_status"), all.x = TRUE)
+  aged_pop[is.na(net_immigration), net_immigration := 0]
+  aged_pop[, population := population + net_immigration]
+
+  aged_pop <- aged_pop[, .(year, age, sex, pop_status, population)]
+
+  # Combine age 0 and ages 1+
+  result <- data.table::rbindlist(list(age0_pop, aged_pop))
+
+  # Ensure population is non-negative
+  result[population < 0, population := 0]
+
+  # Order by age, sex, pop_status
+  data.table::setorder(result, age, sex, pop_status)
+
+  result
+}
+
+#' Run full population projection (Equation 1.8.4)
+#'
+#' @description
+#' Projects the Social Security area population from the starting year through
+#' the end of the projection period using the component method.
+#'
+#' @param starting_population data.table: population at Dec 31 of starting year
+#' @param birth_rates data.table: birth rates by year and age
+#' @param mortality_qx data.table: death probabilities by year, age, sex
+#' @param net_lpr data.table: net LPR immigration by year, age, sex
+#' @param net_o data.table: net O immigration by year, age, sex
+#' @param start_year Integer: starting year (default: 2022)
+#' @param end_year Integer: ending year (default: 2099)
+#' @param config List: configuration parameters
+#' @param verbose Logical: print progress (default: TRUE)
+#'
+#' @return List with:
+#'   - population: data.table of population by year, age, sex, pop_status
+#'   - births: data.table of births by year, sex, pop_status
+#'   - deaths: data.table of deaths by year, age, sex, pop_status
+#'   - net_immigration: data.table of net immigration by year, age, sex, pop_status
+#'   - summary: Summary statistics
+#'
+#' @export
+run_population_projection <- function(starting_population,
+                                       birth_rates,
+                                       mortality_qx,
+                                       net_lpr,
+                                       net_o,
+                                       start_year = 2022,
+                                       end_year = 2099,
+                                       config = NULL,
+                                       verbose = TRUE) {
+
+  if (is.null(config)) {
+    config <- get_projected_population_config()
+  }
+
+  if (verbose) {
+    cli::cli_h1("Population Projection ({start_year + 1}-{end_year})")
+  }
+
+  projection_years <- (start_year + 1):end_year
+
+  # Initialize storage
+  all_populations <- list()
+  all_births <- list()
+  all_deaths <- list()
+  all_immigration <- list()
+
+  # Store starting population
+  start_pop <- data.table::copy(starting_population)
+  if (!"year" %in% names(start_pop)) {
+    start_pop[, year := start_year]
+  }
+  all_populations[[as.character(start_year)]] <- start_pop
+
+  # Current population (will be updated each year)
+  current_pop <- start_pop
+
+  if (verbose) {
+    cli::cli_progress_bar("Projecting population", total = length(projection_years))
+  }
+
+  for (yr in projection_years) {
+    if (verbose) {
+      cli::cli_progress_update()
+    }
+
+    # 1. Calculate births for this year
+    births <- calculate_projected_births(
+      year = yr,
+      birth_rates = birth_rates,
+      population_start = current_pop,
+      population_end = NULL,  # Will estimate midyear from start
+      config = config
+    )
+
+    # 2. Calculate deaths for this year
+    deaths <- calculate_projected_deaths(
+      year = yr,
+      mortality_qx = mortality_qx,
+      population = current_pop,
+      config = config
+    )
+
+    # 3. Calculate net immigration for this year
+    net_imm <- calculate_net_immigration(
+      year = yr,
+      net_lpr = net_lpr,
+      net_o = net_o,
+      config = config
+    )
+
+    # 4. Project population to end of year
+    new_pop <- project_population_year(
+      year = yr,
+      population_prev = current_pop,
+      births = births,
+      deaths = deaths,
+      net_immigration = net_imm,
+      config = config
+    )
+
+    # Store results
+    all_populations[[as.character(yr)]] <- new_pop
+    all_births[[as.character(yr)]] <- births
+    all_deaths[[as.character(yr)]] <- deaths
+    all_immigration[[as.character(yr)]] <- net_imm
+
+    # Update current population for next iteration
+    current_pop <- new_pop
+
+    # Progress message every 10 years
+    if (verbose && (yr %% 10 == 0 || yr == end_year)) {
+      total_pop <- sum(new_pop$population, na.rm = TRUE)
+      cli::cli_alert("{yr}: Pop = {format(round(total_pop/1e6, 2), nsmall=2)}M")
+    }
+  }
+
+  if (verbose) {
+    cli::cli_progress_done()
+  }
+
+  # Combine all years
+  population_dt <- data.table::rbindlist(all_populations)
+  births_dt <- data.table::rbindlist(all_births)
+  deaths_dt <- data.table::rbindlist(all_deaths)
+  immigration_dt <- data.table::rbindlist(all_immigration)
+
+  # Calculate summary statistics
+  summary_stats <- population_dt[, .(
+    total_population = sum(population)
+  ), by = year]
+
+  births_summary <- births_dt[, .(total_births = sum(births)), by = year]
+  deaths_summary <- deaths_dt[, .(total_deaths = sum(deaths)), by = year]
+  imm_summary <- immigration_dt[, .(total_net_imm = sum(net_immigration)), by = year]
+
+  summary_stats <- merge(summary_stats, births_summary, by = "year", all.x = TRUE)
+  summary_stats <- merge(summary_stats, deaths_summary, by = "year", all.x = TRUE)
+  summary_stats <- merge(summary_stats, imm_summary, by = "year", all.x = TRUE)
+
+  if (verbose) {
+    cli::cli_h2("Projection Summary")
+    cli::cli_alert_success("Projected {length(projection_years)} years")
+    cli::cli_alert_info(
+      "Population: {format(round(summary_stats[year == start_year, total_population]/1e6, 2), nsmall=2)}M ({start_year}) -> {format(round(summary_stats[year == end_year, total_population]/1e6, 2), nsmall=2)}M ({end_year})"
+    )
+  }
+
+  list(
+    population = population_dt,
+    births = births_dt,
+    deaths = deaths_dt,
+    net_immigration = immigration_dt,
+    summary = summary_stats,
+    config = config,
+    metadata = list(
+      start_year = start_year,
+      end_year = end_year,
+      n_years = length(projection_years)
+    )
+  )
+}

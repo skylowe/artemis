@@ -1430,9 +1430,101 @@ list(
   ),
 
   # ===========================================================================
+  # PHASE 8B: CORE POPULATION PROJECTION (Equations 1.8.1-1.8.4)
+  # ===========================================================================
+
+  # Combined mortality qx (historical + projected) for population projection
+  tar_target(
+    mortality_qx_for_projection,
+    {
+      # Select common columns
+      common_cols <- c("year", "age", "sex", "qx")
+      hist_qx <- mortality_qx_historical[, ..common_cols]
+      proj_qx <- mortality_qx_projected[, ..common_cols]
+
+      data.table::rbindlist(
+        list(hist_qx, proj_qx),
+        use.names = TRUE
+      )
+    }
+  ),
+
+  # Net O immigration data (extracted from projection result)
+  tar_target(
+    net_o_for_projection,
+    {
+      o_immigration_projection$net_o_immigration
+    }
+  ),
+
+  # Run population projection (Equations 1.8.1-1.8.4)
+  tar_target(
+    population_projection,
+    {
+      run_population_projection(
+        starting_population = starting_population$population,
+        birth_rates = fertility_rates_complete,
+        mortality_qx = mortality_qx_for_projection,
+        net_lpr = net_lpr_immigration,
+        net_o = net_o_for_projection,
+        start_year = config_assumptions$projected_population$starting_year,
+        end_year = config_assumptions$projected_population$projection_end,
+        config = list(
+          sex_ratio_at_birth = config_assumptions$projected_population$sex_ratio_at_birth,
+          population_status = config_assumptions$projected_population$population_status,
+          ages = config_assumptions$projected_population$ages
+        ),
+        verbose = TRUE
+      )
+    }
+  ),
+
+  # Extract projected population by year for downstream use
+  tar_target(
+    projected_population,
+    {
+      population_projection$population
+    }
+  ),
+
+  # Projected births
+  tar_target(
+    projected_births,
+    {
+      population_projection$births
+    }
+  ),
+
+  # Projected deaths
+  tar_target(
+    projected_deaths,
+    {
+      population_projection$deaths
+    }
+  ),
+
+  # Projected net immigration
+  tar_target(
+    projected_net_immigration,
+    {
+      population_projection$net_immigration
+    }
+  ),
+
+  # Population projection summary
+  tar_target(
+    population_projection_summary,
+    {
+      population_projection$summary
+    }
+  ),
+
+  # ===========================================================================
   # PLACEHOLDER: Future process targets will be added here
   # ===========================================================================
-  # - Projected population core targets (Phase 8B-8F)
+  # - Projected population marital status targets (Phase 8C)
+  # - Projected population children targets (Phase 8D)
+  # - Projected population CNI targets (Phase 8E)
   # - Economics process targets
   # - Beneficiaries process targets
   # - Trust fund operations targets
