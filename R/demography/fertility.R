@@ -188,7 +188,8 @@ calculate_ultimate_years <- function(min_age = 14, max_age = 49,
 #' @details
 #' Formula: w^z = 1 - ((ultimate_year - z) / (ultimate_year - base_year))^exponent
 #'
-#' The exponent creates slower initial change that accelerates.
+#' Exponent > 1 = front-loaded (faster initial change, slower approach to ultimate).
+#' Exponent < 1 = back-loaded (slower initial change, faster near ultimate).
 #' Weight = 0 at base year, weight = 1 at ultimate year.
 #'
 #' @export

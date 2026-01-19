@@ -191,7 +191,7 @@ get_hardcoded_standard_population_2010 <- function() {
 #' - 1990-2023: Population Estimates Program API
 #'
 #' @param years Integer vector of years to query (e.g., 1980:2023)
-#' @param ages Integer vector of ages (default: 0:85)
+#' @param ages Integer vector of ages (default: 0:100)
 #' @param sex Character: "both", "male", or "female" (default: "female")
 #' @param cache_dir Character: directory for caching downloaded files
 #'
@@ -199,7 +199,7 @@ get_hardcoded_standard_population_2010 <- function() {
 #'
 #' @export
 fetch_census_population_all <- function(years,
-                                        ages = 0:85,
+                                        ages = 0:100,
                                         sex = "female",
                                         cache_dir = here::here("data/raw/census")) {
   results <- list()
@@ -266,7 +266,7 @@ fetch_census_population_all <- function(years,
 #' the Census Bureau's Population Estimates Program (PEP).
 #'
 #' @param years Integer vector of years to query (e.g., 2010:2023)
-#' @param ages Integer vector of ages (default: 0:85)
+#' @param ages Integer vector of ages (default: 0:100)
 #' @param sex Character: "both", "male", or "female" (default: "female")
 #' @param config List: API configuration (from load_api_config())
 #'
@@ -285,7 +285,7 @@ fetch_census_population_all <- function(years,
 #'
 #' @export
 fetch_census_population <- function(years,
-                                    ages = 0:85,
+                                    ages = 0:100,
                                     sex = "female",
                                     config = NULL) {
   checkmate::assert_integerish(years, lower = 1900, upper = 2100, min.len = 1)
@@ -645,7 +645,7 @@ fetch_pep_int_natrespop_1990 <- function(base_url, years, ages, sex, api_key, da
 #' for years not available via API (1980-1989).
 #'
 #' @param years Integer vector of years (1980-1989)
-#' @param ages Integer vector of ages (default: 0:85)
+#' @param ages Integer vector of ages (default: 0:100)
 #' @param sex Character: "both", "male", or "female" (default: "female")
 #' @param cache_dir Character: directory to cache downloaded files
 #' @param month Integer: reference month for estimates (default: 7 for July 1)
@@ -659,7 +659,7 @@ fetch_pep_int_natrespop_1990 <- function(base_url, years, ages, sex, api_key, da
 #'
 #' @export
 fetch_census_population_files <- function(years,
-                                          ages = 0:85,
+                                          ages = 0:100,
                                           sex = "female",
                                           cache_dir = here::here("data/raw/census"),
                                           month = 7) {
@@ -876,7 +876,7 @@ parse_census_1980s_file <- function(zip_path, years, ages, sex, ref_month = 7) {
 #' from Census Bureau and extracts population by single year of age and sex.
 #'
 #' @param years Integer vector of years (2020+)
-#' @param ages Integer vector of ages (default: 0:85)
+#' @param ages Integer vector of ages (default: 0:100)
 #' @param sex Character: "both", "male", or "female" (default: "female")
 #' @param cache_dir Character: directory to cache downloaded files
 #' @param vintage Integer: Census vintage year (default: 2024). Use 2023 to match TR2025.
@@ -896,11 +896,19 @@ parse_census_1980s_file <- function(zip_path, years, ages, sex, ref_month = 7) {
 #'
 #' @export
 fetch_census_population_2020s_file <- function(years,
-                                               ages = 0:85,
+                                               ages = 0:100,
                                                sex = "female",
                                                cache_dir = here::here("data/raw/census"),
-                                               vintage = getOption("artemis.census_vintage", 2024)) {
-  # Determine max year based on vintage
+                                               vintage = getOption("artemis.census_vintage")) {
+  # Require vintage to be set explicitly
+  if (is.null(vintage)) {
+    cli::cli_abort(c(
+
+      "Census vintage not specified",
+      "i" = "Set options(artemis.census_vintage = 2023) or specify vintage parameter",
+      "i" = "Vintage should be set in config/assumptions/tr2025.yaml under data_sources$census_vintage"
+    ))
+  }
 
   max_year <- vintage
   years <- years[years >= 2020 & years <= max_year]

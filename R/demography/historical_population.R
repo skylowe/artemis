@@ -133,7 +133,8 @@ calculate_historical_population <- function(start_year = 1940,
   components <- gather_population_components(
     years = start_year:end_year,
     ages = ages,
-    cache_dir = cache_dir
+    cache_dir = cache_dir,
+    config = config
   )
 
   # Step 2: Calculate tab year populations (ages 0-84)
@@ -299,7 +300,8 @@ compute_component_totals <- function(components) {
 #' @keywords internal
 gather_population_components <- function(years,
                                           ages,
-                                          cache_dir) {
+                                          cache_dir,
+                                          config = NULL) {
   components <- list()
 
   # 1. Census USAF (resident + armed forces overseas) populations
@@ -312,7 +314,7 @@ gather_population_components <- function(years,
 
   # 3. Census undercount factors
   cli::cli_alert("Fetching census undercount factors...")
-  components$undercount <- get_undercount_for_years(years, ages)
+  components$undercount <- get_undercount_for_years(years, ages, config)
 
   # 4. Federal employees overseas
   cli::cli_alert("Fetching federal employees overseas...")
@@ -829,14 +831,18 @@ distribute_population_by_age <- function(total_pop, year, ages) {
 #' Gets census undercount adjustment factors for all years by
 #' interpolating between decennial census estimates.
 #'
+#' @param years Integer vector of years to get factors for
+#' @param ages Integer vector of ages (not currently used, for future expansion)
+#' @param config List: configuration with undercount method and PES factors
+#'
 #' @keywords internal
-get_undercount_for_years <- function(years, ages) {
+get_undercount_for_years <- function(years, ages, config = NULL) {
   # Decennial census years have direct estimates
   decennial_years <- seq(1940, 2020, by = 10)
 
   # Fetch undercount for all decennial years
   undercount_list <- lapply(decennial_years, function(cy) {
-    uc <- fetch_census_undercount_factors(cy, by_age = TRUE)
+    uc <- fetch_census_undercount_factors(cy, by_age = TRUE, config = config)
     uc[, census_year := cy]
     uc
   })

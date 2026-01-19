@@ -691,7 +691,7 @@ calculate_ultimate_years <- function(config) {
 #' @details
 #' Formula: w^z = 1 - ((2036 - z) / (2036 - 2024))^1.5
 #'
-#' The 1.5 exponent creates slower initial change that accelerates.
+#' Exponent > 1 = front-loaded (faster initial change, gradual approach to ultimate).
 #' Weight = 0 at base year, weight = 1 at ultimate year (2036).
 #'
 #' @export

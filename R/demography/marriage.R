@@ -1896,7 +1896,7 @@ project_amr <- function(starting_amr,
 
     # Apply convergence formula with decreasing rate of change
     # Uses complement: remaining_gap * (1 - progress)^exp
-    # Higher exponent = more gradual start, faster finish
+    # Higher exponent = front-loaded (faster start, gradual finish)
     remaining_factor <- (1 - progress)^convergence_exp
 
     # Linear interpolation with non-linear progress

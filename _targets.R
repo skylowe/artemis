@@ -80,12 +80,21 @@ list(
   # Uses file downloads for 1980-1989, API for 1990-2024
   tar_target(
     census_female_pop,
-    fetch_census_population_all(
-      years = config_assumptions$data_sources$population_estimates$start_year:
-              config_assumptions$data_sources$population_estimates$end_year,
-      ages = 10:54,  # Wider range to capture all fertility ages after collapse
-      sex = "female"
-    ),
+    {
+      # Set census vintage from config (required)
+      vintage <- config_assumptions$data_sources$census_vintage
+      if (is.null(vintage)) {
+        stop("census_vintage not set in config - please specify in config/assumptions/tr2025.yaml")
+      }
+      options(artemis.census_vintage = vintage)
+
+      fetch_census_population_all(
+        years = config_assumptions$data_sources$population_estimates$start_year:
+                config_assumptions$data_sources$population_estimates$end_year,
+        ages = 10:54,  # Wider range to capture all fertility ages after collapse
+        sex = "female"
+      )
+    },
     cue = tar_cue(mode = "thorough")
   ),
 
@@ -199,11 +208,12 @@ list(
   ),
 
   # Combined historical and projected rates (1980-2099)
+  # Note: Exclude 2024 from projected to avoid duplicate (historical includes 2024)
   tar_target(
     fertility_rates_complete,
     rbind(
       fertility_rates_historical[, .(year, age, birth_rate)],
-      fertility_rates_projected
+      fertility_rates_projected[year > 2024]
     )
   ),
 
@@ -260,19 +270,39 @@ list(
     cue = tar_cue(mode = "thorough")
   ),
 
-  # Census population for mortality calculations (both sexes, ages 0-100)
+  # Census population for mortality calculations (male and female separately, ages 0-100)
   tar_target(
     census_population_both,
     {
-      cache_file <- "data/cache/census/population_by_age_sex_1980_2023.rds"
+      # Get census vintage from config (required)
+      vintage <- config_assumptions$data_sources$census_vintage
+      if (is.null(vintage)) {
+        stop("census_vintage not set in config - please specify in config/assumptions/tr2025.yaml")
+      }
+      options(artemis.census_vintage = vintage)
+
+      cache_file <- sprintf("data/cache/census/population_by_age_sex_1980_2023_v%d_bysex.rds", vintage)
       if (file.exists(cache_file)) {
+        cli::cli_alert_success("Loading cached Census Vintage {vintage} population data (by sex)")
         readRDS(cache_file)
       } else {
-        fetch_census_population_all(
+        cli::cli_alert_info("Fetching Census Vintage {vintage} population data (male and female)")
+        # Fetch male and female separately to get sex-specific data
+        male_pop <- fetch_census_population_all(
           years = 1980:2023,
           ages = 0:100,
-          sex = "both"
+          sex = "male"
         )
+        female_pop <- fetch_census_population_all(
+          years = 1980:2023,
+          ages = 0:100,
+          sex = "female"
+        )
+        result <- data.table::rbindlist(list(male_pop, female_pop), use.names = TRUE)
+        # Cache the result
+        dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+        saveRDS(result, cache_file)
+        result
       }
     },
     cue = tar_cue(mode = "thorough")
@@ -926,51 +956,7 @@ list(
   # Implements Equations 1.5.1 - 1.5.4 from TR2025 Documentation
   # Produces: OI (O Immigration), OE (O Emigration), NO (Net O), OP (O Population)
 
-  # Step 1: Calculate O immigration distribution (ODIST)
-  # From ACS new arrivals minus LPR NEW arrivals
-  tar_target(
-    o_immigration_odist,
-    {
-      # Calculate ODIST from ACS and LPR data
-      calculate_odist(
-        acs_arrivals = acs_foreign_born_arrivals,
-        lpr_new = new_arrivals_projected,
-        reference_years = 2015:2019,
-        dhs_nonimmigrant = dhs_nonimmigrant_stock
-      )
-    }
-  ),
-
-  # Step 2: Get TR2025 O immigration assumptions
-  tar_target(
-    o_immigration_assumptions,
-    get_tr2025_o_assumptions(
-      years = config_assumptions$metadata$projection_period$start_year:
-              config_assumptions$metadata$projection_period$end_year
-    )
-  ),
-
-  # Step 3: Project O immigration (Equation 1.5.1)
-  # OI = TO × ODIST
-  tar_target(
-    o_immigration_projected,
-    project_o_immigration(
-      assumptions = o_immigration_assumptions,
-      odist = o_immigration_odist,
-      projection_years = config_assumptions$metadata$projection_period$start_year:
-                         config_assumptions$metadata$projection_period$end_year
-    )
-  ),
-
-  # Step 4: Calculate departure rates for O emigration
-  tar_target(
-    o_departure_rates,
-    calculate_simplified_departure_rates(
-      config = config_assumptions
-    )
-  ),
-
-  # Step 5: Run full O immigration projection (Equations 1.5.1-1.5.4)
+  # Run full O immigration projection (Equations 1.5.1-1.5.4)
   # This orchestrates OI, OE, NO, and OP calculations
   tar_target(
     o_immigration_projection,

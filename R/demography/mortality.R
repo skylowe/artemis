@@ -711,9 +711,10 @@ calculate_aax_trajectory <- function(starting_aax,
   if (has_cause) {
     dt <- merge(dt, ultimate_aax[, .(age_group, cause, ultimate_aax)],
                 by = c("age_group", "cause"), all.x = TRUE)
-  } else {
-    # If no cause, use weighted average of ultimate AAx
-    # Weight by cause-of-death proportions per TR2025 methodology
+  }
+
+  if (!has_cause) {
+    # Fallback: use cause-weighted average of ultimate AAx
     cause_props <- tryCatch(
       get_cause_of_death_proportions(),
       error = function(e) {

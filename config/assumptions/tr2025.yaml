@@ -24,10 +24,8 @@ fertility:
   projection_start_year: 2025
   ultimate_year: 2045
   age30_ultimate_year: 2036
-  # Interpolation weight exponent
-  weight_exponent: 1.5
-  # Estimated TFR for 2024 (base year)
-  tfr_estimate_2024: 1.62
+  # Interpolation weight exponent (1.0 = linear, >1 = convex/front-loaded)
+  weight_exponent: 3.5
   # Base year for projections (latest year with both birth and population data)
   rate_base_year: 2023
   # Years to exclude from trend calculations
@@ -467,4 +465,41 @@ data_sources:
   # 2023: Earlier vintage, closer to what TR2025 used for 2020-2022
   # Note: Both vintages incorporate 2020 Census baseline, so 2019+ will
   # differ from TR2025 which used pre-2020 Census estimates
-  census_vintage: 2023
+  census_vintage: 2024
+
+  # =========================================================================
+  # Census Undercount Methodology
+  # =========================================================================
+  # Controls which undercount factors are applied to Census population estimates
+  # to derive the Social Security area population.
+  #
+  # Options:
+  # - "DA": Demographic Analysis (Census Bureau official, single-year-of-age)
+  #         Shows ages 18-24 OVERCOUNTED by ~3-8% in 2020 Census
+  #         More methodologically rigorous; uses birth/death records
+  #
+  # - "PES": Post-Enumeration Survey based factors (hardcoded below)
+  #          Shows ages 18-29 UNDERCOUNTED by ~1-2%
+  #          Better matches TR2025 population; excludes college dorms
+  #
+  # TR2025 appears to use factors closer to PES methodology, resulting in
+  # higher population for ages 18-24 than Census DA would suggest.
+  census_undercount_method: "none"
+
+  # PES-based undercount factors by age group (used when census_undercount_method = "PES")
+  # Source: Census Bureau Post-Enumeration Survey, 2020 Census
+  # Reference: https://www.census.gov/newsroom/press-releases/2022/2020-census-estimates-of-undercount-and-overcount.html
+  #
+  # Note: PES found statistically significant undercounts for males 18-29 (2.25%)
+  # and females 18-29 (0.98%). These differ from DA because PES excludes
+  # group quarters like college dorms.
+  pes_undercount_factors:
+    # Age group: rate (positive = undercount, negative = overcount)
+    age_0_4: 0.055       # 5.5% undercount (both DA and PES agree on young children)
+    age_5_9: 0.010       # 1.0% undercount
+    age_10_17: 0.005     # 0.5% undercount
+    age_18_29_male: 0.015   # 2.25% undercount (PES finding)
+    age_18_29_female: 0.0098 # 0.98% undercount (PES finding)
+    age_30_49_male: 0.01   # 1.5% undercount (estimated)
+    age_30_49_female: 0.005  # 0.5% undercount (estimated)
+    age_50_plus: -0.005  # 0.5% overcount (slight overcount for older ages)

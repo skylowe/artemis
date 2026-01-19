@@ -53,40 +53,174 @@ NULL
 #' Returns net undercount rates by age and sex for decennial censuses.
 #' Positive values indicate undercount, negative values indicate overcount.
 #'
-#' For 2020, downloads official Census Bureau Demographic Analysis data.
-#' For 1940-2010, uses estimates from Census Bureau working papers.
+#' Supports three methodologies:
+#' - "DA" (default): Demographic Analysis from Census Bureau
+#' - "PES": Post-Enumeration Survey based factors from config
+#' - "none": No undercount adjustment (returns zeros)
 #'
 #' @param census_year Integer: decennial census year (1940, 1950, ..., 2020)
 #' @param by_age Logical: if TRUE, return by single year of age; if FALSE,
 #'   return overall rate
+#' @param method Character: "DA", "PES", or "none". If NULL, reads from config
+#'   (data_sources$census_undercount_method)
+#' @param config List: configuration with PES factors (optional, loaded if NULL)
 #' @param cache_dir Character: directory for caching downloaded files
 #'
 #' @return data.table with undercount rates (as proportions, not percentages)
 #'
 #' @details
+#' **DA (Demographic Analysis):**
+#' Uses Census Bureau's official DA estimates which compare census counts
+#' to independent estimates from birth/death records and Medicare data.
+#' For 2020, this shows ages 18-24 were OVERCOUNTED by ~3-8%.
+#'
+#' **PES (Post-Enumeration Survey):**
+#' Uses factors based on PES results, which found ages 18-29 UNDERCOUNTED
+#' by ~1-2%. PES excludes group quarters (college dorms), which may explain
+#' the difference from DA. This better matches TR2025 population estimates.
+#'
 #' Undercount rates vary by:
-#' - Age: Young children (0-4) have highest undercount; older adults often overcounted
+#' - Age: Young children (0-4) have highest undercount
 #' - Sex: Males have higher undercount than females, especially ages 20-50
-#' - Race: Black population has higher undercount (not included here for simplicity)
 #'
 #' @export
 fetch_census_undercount_factors <- function(census_year,
                                              by_age = TRUE,
+                                             method = NULL,
+                                             config = NULL,
                                              cache_dir = here::here("data/cache/census")) {
- valid_years <- seq(1940, 2020, by = 10)
- checkmate::assert_choice(census_year, valid_years)
+  valid_years <- seq(1940, 2020, by = 10)
+  checkmate::assert_choice(census_year, valid_years)
 
- cli::cli_alert_info("Fetching census undercount factors for {census_year}...")
+  # Determine method from config if not specified
+ if (is.null(method)) {
+    if (is.null(config)) {
+      config <- tryCatch(
+        yaml::read_yaml(here::here("config/assumptions/tr2025.yaml")),
+        error = function(e) NULL
+      )
+    }
+    method <- config$data_sources$census_undercount_method
+    if (is.null(method)) {
+      method <- "DA"  # Default to DA if not in config
+    }
+  }
 
- if (by_age) {
-   result <- get_undercount_by_age(census_year, cache_dir)
- } else {
-   result <- get_undercount_overall(census_year)
- }
+  checkmate::assert_choice(method, c("DA", "PES", "none"))
 
- cli::cli_alert_success("Retrieved undercount factors for {census_year}")
+  cli::cli_alert_info("Fetching census undercount factors for {census_year} (method: {method})...")
 
- result
+  if (method == "none") {
+    # No undercount adjustment - return zeros for all ages/sexes
+    result <- get_zero_undercount_factors(census_year)
+  } else if (method == "PES") {
+    # Use PES-based factors from config
+    result <- get_pes_undercount_factors(census_year, config)
+  } else {
+    # Use DA-based factors (original behavior)
+    if (by_age) {
+      result <- get_undercount_by_age(census_year, cache_dir)
+    } else {
+      result <- get_undercount_overall(census_year)
+    }
+  }
+
+  cli::cli_alert_success("Retrieved {method} undercount factors for {census_year}")
+
+  result
+}
+
+#' Get PES-based undercount factors from config
+#'
+#' @description
+#' Returns undercount factors based on Post-Enumeration Survey methodology,
+#' using values from the configuration file.
+#'
+#' @param census_year Integer: census year (used for output, factors are same)
+#' @param config List: configuration with pes_undercount_factors section
+#'
+#' @return data.table with columns: census_year, age, sex, undercount_rate
+#'
+#' @details
+#' PES factors are defined in config/assumptions/tr2025.yaml under
+#' data_sources$pes_undercount_factors. Unlike DA factors which vary by
+#' single year of age, PES factors are defined by age groups.
+#'
+#' @keywords internal
+get_pes_undercount_factors <- function(census_year, config = NULL) {
+  # Load config if not provided
+  if (is.null(config)) {
+    config <- yaml::read_yaml(here::here("config/assumptions/tr2025.yaml"))
+  }
+
+  pes <- config$data_sources$pes_undercount_factors
+  if (is.null(pes)) {
+    cli::cli_abort(c(
+      "PES undercount factors not found in config",
+      "i" = "Add pes_undercount_factors section to config/assumptions/tr2025.yaml"
+    ))
+  }
+
+  # Build age-specific factors from config
+  # Expand to single years of age (0-99)
+  ages <- 0:99
+
+  result_list <- list()
+
+  for (sx in c("male", "female")) {
+    rates <- sapply(ages, function(a) {
+      if (a <= 4) {
+        pes$age_0_4
+      } else if (a <= 9) {
+        pes$age_5_9
+      } else if (a <= 17) {
+        pes$age_10_17
+      } else if (a <= 29) {
+        if (sx == "male") pes$age_18_29_male else pes$age_18_29_female
+      } else if (a <= 49) {
+        if (sx == "male") pes$age_30_49_male else pes$age_30_49_female
+      } else {
+        pes$age_50_plus
+      }
+    })
+
+    result_list[[sx]] <- data.table::data.table(
+      census_year = census_year,
+      age = ages,
+      sex = sx,
+      undercount_rate = rates
+    )
+  }
+
+  data.table::rbindlist(result_list)
+}
+
+#' Get zero undercount factors (no adjustment)
+#'
+#' @description
+#' Returns zero undercount factors for all ages and sexes. Use this when
+#' no census undercount adjustment should be applied (method = "none").
+#'
+#' @param census_year Integer: census year (used for output structure)
+#'
+#' @return data.table with columns: census_year, age, sex, undercount_rate (all zeros)
+#'
+#' @keywords internal
+get_zero_undercount_factors <- function(census_year) {
+  ages <- 0:99
+
+  result_list <- list()
+
+  for (sx in c("male", "female")) {
+    result_list[[sx]] <- data.table::data.table(
+      census_year = census_year,
+      age = ages,
+      sex = sx,
+      undercount_rate = 0
+    )
+  }
+
+  data.table::rbindlist(result_list)
 }
 
 # =============================================================================

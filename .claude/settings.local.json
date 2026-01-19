@@ -74,7 +74,8 @@
       "WebFetch(domain:www.everycrsreport.com)",
       "Bash(xargs:*)",
       "Bash(pgrep:*)",
-      "WebFetch(domain:www2.nber.org)"
+      "WebFetch(domain:www2.nber.org)",
+      "Bash(kill:*)"
     ]
   }
 }

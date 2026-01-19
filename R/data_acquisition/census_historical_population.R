@@ -270,8 +270,15 @@ fetch_resident_usaf_2020s <- function(years, ages, reference_date, cache_dir) {
 
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
 
-  # Get current vintage setting
-  vintage <- getOption("artemis.census_vintage", 2024)
+  # Get current vintage setting (required)
+  vintage <- getOption("artemis.census_vintage")
+  if (is.null(vintage)) {
+    cli::cli_abort(c(
+      "Census vintage not specified",
+      "i" = "Set options(artemis.census_vintage = 2023) before calling this function",
+      "i" = "Vintage should be set in config/assumptions/tr2025.yaml under data_sources$census_vintage"
+    ))
+  }
 
   # Different files for different data:
   # - nc-est20XX-syasexn.xlsx: Single year of age, national, resident only

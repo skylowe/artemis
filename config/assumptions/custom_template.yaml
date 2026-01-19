@@ -31,11 +31,8 @@ fertility:
   ultimate_year: 2050
   age30_ultimate_year: 2036
 
-  # Interpolation weight exponent (controls transition speed)
+  # Interpolation weight exponent (1.0 = linear, >1 = convex/front-loaded)
   weight_exponent: 1.5
-
-  # Estimated TFR for base year
-  tfr_estimate_2024: 1.62
   rate_base_year: 2024
 
   # Years to exclude from trend calculations
