@@ -6,7 +6,7 @@ metadata:
   alternative: "Intermediate"
   alternative_number: 2
   projection_period:
-    start_year: 2024
+    start_year: 2023  # Changed from 2024 to include TR2025's estimated 2023 immigration
     end_year: 2099
   valuation_date: "2025-01-01"
 
