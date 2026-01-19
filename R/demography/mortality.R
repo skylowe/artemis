@@ -566,6 +566,75 @@ get_ultimate_aax_assumptions <- function(config_path = NULL, config = NULL) {
   ultimate
 }
 
+#' Get cause-of-death proportions by age group and sex
+#'
+#' @description
+#' Calculates the proportion of deaths by cause for each age group and sex.
+#' Used to weight cause-specific ultimate AAx values per TR2025 methodology.
+#'
+#' @param years Integer vector: years to use for proportions (default: 2015:2019)
+#' @param cache_dir Character: path to cached NCHS death data
+#'
+#' @return data.table with columns: age_group, sex, cause, proportion
+#'
+#' @details
+#' Per TR2025 mortality documentation, the "Resulting Total" AAx for each
+#' age group is the weighted average of cause-specific AAx, where weights
+#' are the proportion of deaths from each cause.
+#'
+#' Uses 2015-2019 by default (pre-COVID period matching TR2025).
+#'
+#' @export
+get_cause_of_death_proportions <- function(years = 2015:2019,
+                                           cache_dir = here::here("data/cache/nchs_deaths")) {
+  # Load death data for specified years
+  deaths_list <- list()
+
+  for (yr in years) {
+    cache_file <- file.path(cache_dir, sprintf("deaths_by_age_sex_cause_%d.rds", yr))
+    if (file.exists(cache_file)) {
+      deaths_list[[as.character(yr)]] <- readRDS(cache_file)
+    } else {
+      cli::cli_alert_warning("Cached death data not found for {yr}, skipping")
+    }
+  }
+
+  if (length(deaths_list) == 0) {
+    cli::cli_abort("No cached death data found for years {paste(years, collapse=', ')}")
+  }
+
+  deaths <- data.table::rbindlist(deaths_list)
+
+  # Map ages to age groups
+  deaths[, age_group := data.table::fcase(
+    age < 15, "under_15",
+    age >= 15 & age < 50, "age_15_49",
+    age >= 50 & age < 65, "age_50_64",
+    age >= 65 & age < 85, "age_65_84",
+    age >= 85, "age_85_plus"
+  )]
+
+  # Calculate total deaths by age group, sex, cause
+  by_cause <- deaths[, .(deaths = sum(deaths)), by = .(age_group, sex, cause)]
+
+  # Calculate total deaths by age group, sex
+  totals <- deaths[, .(total_deaths = sum(deaths)), by = .(age_group, sex)]
+
+  # Merge and calculate proportions
+  result <- merge(by_cause, totals, by = c("age_group", "sex"))
+  result[, proportion := deaths / total_deaths]
+
+  # Select output columns
+  result <- result[, .(age_group, sex, cause, proportion)]
+  data.table::setorder(result, age_group, sex, cause)
+
+  cli::cli_alert_success(
+    "Calculated cause-of-death proportions from {length(deaths_list)} years ({min(years)}-{max(years)})"
+  )
+
+  result
+}
+
 #' Map single ages to ultimate AAx age groups
 #'
 #' @param ages Integer vector of ages
@@ -644,8 +713,44 @@ calculate_aax_trajectory <- function(starting_aax,
                 by = c("age_group", "cause"), all.x = TRUE)
   } else {
     # If no cause, use weighted average of ultimate AAx
-    ultimate_avg <- ultimate_aax[, .(ultimate_aax = mean(ultimate_aax)), by = age_group]
-    dt <- merge(dt, ultimate_avg, by = "age_group", all.x = TRUE)
+    # Weight by cause-of-death proportions per TR2025 methodology
+    cause_props <- tryCatch(
+      get_cause_of_death_proportions(),
+      error = function(e) {
+        cli::cli_alert_warning("Could not load cause-of-death proportions: {conditionMessage(e)}")
+        cli::cli_alert_warning("Falling back to simple average of ultimate AAx")
+        NULL
+      }
+    )
+
+    if (!is.null(cause_props)) {
+      # Merge proportions with ultimate AAx values
+      weighted_data <- merge(
+        ultimate_aax[, .(age_group, cause, ultimate_aax)],
+        cause_props,
+        by = c("age_group", "cause"),
+        all.x = TRUE
+      )
+      # Handle any missing proportions (set to equal weight)
+      weighted_data[is.na(proportion), proportion := 1/6]
+
+      # Calculate weighted average by age_group and sex
+      ultimate_avg <- weighted_data[, .(
+        ultimate_aax = sum(ultimate_aax * proportion)
+      ), by = .(age_group, sex)]
+
+      cli::cli_alert_success("Using cause-weighted ultimate AAx")
+    } else {
+      # Fallback to simple average (not sex-specific)
+      ultimate_avg <- ultimate_aax[, .(ultimate_aax = mean(ultimate_aax)), by = age_group]
+    }
+
+    # Merge with starting data (handle sex if present in ultimate_avg)
+    if ("sex" %in% names(ultimate_avg) && "sex" %in% names(dt)) {
+      dt <- merge(dt, ultimate_avg, by = c("age_group", "sex"), all.x = TRUE)
+    } else {
+      dt <- merge(dt, ultimate_avg[, .(age_group, ultimate_aax)], by = "age_group", all.x = TRUE)
+    }
   }
 
   # Handle any missing ultimate values
