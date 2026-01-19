@@ -1356,9 +1356,83 @@ list(
   ),
 
   # ===========================================================================
+  # PROJECTED POPULATION SUBPROCESS - PHASE 8A (Data Assembly)
+  # ===========================================================================
+  # Implements Section 1.8 from TR2025 Documentation
+  # Phase 8A: Verify all inputs and extract starting population
+
+  # CPS children per couple data (Item 29)
+  # Note: This requires an IPUMS extract. Run submit_cps_children_extract() first
+  # and check status with get_cps_children_extract_status()
+  tar_target(
+    cps_children_per_couple,
+    {
+      cache_file <- here::here("data/cache/ipums_cps/cps_children_per_couple_1962_2022.rds")
+      if (file.exists(cache_file)) {
+        readRDS(cache_file)
+      } else {
+        cli::cli_alert_warning("CPS children data not cached")
+        cli::cli_alert_info("Run submit_cps_children_extract() to download data")
+        NULL
+      }
+    },
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  # Verify all projection inputs (Phase 8A.9)
+  tar_target(
+    projection_inputs_verification,
+    {
+      # Combine historical and projected qx for mortality input
+      # Select only common columns to ensure rbindlist works
+      common_cols <- c("year", "age", "sex", "qx")
+      hist_qx <- mortality_qx_historical[, ..common_cols]
+
+      # Handle case where projected qx may not exist yet
+      if (exists("mortality_qx_projected") && !is.null(mortality_qx_projected)) {
+        proj_qx <- mortality_qx_projected[, ..common_cols]
+        mortality_qx_combined <- data.table::rbindlist(
+          list(hist_qx, proj_qx),
+          use.names = TRUE
+        )
+      } else {
+        # Use only historical for now
+        mortality_qx_combined <- hist_qx
+      }
+
+      verify_all_projection_inputs(
+        fertility_rates = fertility_rates_complete,
+        mortality_qx = mortality_qx_combined,
+        mortality_differentials = mortality_marital_factors,
+        net_lpr = net_lpr_immigration,
+        net_o = net_o_immigration,
+        marriage_rates = marriage_projection,
+        divorce_rates = divorce_projection,
+        historical_population = historical_population,
+        historical_marital = historical_population_marital,
+        projection_years = config_assumptions$metadata$projection_period$start_year:
+                           config_assumptions$metadata$projection_period$end_year,
+        starting_year = config_assumptions$projected_population$starting_year
+      )
+    }
+  ),
+
+  # Extract starting population (Phase 8A.7)
+  tar_target(
+    starting_population,
+    {
+      extract_starting_population(
+        historical_population = historical_population,
+        historical_marital = historical_population_marital,
+        starting_year = config_assumptions$projected_population$starting_year
+      )
+    }
+  ),
+
+  # ===========================================================================
   # PLACEHOLDER: Future process targets will be added here
   # ===========================================================================
-  # - Projected population targets
+  # - Projected population core targets (Phase 8B-8F)
   # - Economics process targets
   # - Beneficiaries process targets
   # - Trust fund operations targets

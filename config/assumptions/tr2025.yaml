@@ -332,6 +332,101 @@ divorce:
   # Per TR2025: "averaged 2009 and 2010 December 31 marriage grids"
   standard_population_years: [2009, 2010]
 
+# =========================================================================
+# Projected Population Configuration (TR2025 Section 1.8)
+# =========================================================================
+# Source: SSA 2025 Long-Range Model Documentation, Section 1.8
+
+projected_population:
+  # Time period
+  starting_year: 2022  # December 31 basis
+  projection_start: 2023
+  projection_end: 2099
+  extended_end: 2105  # For some outputs needing longer projection
+
+  # Reference date for population stocks
+  reference_date: "dec31"  # December 31
+
+  # Sex ratio at birth (males per 1000 females)
+  # TR2025: "a sex ratio of 1,048 male births for every 1,000 female births"
+  sex_ratio_at_birth: 1048
+
+  # Population status parameters (for same-sex marriage modeling)
+  # TR2025: "2.5% of the male population and 4.5% of the female population
+  # is gay or lesbian"
+  population_status:
+    gay_percent: 0.025      # 2.5% of male population
+    lesbian_percent: 0.045  # 4.5% of female population
+    same_sex_start_year: 2013  # Federal recognition year
+
+  # Age ranges
+  ages:
+    min_age: 0
+    max_age: 119           # Maximum single year of age tracked
+    max_age_group: 100     # 100+ grouped into single category
+    mothers_min: 14        # Minimum mother's age for births
+    mothers_max: 49        # Maximum mother's age for births
+    children_max: 18       # Maximum age for "children" category
+    marriage_min: 14       # Minimum marriage age
+
+  # Marital status categories
+  marital_statuses:
+    # For total population (4 categories)
+    total_population:
+      - single
+      - married
+      - widowed
+      - divorced
+    # For CNI population (5 categories - includes separated)
+    cni_population:
+      - single
+      - married_spouse_present
+      - separated
+      - widowed
+      - divorced
+
+  # Parent fate categories (for children ages 0-18)
+  parent_fates:
+    - both_alive
+    - only_father_alive
+    - only_mother_alive
+    - both_deceased
+
+  # Parent age groups for children classification
+  parent_age_groups:
+    - [14, 24]
+    - [25, 34]
+    - [35, 44]
+    - [45, 54]
+    - [55, 64]
+    - [65, 100]
+
+  # Armed forces assumptions
+  # TR2025: "subtracting an assumed constant number of armed forces overseas"
+  armed_forces:
+    hold_constant: true
+    reference_year: 2022
+
+  # CNI/civilian ratios
+  # TR2025: "applying the ratios of CNI population to civilian population
+  # by year, sex, and single year of age in the starting year"
+  cni_ratios:
+    hold_constant: true
+    reference_year: 2022
+
+  # Mortality differentials by marital status
+  # TR2025: "relative differences in death rates by marital status observed
+  # for that age and sex during the calendar years 2015-2019"
+  mortality_differentials:
+    reference_years: [2015, 2016, 2017, 2018, 2019]
+    apply_to_projection: true
+
+  # Children per couple projection parameters
+  children_regression:
+    historical_years: [1962, 2022]
+    projection_method: "linear"
+    trend_years: 20  # Last N years for trend calculation
+
 # Data source configuration
 data_sources:
   historical_birth_data:

@@ -4,9 +4,9 @@
 R-based replication of the SSA Office of the Chief Actuary's long-range OASDI projection model. Uses `{targets}` for pipeline orchestration and `{renv}` for dependency management.
 
 ## Current Status
-**Phase:** 7 - Divorce Subprocess (COMPLETE)
-**Most Recent Completion:** Phase 7H - Validation & Pipeline Integration (January 18, 2026)
-**Next Step:** Phase 8 - Projected Population
+**Phase:** 8 - Projected Population Subprocess (IN PROGRESS)
+**Most Recent Completion:** Phase 8A - Data Assembly & Input Verification (January 18, 2026)
+**Next Step:** Phase 8B - Core Population Projection (Equations 1.8.1-1.8.4)
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -139,6 +139,30 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 2. Standard population uses averaged 2009-2010 married couples from our historical population
    - TR2025 uses December 31 marriage grids from the 2015 TR
    - Minor differences expected but methodology is consistent
+
+### Projected Population Subprocess Status (IN PROGRESS - Phase 8A Complete)
+- **Purpose:** Project SS area population from Dec 31, 2022 through 2099 using component method
+- **Key Outputs (Planned):**
+  - B^z_{s,p} - Births by sex and population status (Eq 1.8.1)
+  - D^z_{x,s,p} - Deaths by age, sex, and population status (Eq 1.8.2)
+  - NI^z_{x,s} - Total net immigration (Eq 1.8.3)
+  - P^z_{x,s,p} - Population by age, sex, population status (Eq 1.8.4)
+  - P^z_{x,s,p,m} - Population by marital status (Eq 1.8.5)
+  - C^z_{x,s,g,f} - Children by parent survival status (Eq 1.8.6)
+  - N^z_{x,s,m} - Civilian noninstitutionalized population (Eq 1.8.7)
+- **TR2025 Assumptions:**
+  - Starting Year: December 31, 2022
+  - Sex ratio at birth: 1,048 males per 1,000 females
+  - Population status: 2.5% males gay, 4.5% females lesbian
+- **Phase 8A Status (Complete):**
+  - Input verification functions implemented in `R/demography/projected_population.R`
+  - CPS children per couple fetcher implemented in `R/data_acquisition/cps_children.R`
+  - Configuration added to `config/assumptions/tr2025.yaml`
+  - Starting population extraction from Phase 4 historical population
+  - All previous subprocess outputs verified available
+- **Key files:** `R/demography/projected_population.R`, `R/data_acquisition/cps_children.R`
+- **Pipeline targets:** `projection_inputs_verification`, `starting_population`, `cps_children_per_couple`
+- **Plan document:** `plans/08_demography_projected_population_implementation_plan.md`
 
 ### Pending Improvements
 - Future: Detailed infant mortality using age-in-days/months methodology (optional refinement)
