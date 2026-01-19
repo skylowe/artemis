@@ -167,7 +167,7 @@ interpolate_age_groups <- function(age_groups) {
   for (i in seq_len(nrow(age_groups))) {
     grp <- age_groups[i]
     age_min <- grp$age_min
-    age_max <- min(grp$age_max, 99)  # Cap at 99
+    age_max <- min(grp$age_max, 100)  # Cap at 99
 
     # Calculate number of single years
     n_ages <- age_max - age_min + 1
@@ -367,7 +367,7 @@ get_type_splits_interpolated <- function(year,
 #'
 #' @export
 get_type_anchor_points <- function(config = NULL) {
-  ages <- 0:99
+  ages <- 0:100
   sexes <- c("male", "female")
 
   # =========================================================================
@@ -453,7 +453,7 @@ calculate_anchor_from_dhs <- function(reference_year,
                                        total_nonimmigrant,
                                        overstay_pct_overall,
                                        config = NULL) {
-  ages <- 0:99
+  ages <- 0:100
   sexes <- c("male", "female")
 
   result <- data.table::CJ(age = ages, sex = sexes)
@@ -511,7 +511,7 @@ calculate_anchor_from_dhs <- function(reference_year,
 #'
 #' @keywords internal
 get_nonimmigrant_age_distribution <- function() {
-  ages <- 0:99
+  ages <- 0:100
   sexes <- c("male", "female")
 
   result <- data.table::CJ(age = ages, sex = sexes)
@@ -677,7 +677,7 @@ calculate_type_splits <- function(reference_year = 2019,
   # This is an approximation of the TR methodology
 
   # Create age-sex grid
-  ages <- 0:99
+  ages <- 0:100
   sexes <- c("male", "female")
 
   result <- data.table::CJ(age = ages, sex = sexes)
@@ -747,7 +747,7 @@ get_default_type_splits <- function() {
   # - Never-authorized: ~60%
   # - Visa-overstayers: ~40%
 
-  ages <- 0:99
+  ages <- 0:100
   sexes <- c("male", "female")
 
   result <- data.table::CJ(age = ages, sex = sexes)
@@ -789,7 +789,7 @@ get_default_type_splits <- function() {
 #'   If NULL, uses default values based on published research.
 #'   Expected format: list with age_group and overstay_pct columns.
 #'
-#' @return data.table with overstay_pct by single year of age (0-99)
+#' @return data.table with overstay_pct by single year of age (0-100)
 #'
 #' @details
 #' TR2025 Input #25 states: "Internally developed overstay percentages by age.
@@ -823,7 +823,7 @@ get_default_type_splits <- function() {
 #' config <- list(
 #'   overstay_by_age_group = data.table(
 #'     age_min = c(0, 18, 35, 50, 65),
-#'     age_max = c(17, 34, 49, 64, 99),
+#'     age_max = c(17, 34, 49, 64, 100),
 #'     overstay_pct = c(0.25, 0.50, 0.40, 0.25, 0.15)
 #'   )
 #' )
@@ -832,7 +832,7 @@ get_default_type_splits <- function() {
 #'
 #' @export
 get_overstay_percentages <- function(config = NULL) {
-  ages <- 0:99
+  ages <- 0:100
   overstay <- data.table::data.table(age = ages)
 
 
@@ -1058,7 +1058,7 @@ interpolate_ni_to_single_age <- function(ni_data) {
 
       # Map DHS age groups to standard
       age_min <- grp$age_min
-      age_max <- min(grp$age_max, 99)
+      age_max <- min(grp$age_max, 100)
 
       # Distribute evenly
       n_ages <- age_max - age_min + 1
@@ -1099,7 +1099,7 @@ get_default_ni_distribution <- function() {
 
   cli::cli_alert_warning("Using default NI distribution (HARDCODED fallback)")
 
-  ages <- 0:99
+  ages <- 0:100
   sexes <- c("male", "female")
 
   result <- data.table::CJ(age = ages, sex = sexes)
@@ -1148,7 +1148,7 @@ get_unauthorized_distribution <- function() {
     # 85% unauthorized is a rough approximation (11M of 13M total O)
     # =========================================================================
     cli::cli_alert_warning("Using default unauthorized distribution (HARDCODED fallback)")
-    ages <- 0:99
+    ages <- 0:100
     sexes <- c("male", "female")
     result <- data.table::CJ(age = ages, sex = sexes)
     result[, unauth_pct := 0.85]  # HARDCODED: Default to 85% unauthorized
@@ -1156,7 +1156,7 @@ get_unauthorized_distribution <- function() {
   }
 
   # Expand age groups to single ages
-  ages <- 0:99
+  ages <- 0:100
   sexes <- c("male", "female")
   result <- data.table::CJ(age = ages, sex = sexes)
 

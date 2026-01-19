@@ -19,6 +19,8 @@ NULL
 #' @param deaths data.table with columns: year, age, sex, cause, deaths
 #' @param population data.table with columns: year, age, sex, population
 #' @param by_cause Logical: calculate rates by cause of death (default: TRUE)
+#' @param max_age Integer: maximum age to include. Ages above this are aggregated
+#'   into max_age (e.g., ages 100+ -> age 100). Default: 100.
 #'
 #' @return data.table with columns: year, age, sex, [cause], deaths, population, mx
 #'
@@ -33,18 +35,31 @@ NULL
 #' When by_cause=TRUE, rates are computed separately for each cause.
 #' Total mx can be obtained by summing across causes.
 #'
+#' Ages above max_age are aggregated into max_age before calculating rates.
+#' This is necessary because Census population data only provides ages 0-100
+#' (with 100 representing 100+), while NCHS death data has individual ages
+#' above 100.
+#'
 #' @export
-calculate_central_death_rates <- function(deaths, population, by_cause = TRUE) {
+calculate_central_death_rates <- function(deaths, population, by_cause = TRUE,
+                                          max_age = 100) {
   # Validate inputs
   checkmate::assert_data_table(deaths)
   checkmate::assert_data_table(population)
   checkmate::assert_names(names(deaths), must.include = c("year", "age", "sex", "deaths"))
   checkmate::assert_names(names(population), must.include = c("year", "age", "sex", "population"))
   checkmate::assert_flag(by_cause)
+  checkmate::assert_int(max_age, lower = 1, upper = 150)
 
   # Copy to avoid modifying originals
   d <- data.table::copy(deaths)
   p <- data.table::copy(population)
+
+  # Aggregate ages above max_age into max_age (e.g., ages 100+ -> age 100)
+  # This is necessary because Census population only has 100+ as a single category
+  # while NCHS deaths has individual ages above 100
+  d[age > max_age, age := max_age]
+  p[age > max_age, age := max_age]
 
   # Determine grouping columns
   if (by_cause && "cause" %in% names(d)) {
@@ -57,7 +72,7 @@ calculate_central_death_rates <- function(deaths, population, by_cause = TRUE) {
     }
   }
 
-  # Aggregate deaths by grouping columns
+  # Aggregate deaths by grouping columns (this now includes 100+ aggregation)
   d <- d[, .(deaths = sum(deaths)), by = group_cols]
 
   # Ensure population is aggregated by year, age, sex
@@ -1664,125 +1679,41 @@ calculate_starting_mx <- function(aax_results, base_year = 2019) {
 #' Converts mx to qx using the standard actuarial formula.
 #'
 #' @param mx data.table with central death rates (columns: age, sex, mx, and optionally year, cause)
-#' @param max_age Integer: maximum age to extrapolate to (default: 119)
+#' @param max_age Integer: maximum age in the data (default: 100). No extrapolation
+#'   is performed - qx is calculated directly from mx for all ages present.
 #'
 #' @return data.table with qx values added
 #'
 #' @details
 #' Per SSA 2025 Long-Range Model Documentation (Section 1.2.2):
 #'
-#' **Ages 2-99:**
+#' **All ages:**
 #' qx = mx / (1 + 0.5*mx)
 #'
-#' **Ages 100-104 (transition to ultimate growth):**
-#' qx = q_{x-1} * (q99/q98 * (104-x)/5 + growth_rate * (x-99)/5)
+#' This is the standard actuarial formula for converting central death rates
+#' to death probabilities.
 #'
-#' where growth_rate = 1.05 for males, 1.06 for females
-#'
-#' **Ages 105+:**
-#' qx = growth_rate * q_{x-1}
-#'
-#' where growth_rate = 1.05 for males, 1.06 for females
-#'
-#' **Age 0:** Special calculation using detailed infant mortality data
-#' (deaths by age in days/weeks/months). If infant_data not provided,
-#' uses simplified formula qx = mx / (1 + 0.5*mx).
-#'
-#' **Age 1:** Calculated from 4m1 (death rate ages 1-4) using historical
-#' ratio q1/4m1. If not available, uses simplified formula.
+#' **Age 100 (representing 100+):**
+#' When the input mx includes age 100 representing the 100+ open-ended age group,
+#' the same formula is applied. The mx for age 100 should be calculated from
+#' aggregate deaths (100+) / aggregate population (100+).
 #'
 #' Female qx is capped at male qx if crossover occurs at very old ages.
 #'
 #' @export
-convert_mx_to_qx <- function(mx, max_age = 119) {
+convert_mx_to_qx <- function(mx, max_age = 100) {
   checkmate::assert_data_table(mx)
   checkmate::assert_names(names(mx), must.include = c("age", "sex", "mx"))
 
   dt <- data.table::copy(mx)
   has_year <- "year" %in% names(dt)
 
-  # For ages 0-99: standard formula qx = mx / (1 + 0.5*mx)
-  dt[age <= 99, qx := mx / (1 + 0.5 * mx)]
+  # Standard formula for all ages: qx = mx / (1 + 0.5*mx)
+  # This applies to ages 0-100 (with 100 representing 100+)
+  dt[, qx := mx / (1 + 0.5 * mx)]
 
-  # Define growth rates by sex
-  growth_rates <- c(male = 1.05, female = 1.06)
-
-  # Determine grouping: by year if present, otherwise single group
-  if (has_year) {
-    years <- unique(dt$year)
-  } else {
-    years <- NA  # Single pass
-  }
-
-  # Process ages 100+ for each year/sex combination
-  results_list <- list()
-  list_idx <- 1
-
-  for (yr in years) {
-    for (sex_val in c("male", "female")) {
-      growth_rate <- growth_rates[sex_val]
-
-      # Get q98 and q99 for this sex (and year if applicable)
-      if (has_year && !is.na(yr)) {
-        q98_val <- dt[sex == sex_val & age == 98 & year == yr, qx][1]
-        q99_val <- dt[sex == sex_val & age == 99 & year == yr, qx][1]
-      } else {
-        q98_val <- dt[sex == sex_val & age == 98, qx][1]
-        q99_val <- dt[sex == sex_val & age == 99, qx][1]
-      }
-
-      if (!is.na(q98_val) && !is.na(q99_val) && q98_val > 0) {
-        ratio <- q99_val / q98_val
-
-        # Build qx series for ages 100+
-        qx_series <- numeric(max_age - 99)
-        prev_qx <- q99_val
-
-        for (i in seq_along(qx_series)) {
-          age_x <- 99 + i
-
-          if (age_x <= 104) {
-            # Transition formula for ages 100-104
-            multiplier <- ratio * (104 - age_x) / 5 + growth_rate * (age_x - 99) / 5
-          } else {
-            # Simple growth formula for ages 105+
-            multiplier <- growth_rate
-          }
-
-          new_qx <- prev_qx * multiplier
-          qx_series[i] <- pmin(new_qx, 1.0)
-          prev_qx <- qx_series[i]
-        }
-
-        # Create data for ages 100+
-        ages_100_plus <- data.table::data.table(
-          age = 100:max_age,
-          sex = sex_val,
-          qx = qx_series
-        )
-        if (has_year && !is.na(yr)) {
-          ages_100_plus[, year := yr]
-        }
-        results_list[[list_idx]] <- ages_100_plus
-        list_idx <- list_idx + 1
-      }
-    }
-  }
-
-  # Combine ages 100+ results
-  if (length(results_list) > 0) {
-    dt_100_plus <- data.table::rbindlist(results_list, fill = TRUE)
-
-    # Remove any existing ages 100+ from dt (they have NA or bad mx)
-    dt <- dt[age < 100]
-
-    # Add any missing columns with NA
-    for (col in setdiff(names(dt), names(dt_100_plus))) {
-      dt_100_plus[, (col) := NA]
-    }
-
-    dt <- data.table::rbindlist(list(dt, dt_100_plus), fill = TRUE)
-  }
+  # Cap qx at 1.0 for very old ages
+  dt[qx > 1, qx := 1.0]
 
   # Female qx capped at male qx if crossover occurs at very old ages
   # Must merge by age AND year (if present) to avoid cartesian join
@@ -1806,7 +1737,8 @@ convert_mx_to_qx <- function(mx, max_age = 119) {
     data.table::setorder(dt, sex, age)
   }
 
-  cli::cli_alert_success("Converted mx to qx for {nrow(dt)} records (ages 0-{max_age})")
+  actual_max <- max(dt$age, na.rm = TRUE)
+  cli::cli_alert_success("Converted mx to qx for {nrow(dt)} records (ages 0-{actual_max})")
 
   dt
 }
@@ -1869,29 +1801,33 @@ get_hmd_elderly_qx_ratios <- function(max_age = 110, reference_year = 2019) {
 #' @param qx data.table with qx values (year, age, sex, qx)
 #' @param hmd_ratios data.table from get_hmd_elderly_qx_ratios(), or NULL to fetch
 #' @param transition_age Integer: age at which to start HMD adjustment (default: 85)
-#' @param max_age Integer: maximum age to extend to (default: 119)
+#' @param max_age Integer: maximum age to calibrate (default: 100). For max_age = 100,
+#'   only ages 85-99 are calibrated; age 100 (representing 100+) keeps its original
+#'   data-driven value since HMD ratios are age-specific.
 #'
 #' @return data.table with adjusted qx values
 #'
 #' @details
 #' The adjustment works by:
 #' 1. For ages 0-84: keep our calculated qx unchanged
-#' 2. For ages 85+: use q84 * HMD_ratio(age)
+#' 2. For ages 85-99: use q84 * HMD_ratio(age)
+#' 3. For age 100 (if max_age = 100): keep original qx (aggregate 100+ from data)
 #'
 #' This preserves our historical trends while using HMD's well-researched
 #' mortality pattern at oldest ages.
 #'
-#' For ages beyond HMD's max (110), extrapolates using the ratio
-#' progression from ages 105-110.
+#' When max_age = 100, age 100 represents the open-ended 100+ age group and
+#' is NOT calibrated with HMD ratios, since the original qx comes from
+#' aggregate deaths/population data.
 #'
 #' @export
 adjust_qx_with_hmd <- function(qx,
                                 hmd_ratios = NULL,
                                 transition_age = 85,
-                                max_age = 119) {
+                                max_age = 100) {
   checkmate::assert_data_table(qx)
   checkmate::assert_int(transition_age, lower = 80, upper = 100)
-  checkmate::assert_int(max_age, lower = 100, upper = 130)
+  checkmate::assert_int(max_age, lower = 99, upper = 130)
 
   dt <- data.table::copy(qx)
   has_year <- "year" %in% names(dt)
@@ -1909,8 +1845,14 @@ adjust_qx_with_hmd <- function(qx,
     q_ref <- dt[age == ref_age, .(sex, q_ref = qx)]
   }
 
-  # Remove ages >= transition_age from our data
+  # Determine the highest age to calibrate with HMD
+  # If max_age = 100, only calibrate 85-99 (age 100 is 100+ from data)
+  # Otherwise calibrate up to max_age
+  calibrate_max_age <- if (max_age == 100) 99 else max_age
+
+  # Remove ages in the calibration range from our data (keep age 100 if present)
   dt_young <- dt[age < transition_age]
+  dt_100plus <- if (max_age == 100) dt[age == 100] else data.table::data.table()
 
   # Create adjusted elderly qx using HMD ratios
   results_list <- list()
@@ -1925,9 +1867,9 @@ adjust_qx_with_hmd <- function(qx,
     # Get HMD ratios for this sex
     sex_ratios <- hmd_ratios[sex == sex_val]
 
-    # Extend ratios beyond HMD's max age if needed
+    # Extend ratios beyond HMD's max age if needed (only if calibrate_max_age > hmd_max)
     hmd_max <- max(sex_ratios$age)
-    if (max_age > hmd_max) {
+    if (calibrate_max_age > hmd_max) {
       # Calculate growth rate from last few ages
       last_ratios <- sex_ratios[age >= (hmd_max - 5)]
       if (nrow(last_ratios) >= 2) {
@@ -1940,7 +1882,7 @@ adjust_qx_with_hmd <- function(qx,
 
       # Extend ratios
       last_ratio <- sex_ratios[age == hmd_max, qx_ratio]
-      extended_ages <- (hmd_max + 1):max_age
+      extended_ages <- (hmd_max + 1):calibrate_max_age
       extended_ratios <- data.table::data.table(
         age = extended_ages,
         sex = sex_val,
@@ -1959,8 +1901,8 @@ adjust_qx_with_hmd <- function(qx,
 
       if (length(q84_val) == 0 || is.na(q84_val)) next
 
-      # Calculate adjusted qx for ages 85+
-      elderly_qx <- data.table::copy(sex_ratios[age >= transition_age & age <= max_age])
+      # Calculate adjusted qx for ages in calibration range
+      elderly_qx <- data.table::copy(sex_ratios[age >= transition_age & age <= calibrate_max_age])
       elderly_qx[, qx := pmin(q84_val * qx_ratio, 1.0)]
       elderly_qx[, qx_ratio := NULL]
 
@@ -1972,15 +1914,24 @@ adjust_qx_with_hmd <- function(qx,
     }
   }
 
-  # Combine young ages with adjusted elderly
+  # Combine young ages with adjusted elderly and preserved 100+ data
   dt_elderly <- data.table::rbindlist(results_list, fill = TRUE)
 
-  # Add any missing columns
+  # Add any missing columns to elderly data
   for (col in setdiff(names(dt_young), names(dt_elderly))) {
     dt_elderly[, (col) := NA]
   }
 
-  result <- data.table::rbindlist(list(dt_young, dt_elderly), fill = TRUE)
+  # Combine all parts: young (0-84), calibrated elderly (85-99), and 100+ (if present)
+  parts_to_combine <- list(dt_young, dt_elderly)
+  if (nrow(dt_100plus) > 0) {
+    # Ensure dt_100plus has same columns
+    for (col in setdiff(names(dt_young), names(dt_100plus))) {
+      dt_100plus[, (col) := NA]
+    }
+    parts_to_combine <- c(parts_to_combine, list(dt_100plus))
+  }
+  result <- data.table::rbindlist(parts_to_combine, fill = TRUE)
 
   # Ensure female qx doesn't exceed male qx at oldest ages
   if (has_year) {
@@ -2021,7 +1972,7 @@ adjust_qx_with_hmd <- function(qx,
 #' @param qx data.table with death probabilities (must have age, sex, qx columns;
 #'   optionally year for multiple years)
 #' @param radix Integer: starting population for life table (default: 100,000)
-#' @param max_age Integer: maximum age in life table (default: 119)
+#' @param max_age Integer: maximum age in life table (default: 100, representing 100+)
 #'
 #' @return data.table with life table columns:
 #'   - age: exact age x
@@ -2049,7 +2000,7 @@ adjust_qx_with_hmd <- function(qx,
 #' where f0 ≈ 0.1 for developed countries (most infant deaths occur early)
 #'
 #' @export
-calculate_life_table <- function(qx, radix = 100000, max_age = 119) {
+calculate_life_table <- function(qx, radix = 100000, max_age = 100) {
   checkmate::assert_data_table(qx)
   checkmate::assert_names(names(qx), must.include = c("age", "sex", "qx"))
   checkmate::assert_int(radix, lower = 1)

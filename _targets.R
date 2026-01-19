@@ -420,8 +420,8 @@ list(
       pop_years <- unique(census_population_both$year)
       mx_filtered <- mortality_mx_total[year %in% pop_years]
 
-      # Calculate qx for ages 1+ from mx
-      qx_from_mx <- convert_mx_to_qx(mx_filtered, max_age = 119)
+      # Calculate qx for ages 1+ from mx (ages 0-100, with 100 representing 100+)
+      qx_from_mx <- convert_mx_to_qx(mx_filtered, max_age = 100)
 
       # Calculate q0 using deaths/births with actual sex-specific births
       infant_deaths <- nchs_deaths_raw[age == 0 & year %in% pop_years,
@@ -448,7 +448,7 @@ list(
     adjust_qx_with_hmd(
       qx = mortality_qx_unadjusted,
       transition_age = 85,
-      max_age = 119
+      max_age = 100  # 100 represents 100+ (open-ended age group)
     )
   ),
 
@@ -458,7 +458,7 @@ list(
     calculate_life_table(
       qx = mortality_qx_historical,
       radix = 100000,
-      max_age = 119
+      max_age = 100  # 100 represents 100+ (open-ended age group)
     )
   ),
 
@@ -492,14 +492,20 @@ list(
       method <- config_assumptions$mortality$starting_aax_method
       if (!is.null(method) && method == "tr_qx") {
         cli::cli_alert_info("Skipping HMD calibration for tr_qx method (using TR2025 qx directly)")
+        # For tr_qx, aggregate ages 100+ into age 100 to match our 100+ approach
+        # TR2025 files have ages 0-119, but we model 100+ as single open-ended group
+        qx_proj[age > 100, age := 100L]
+        qx_proj <- qx_proj[, .(qx = weighted.mean(qx, w = 1, na.rm = TRUE)),
+                           by = .(year, age, sex)]
         return(qx_proj)
       }
 
-      # Apply HMD calibration for ages 85+ (for regression/capped methods)
+      # Apply HMD calibration for ages 85-99 (for regression/capped methods)
+      # Age 100 (100+) keeps its data-driven value
       adjust_qx_with_hmd(
         qx = qx_proj,
         transition_age = 85,
-        max_age = 119
+        max_age = 100  # 100 represents 100+ (open-ended age group)
       )
     }
   ),
@@ -510,7 +516,7 @@ list(
     calculate_life_table(
       qx = mortality_qx_projected,
       radix = 100000,
-      max_age = 119
+      max_age = 100  # 100 represents 100+ (open-ended age group)
     )
   ),
 

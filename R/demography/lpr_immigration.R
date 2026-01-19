@@ -112,35 +112,47 @@ calculate_emigration_distribution_dhs <- function(dhs_data,
 #' distribution for each age group while providing single-year granularity.
 #'
 #' @param dist data.table with columns: age_min, age_max, sex, distribution
-#' @return data.table with columns: age, sex, distribution
+#' @param max_age Integer: maximum single-year age (default: 100, representing 100+)
+#' @return data.table with columns: age (0 to max_age), sex, distribution
 #' @keywords internal
-beers_interpolate_dhs <- function(dist) {
+beers_interpolate_dhs <- function(dist, max_age = 100) {
   results <- list()
 
   for (s in c("male", "female")) {
     sex_dist <- dist[tolower(sex) == s]
     data.table::setorder(sex_dist, age_min)
 
-    # Build single-year distribution
-    single_ages <- numeric(100)  # ages 0-99
+    # Build single-year distribution (ages 0 to max_age)
+    single_ages <- numeric(max_age + 1)  # ages 0-100
 
     for (i in seq_len(nrow(sex_dist))) {
       age_start <- sex_dist$age_min[i]
-      age_end <- min(sex_dist$age_max[i], 99)  # Cap at 99
-      group_width <- age_end - age_start + 1
+      age_end <- sex_dist$age_max[i]
       group_value <- sex_dist$distribution[i]
+
+      # If age group extends beyond max_age, cap it
+      # All ages >= max_age go into the max_age bucket (100+ -> 100)
+      if (age_end > max_age) {
+        age_end <- max_age
+      }
+      if (age_start > max_age) {
+        age_start <- max_age
+      }
+
+      group_width <- age_end - age_start + 1
+      if (group_width < 1) group_width <- 1
 
       # Distribute evenly within the age group
       per_year <- group_value / group_width
       for (age in age_start:age_end) {
-        if (age >= 0 && age <= 99) {
-          single_ages[age + 1] <- per_year  # +1 for R indexing
+        if (age >= 0 && age <= max_age) {
+          single_ages[age + 1] <- single_ages[age + 1] + per_year  # +1 for R indexing
         }
       }
     }
 
     results[[s]] <- data.table::data.table(
-      age = 0:99,
+      age = 0:max_age,
       sex = s,
       distribution = single_ages
     )

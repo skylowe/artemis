@@ -136,7 +136,7 @@ verify_fertility_inputs <- function(fertility_rates, projection_years = 2023:209
 #' @details
 #' Required structure:
 #' - Columns: year, age, sex, qx
-#' - Ages: 0-119 (single year, with 100+ grouped)
+#' - Ages: 0-100 (single year, with 100 representing 100+ open-ended group)
 #' - Sex: "male", "female"
 #' - Years: at minimum 2023-2099
 #'
@@ -169,9 +169,9 @@ verify_mortality_inputs <- function(mortality_qx, projection_years = 2023:2099) 
   expected_sexes <- c("male", "female")
   missing_sexes <- setdiff(expected_sexes, available_sexes)
 
-  # Check age coverage (need at least 0-99)
+  # Check age coverage (need at least 0-100, with 100 representing 100+)
   available_ages <- sort(unique(mortality_qx$age))
-  expected_ages <- 0:99
+  expected_ages <- 0:100
   missing_ages <- setdiff(expected_ages, available_ages)
 
   # Check qx values are in valid range
@@ -325,7 +325,7 @@ verify_lpr_immigration_inputs <- function(net_lpr, projection_years = 2023:2099)
   missing_years <- setdiff(projection_years, available_years)
 
   available_ages <- sort(unique(net_lpr$age))
-  expected_ages <- 0:99  # At minimum need 0-99
+  expected_ages <- 0:100  # At minimum need 0-100 (100 represents 100+)
   missing_ages <- setdiff(expected_ages, available_ages)
 
   # Check total net LPR (should be positive for most years)
@@ -834,7 +834,7 @@ validate_input_consistency <- function(inputs) {
   expected_sexes <- c("male", "female")
 
   # Check age coverage across components
-  # Mortality needs 0-119, Immigration needs 0-99, Fertility needs 14-49
+  # Mortality needs 0-100, Immigration needs 0-100, Fertility needs 14-49
 
   # Verify immigration ages align with population ages
   if (inputs$results$lpr_immigration$valid && inputs$results$starting_population$valid) {
@@ -888,8 +888,8 @@ get_projected_population_config <- function() {
     # Age ranges
     ages = list(
       min_age = 0,
-      max_age = 119,
-      max_age_group = 100,  # 100+ grouped
+      max_age = 100,            # Maximum single year tracked (100 represents 100+)
+      max_age_group = 100,      # Open-ended age group (100+)
       mothers_min = 14,
       mothers_max = 49,
       children_max = 18,
@@ -1085,7 +1085,7 @@ calculate_projected_deaths <- function(year,
     all.x = TRUE
   )
 
-  # For ages without qx data, use qx = 0 (should not happen for ages 0-119)
+  # For ages without qx data, use qx = 0 (should not happen for ages 0-100)
   deaths[is.na(qx), qx := 0]
 
   # Calculate deaths: D = q * P

@@ -415,8 +415,8 @@ projected_population:
   # Age ranges
   ages:
     min_age: 0
-    max_age: 119           # Maximum single year of age tracked
-    max_age_group: 100     # 100+ grouped into single category
+    max_age: 100           # Maximum single year of age tracked (100 represents 100+)
+    max_age_group: 100     # Open-ended age group (100+)
     mothers_min: 14        # Minimum mother's age for births
     mothers_max: 49        # Maximum mother's age for births
     children_max: 18       # Maximum age for "children" category
