@@ -303,6 +303,9 @@ project_age30_rates <- function(years, base_rate, ultimate_rate, weights) {
 #' @param base_ratios data.table with age-to-30 ratios in base year
 #' @param trend_factors data.table with trend factors by age
 #' @param ultimate_years data.table with ultimate years by age
+#' @param base_year Integer: the base year for ratio calculations. This should
+#'   match the year used in solve_ultimate_age30_rate() and should come from
+#'   config$fertility$rate_base_year. Required parameter.
 #'
 #' @return data.table with columns: year, age, birth_rate
 #'
@@ -312,15 +315,19 @@ project_age30_rates <- function(years, base_rate, ultimate_rate, weights) {
 #' 2. After ultimate year, r_x^z stays constant
 #' 3. Calculate: b_x^z = b_30^z * r_x^z
 #'
+#' IMPORTANT: The base_year parameter must match the base_year used in
+#' solve_ultimate_age30_rate(), otherwise the solved ultimate age-30 rate
+#' will not produce the target TFR at the ultimate year.
+#'
 #' @export
 project_birth_rates <- function(years,
                                  age30_rates,
                                  base_ratios,
                                  trend_factors,
-                                 ultimate_years) {
+                                 ultimate_years,
+                                 base_year) {
   # Get ages from base ratios
   ages <- sort(unique(base_ratios$age))
-  base_year <- min(years) - 1  # Assume projection starts year after base
 
   # Create grid of all year-age combinations
   grid <- data.table::CJ(year = years, age = ages)

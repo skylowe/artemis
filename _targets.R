@@ -242,7 +242,8 @@ list(
       age30_rates = fertility_age30_projected,
       base_ratios = fertility_age30_ratios[year == config_assumptions$fertility$rate_base_year],
       trend_factors = fertility_trend_factors,
-      ultimate_years = fertility_ultimate_years
+      ultimate_years = fertility_ultimate_years,
+      base_year = config_assumptions$fertility$rate_base_year
     )
   ),
 
