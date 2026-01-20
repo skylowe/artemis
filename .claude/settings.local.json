@@ -76,7 +76,8 @@
       "Bash(pgrep:*)",
       "WebFetch(domain:www2.nber.org)",
       "Bash(kill:*)",
-      "Bash(head:*)"
+      "Bash(head:*)",
+      "WebFetch(domain:)"
     ]
   }
 }

@@ -28,7 +28,7 @@ fertility:
   age30_ultimate_year: 2036
   # Interpolation weight exponent (TR2025 uses 1.5)
   # 1.0 = linear, >1 = front-loaded (faster initial change)
-  weight_exponent: 1.5
+  weight_exponent: 1
   # Base year for projections
   # TR2025 uses 2024 with estimated rates (TFR=1.62 from provisional data)
   rate_base_year: 2024
