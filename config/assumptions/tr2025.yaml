@@ -250,9 +250,38 @@ immigration:
     min_age: 0
     max_age: 99
 
-    # Distribution source and reference years
-    # Uses DHS expanded tables with Beers interpolation to single years.
-    # DHS provides actual LPR admission data by age group and sex.
+    # =========================================================================
+    # Age-Sex Distribution Method
+    # =========================================================================
+    # Controls how immigration is distributed across ages and sexes.
+    #
+    # Options:
+    #   "dhs" - Use DHS expanded tables with Beers interpolation (default)
+    #           Based on actual LPR admission data by age group and sex.
+    #           Results in older distribution than TR2025 implies.
+    #
+    #   "tr2025_derived" - Derive distribution from TR2025 population projections
+    #           Reverse-engineers TR2025's implied immigration by analyzing
+    #           year-over-year population changes adjusted for mortality.
+    #           Results in younger distribution matching TR2025's assumptions.
+    #           Note: Includes net emigration at ages 73+ (negative values).
+    # =========================================================================
+    distribution_method: "tr2025_derived"
+
+    # DHS distribution configuration (used when distribution_method = "dhs")
+    dhs_distribution:
+      distribution_years: [2018, 2019, 2020, 2021, 2022, 2023]
+
+    # TR2025-derived distribution configuration (used when distribution_method = "tr2025_derived")
+    tr2025_derived_distribution:
+      # Years to average for stable distribution estimate
+      derivation_years: [2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033, 2034, 2035, 2036, 2037, 2038, 2039, 2040, 2041, 2042, 2043, 2044, 2045, 2046, 2047, 2048, 2049, 2050]
+      # Input files for derivation
+      population_file: "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv"
+      qx_male_file: "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
+      qx_female_file: "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
+
+    # Legacy config (kept for backwards compatibility)
     distribution_source: "dhs"
     distribution_years: [2018, 2019, 2020, 2021, 2022, 2023]
 
