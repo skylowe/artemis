@@ -27,9 +27,10 @@
 #' components of change (births, deaths, immigration, emigration) and then
 #' ratio-adjusted to eliminate closure error at the next tab year.
 #'
-#' **Ages 85+:** Due to data quality concerns, ages 85+ are estimated using
-#' a build-up method that ages forward from the previous tab year using
-#' mortality rates and immigration/emigration flows.
+#' **Ages 85+:** For years 1980+, Census provides single-year-of-age data
+#' through age 100, which is used directly. For pre-1980 years, ages 85+ are
+#' estimated using a survival-based distribution applied to aggregate Census
+#' 85+ totals.
 #'
 #' @section Data Sources:
 #' - Census Bureau: Population estimates, decennial census
@@ -1329,9 +1330,9 @@ distribute_overseas_by_age <- function(total, age, sex, pop_type) {
 #' Build Up Ages 85+ for Tab Years
 #'
 #' @description
-#' For ages 85+, Census counts are less reliable. This function estimates
-#' the 85+ population by aging forward from the previous tab year using
-#' mortality rates and adjusting to match Census 85+ totals.
+#' For ages 85+, this function uses Census single-year-of-age data when
+#' available (1980+), or falls back to survival-based distribution for
+#' earlier years (pre-1980) where Census only provides aggregate 85+ counts.
 #'
 #' @param tab_years Integer vector of tab years
 #' @param components List of component data
@@ -1343,20 +1344,42 @@ distribute_overseas_by_age <- function(total, age, sex, pop_type) {
 build_up_ages_85_plus <- function(tab_years,
                                    components,
                                    max_age = 100) {
-  # For initial implementation, use simplified approach:
-  # Distribute Census 85+ total across single years using survival model
 
   result_list <- lapply(tab_years, function(yr) {
     cli::cli_alert("  Building 85+ for {yr}...")
 
-    # Get Census 85+ total from USAF data
+    # Get Census data for ages 85+
     usaf_85plus <- components$census_usaf[year == yr & age >= 85]
 
     if (nrow(usaf_85plus) == 0) {
-      # Estimate from 1940 85+ distribution
+      # No Census data - estimate from 1940 distribution
       dist_1940 <- get_1940_85plus_distribution()
       return(estimate_85plus_from_1940(yr, dist_1940, max_age))
     }
+
+    # Check if Census provides single-year-of-age data (1980+)
+    # by looking for multiple distinct ages in the 85+ range
+    census_ages <- sort(unique(usaf_85plus$age))
+    has_single_year_data <- length(census_ages) >= 10 && max(census_ages) >= 100
+
+    if (has_single_year_data) {
+      # Use Census single-year-of-age data directly (1980+)
+      cli::cli_alert_info("    Using Census single-year-of-age data for {yr}")
+
+      result <- usaf_85plus[age >= 85 & age <= max_age, .(
+        year = yr,
+        age = age,
+        sex = sex,
+        population = population,
+        source = "census_direct"
+      )]
+
+      return(result)
+    }
+
+    # Fall back to survival-based distribution for pre-1980 years
+    # where Census only provides aggregate 85+ totals
+    cli::cli_alert_info("    Using survival distribution for {yr} (pre-1980 data)")
 
     # Sum to get 85+ totals by sex
     totals_85plus <- usaf_85plus[, .(total_85plus = sum(population)), by = sex]
