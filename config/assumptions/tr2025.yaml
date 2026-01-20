@@ -103,10 +103,14 @@ mortality:
   # Configuration for "tr_qx" method
   starting_tr_qx:
     # Path to TR2025 death probability files (relative to project root)
+    # Projected files (2023-2100)
     male_qx_file: "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
     female_qx_file: "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
-    # Base year for starting qx (typically 2024)
-    base_year: 2024
+    # Historical files (1900-2022)
+    male_qx_hist_file: "data/raw/SSA_TR2025/DeathProbsE_M_Hist_TR2025.csv"
+    female_qx_hist_file: "data/raw/SSA_TR2025/DeathProbsE_F_Hist_TR2025.csv"
+    # Base year for starting qx (2023 = first year TR2025 projected file covers)
+    base_year: 2023
     # Years to use for calculating implied AAx (2024-2025 gives first year improvement)
     aax_reference_years: [2024, 2025]
 

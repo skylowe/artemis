@@ -1715,7 +1715,11 @@ convert_mx_to_qx <- function(mx, max_age = 100) {
   # Cap qx at 1.0 for very old ages
   dt[qx > 1, qx := 1.0]
 
-  # Female qx capped at male qx if crossover occurs at very old ages
+  # Female qx capped at male qx if crossover occurs
+  # Only apply for ages < 85 where crossover would be truly anomalous
+
+  # At ages 85+, small populations can cause random crossovers that should
+  # be handled by HMD calibration instead of this simple cap
   # Must merge by age AND year (if present) to avoid cartesian join
   if (has_year) {
     male_qx_lookup <- dt[sex == "male", .(year, age, male_qx = qx)]
@@ -1727,7 +1731,8 @@ convert_mx_to_qx <- function(mx, max_age = 100) {
 
   if (nrow(male_qx_lookup) > 0 && any(dt$sex == "female")) {
     dt <- merge(dt, male_qx_lookup, by = merge_keys, all.x = TRUE)
-    dt[sex == "female" & !is.na(male_qx) & !is.na(qx), qx := pmin(qx, male_qx)]
+    # Only cap female qx at male qx for ages < 85
+    dt[sex == "female" & age < 85 & !is.na(male_qx) & !is.na(qx), qx := pmin(qx, male_qx)]
     dt[, male_qx := NULL]
   }
 
@@ -1933,7 +1938,9 @@ adjust_qx_with_hmd <- function(qx,
   }
   result <- data.table::rbindlist(parts_to_combine, fill = TRUE)
 
-  # Ensure female qx doesn't exceed male qx at oldest ages
+  # Ensure female qx doesn't exceed male qx at younger ages (< 85)
+  # At ages 85+, small populations can cause random crossovers that are
+  # handled by HMD calibration for 85-99 and should be left as-is for 100+
   if (has_year) {
     male_lookup <- result[sex == "male", .(year, age, male_qx = qx)]
     result <- merge(result, male_lookup, by = c("year", "age"), all.x = TRUE)
@@ -1941,7 +1948,8 @@ adjust_qx_with_hmd <- function(qx,
     male_lookup <- result[sex == "male", .(age, male_qx = qx)]
     result <- merge(result, male_lookup, by = "age", all.x = TRUE)
   }
-  result[sex == "female" & !is.na(male_qx), qx := pmin(qx, male_qx)]
+  # Only cap female qx at male qx for ages < 85
+  result[sex == "female" & age < 85 & !is.na(male_qx), qx := pmin(qx, male_qx)]
   result[, male_qx := NULL]
 
   # Sort

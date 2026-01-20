@@ -525,18 +525,15 @@ list(
       # Get projected qx from the projection output
       qx_proj <- mortality_mx_projected$projected_qx
 
-      # Filter to projection years only (2024+, since 2020-2023 are in historical)
-      qx_proj <- qx_proj[year >= 2024]
-
       # Check if using tr_qx method - if so, skip HMD calibration
       # TR2025 qx values are already properly calibrated for all ages
       method <- config_assumptions$mortality$starting_aax_method
       if (!is.null(method) && method == "tr_qx") {
         cli::cli_alert_info("Skipping HMD calibration for tr_qx method (using TR2025 qx directly)")
-        # For tr_qx, aggregate ages 100+ into age 100 to match our 100+ approach
+        # For tr_qx, use age 100 qx directly for the 100+ group
         # TR2025 files have ages 0-119, but we model 100+ as single open-ended group
-        qx_proj[age > 100, age := 100L]
-        qx_proj <- qx_proj[, .(qx = mean(qx, na.rm = TRUE)), by = .(year, age, sex)]
+        # Use age 100 value (not mean of 100-119, which over-weights rare supercentenarians)
+        qx_proj <- qx_proj[age <= 100]
         return(qx_proj)
       }
 
@@ -1498,8 +1495,45 @@ list(
     {
       # Select common columns
       common_cols <- c("year", "age", "sex", "qx")
-      hist_qx <- mortality_qx_historical[, ..common_cols]
       proj_qx <- mortality_qx_projected[, ..common_cols]
+
+      # Check if using tr_qx method - if so, load TR2025 historical qx
+      method <- config_assumptions$mortality$starting_aax_method
+      if (!is.null(method) && method == "tr_qx") {
+        cli::cli_alert_info("Using TR2025 historical qx for tr_qx method")
+
+        # Get historical file paths from config
+        male_hist_file <- config_assumptions$mortality$starting_tr_qx$male_qx_hist_file
+        female_hist_file <- config_assumptions$mortality$starting_tr_qx$female_qx_hist_file
+
+        # Use default paths if not in config
+        if (is.null(male_hist_file)) {
+          male_hist_file <- "data/raw/SSA_TR2025/DeathProbsE_M_Hist_TR2025.csv"
+        }
+        if (is.null(female_hist_file)) {
+          female_hist_file <- "data/raw/SSA_TR2025/DeathProbsE_F_Hist_TR2025.csv"
+        }
+
+        # Load TR2025 historical qx (1900-2022)
+        hist_qx <- load_tr2025_qx_all_years(
+          male_qx_file = male_hist_file,
+          female_qx_file = female_hist_file,
+          start_year = 1900,
+          end_year = 2022,
+          ages = 0:119
+        )
+
+        # Limit to age 100 (100+ group) like we do for projected
+        hist_qx <- hist_qx[age <= 100]
+        hist_qx <- hist_qx[, ..common_cols]
+      } else {
+        # Use calculated historical qx
+        hist_qx <- mortality_qx_historical[, ..common_cols]
+      }
+
+      # Remove overlapping years from historical (projected takes precedence)
+      proj_years <- unique(proj_qx$year)
+      hist_qx <- hist_qx[!year %in% proj_years]
 
       data.table::rbindlist(
         list(hist_qx, proj_qx),
