@@ -1474,14 +1474,73 @@ list(
   ),
 
   # Extract starting population (Phase 8A.7)
+  # Optionally uses TR2025 historical population for testing
   tar_target(
     starting_population,
     {
-      extract_starting_population(
-        historical_population = historical_population,
-        historical_marital = historical_population_marital,
-        starting_year = config_assumptions$projected_population$starting_year
-      )
+      use_tr <- config_assumptions$projected_population$use_tr_historical_population
+      starting_year <- config_assumptions$projected_population$starting_year
+
+      if (!is.null(use_tr) && use_tr) {
+        cli::cli_alert_info("Using TR2025 historical population for starting population")
+
+        tr_file <- config_assumptions$projected_population$tr_historical_population_file
+        if (is.null(tr_file)) {
+          tr_file <- "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv"
+        }
+
+        tr_pop <- data.table::fread(tr_file)
+
+        # Extract starting year
+        tr_start <- tr_pop[Year == starting_year, .(
+          year = Year,
+          age = Age,
+          male = `M Tot`,
+          female = `F Tot`
+        )]
+
+        # Convert to long format
+        tr_start <- data.table::melt(
+          tr_start,
+          id.vars = c("year", "age"),
+          measure.vars = c("male", "female"),
+          variable.name = "sex",
+          value.name = "population"
+        )
+
+        # Cap age at 100 (aggregate 100+ into single group)
+        tr_start[age > 100, age := 100L]
+        tr_start <- tr_start[, .(population = sum(population)), by = .(year, age, sex)]
+
+        # Add population status disaggregation (same as extract_starting_population)
+        # TR2025: 2.5% of males are gay, 4.5% of females are lesbian
+        tr_start_status <- data.table::rbindlist(list(
+          tr_start[sex == "male", .(year, age, sex, pop_status = "heterosexual",
+                                     population = population * 0.975)],
+          tr_start[sex == "male", .(year, age, sex, pop_status = "gay",
+                                     population = population * 0.025)],
+          tr_start[sex == "female", .(year, age, sex, pop_status = "heterosexual",
+                                       population = population * 0.955)],
+          tr_start[sex == "female", .(year, age, sex, pop_status = "lesbian",
+                                       population = population * 0.045)]
+        ))
+
+        cli::cli_alert_success("Loaded TR2025 population for Dec 31, {starting_year}")
+        cli::cli_alert_info("Total: {format(sum(tr_start_status$population), big.mark = ',')}")
+
+        # Return in same format as extract_starting_population
+        list(
+          valid = TRUE,
+          population = tr_start_status,
+          message = "TR2025 historical population loaded"
+        )
+      } else {
+        extract_starting_population(
+          historical_population = historical_population,
+          historical_marital = historical_population_marital,
+          starting_year = starting_year
+        )
+      }
     }
   ),
 

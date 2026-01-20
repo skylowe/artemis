@@ -450,6 +450,12 @@ projected_population:
   projection_end: 2099
   extended_end: 2105  # For some outputs needing longer projection
 
+  # Use TR2025 historical population instead of our calculated historical population
+  # This is useful for testing to isolate projection methodology differences
+  # from historical population estimation differences
+  use_tr_historical_population: true
+  tr_historical_population_file: "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv"
+
   # Reference date for population stocks
   reference_date: "dec31"  # December 31
 
