@@ -159,10 +159,21 @@ list(
     )
   ),
 
-  # Step 2: Calculate age-to-30 ratios
+  # Step 1b: Apply TFR constraints for specified years if configured
+  # TR2025 publishes TFR=1.62 for 2023 and constrains 2024 to TFR=1.62.
+  # This scaling is applied before calculating ratios and projections.
+  tar_target(
+    fertility_rates_for_projection,
+    constrain_tfr_for_years(
+      birth_rates = fertility_rates_historical,
+      constrain_tfr = config_assumptions$fertility$constrain_tfr
+    )
+  ),
+
+  # Step 2: Calculate age-to-30 ratios (using constrained rates for base year)
   tar_target(
     fertility_age30_ratios,
-    calculate_age30_ratios(fertility_rates_historical)
+    calculate_age30_ratios(fertility_rates_for_projection)
   ),
 
   # Step 3: Calculate trend factors (excluding 1997 due to NCHS method change)
@@ -202,7 +213,7 @@ list(
     fertility_ultimate_age30,
     solve_ultimate_age30_rate(
       target_ctfr = config_assumptions$fertility$ultimate_ctfr,
-      base_age30_rate = fertility_rates_historical[year == config_assumptions$fertility$rate_base_year & age == 30, birth_rate],
+      base_age30_rate = fertility_rates_for_projection[year == config_assumptions$fertility$rate_base_year & age == 30, birth_rate],
       base_ratios = fertility_age30_ratios[year == config_assumptions$fertility$rate_base_year],
       trend_factors = fertility_trend_factors,
       ultimate_years = fertility_ultimate_years,
@@ -216,7 +227,7 @@ list(
     project_age30_rates(
       years = config_assumptions$metadata$projection_period$start_year:
               config_assumptions$metadata$projection_period$end_year,
-      base_rate = fertility_rates_historical[year == config_assumptions$fertility$rate_base_year & age == 30, birth_rate],
+      base_rate = fertility_rates_for_projection[year == config_assumptions$fertility$rate_base_year & age == 30, birth_rate],
       ultimate_rate = fertility_ultimate_age30,
       weights = fertility_weights
     )
@@ -236,12 +247,13 @@ list(
   ),
 
   # Combined historical and projected rates (1980-2099)
-  # Note: Exclude 2024 from projected to avoid duplicate (historical includes 2024)
+  # Uses constrained rates for base year (2024) to match TR2025 methodology
+  # Note: Exclude base year from projected to avoid duplicate
   tar_target(
     fertility_rates_complete,
     rbind(
-      fertility_rates_historical[, .(year, age, birth_rate)],
-      fertility_rates_projected[year > 2024]
+      fertility_rates_for_projection[, .(year, age, birth_rate)],
+      fertility_rates_projected[year > config_assumptions$fertility$rate_base_year]
     )
   ),
 

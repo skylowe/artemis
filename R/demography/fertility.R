@@ -506,3 +506,83 @@ substitute_tr2025_births <- function(nchs_births, tr2025_births, substitute_year
 
   dt
 }
+
+#' Constrain birth rates to target TFR for specified years
+#'
+#' @description
+#' Scales all age-specific birth rates proportionally for specified years so that
+#' the resulting TFR equals the target value. This matches TR2025's approach of
+#' constraining recent years to match their published TFR values.
+#'
+#' @param birth_rates data.table with columns: year, age, birth_rate
+#' @param constrain_tfr Named list or vector mapping years to target TFRs.
+#'   Example: list("2023" = 1.62, "2024" = 1.62) or c("2023" = 1.62, "2024" = 1.62)
+#'   Set to NULL to disable constraints.
+#'
+#' @return data.table with constrained birth rates for the specified years
+#'
+#' @details
+#' The scaling preserves the relative age pattern of fertility while adjusting
+#' the overall level to hit the target TFR for each constrained year.
+#'
+#' Formula: b_x^{constrained} = b_x^{calculated} * (target_TFR / calculated_TFR)
+#'
+#' Per TR2025 documentation (Section 1.1.c, Step 1):
+#' "calculate estimated 2024 births rates... using the estimated total fertility
+#' of 1.62 using selected state data births and residential populations"
+#'
+#' @export
+constrain_tfr_for_years <- function(birth_rates, constrain_tfr) {
+
+  if (is.null(constrain_tfr) || length(constrain_tfr) == 0) {
+    cli::cli_alert_info("No TFR constraints specified - using calculated rates")
+    return(birth_rates)
+  }
+
+  dt <- data.table::copy(birth_rates)
+
+  # Convert to named list if needed
+  if (!is.list(constrain_tfr)) {
+    constrain_tfr <- as.list(constrain_tfr)
+  }
+
+  # Process each year
+
+  for (yr_char in names(constrain_tfr)) {
+    yr <- as.integer(yr_char)
+    target_tfr <- constrain_tfr[[yr_char]]
+
+    if (is.null(target_tfr) || is.na(target_tfr)) {
+      next
+    }
+
+    # Calculate current TFR for this year
+    year_rates <- dt[year == yr]
+    if (nrow(year_rates) == 0) {
+      cli::cli_alert_warning("No rates for year {yr} - cannot apply TFR constraint")
+      next
+    }
+
+    calculated_tfr <- sum(year_rates$birth_rate, na.rm = TRUE)
+
+    if (calculated_tfr == 0) {
+      cli::cli_alert_warning("Calculated TFR is zero for year {yr} - cannot apply constraint")
+      next
+    }
+
+    # Calculate scaling factor
+    scale_factor <- target_tfr / calculated_tfr
+
+    # Apply scaling to this year's rates
+    dt[year == yr, birth_rate := birth_rate * scale_factor]
+
+    # Verify the constraint was applied correctly
+    new_tfr <- dt[year == yr, sum(birth_rate, na.rm = TRUE)]
+
+    cli::cli_alert_success(
+      "Constrained {yr} TFR: {round(calculated_tfr, 4)} -> {round(new_tfr, 4)} (target: {target_tfr}, scale: {round(scale_factor, 4)})"
+    )
+  }
+
+  dt
+}

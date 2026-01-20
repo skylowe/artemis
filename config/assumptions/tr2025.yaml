@@ -31,8 +31,16 @@ fertility:
   weight_exponent: 1.5
   # Base year for projections
   # TR2025 uses 2024 with estimated rates (TFR=1.62 from provisional data)
-  # We use 2023 since we don't have provisional 2024 data
   rate_base_year: 2024
+  # Constrain TFR for specified years to match TR2025's published values
+  # TR2025 publishes TFR=1.62 for 2023 and constrains 2024 to TFR=1.62.
+  # When enabled, this scales age-specific rates proportionally for each year
+  # to hit the target TFR exactly.
+  # Format: year: target_tfr
+  # Set to empty map {} or null to disable constraints
+  constrain_tfr:
+    2023: 1.62
+    2024: 1.62
   # Years to exclude from trend calculations
   exclude_years:
     - 1997  # NCHS age imputation method change
