@@ -375,3 +375,134 @@ calculate_fertility_totals <- function(birth_rates) {
 
   list(tfr = tfr[order(year)], ctfr = ctfr[order(birth_year)])
 }
+
+#' Calculate TR2025 implied births from population and mortality data
+#'
+#' @description
+#' Derives the number of births TR2025 assumed by working backwards from their
+#' age 0 population (Dec 31) and infant mortality rates.
+#'
+#' Formula: implied_births = age_0_population / (1 - q0)
+#'
+#' This is needed because TR2025 assumed higher births for 2023-2024 than
+#' actual NCHS data shows. The TR2025 was published before final NCHS data
+#' was available.
+#'
+#' @param years Integer vector: years to calculate implied births for
+#' @param tr_population_file Character: path to TR2025 SSPopDec file
+#' @param tr_qx_male_file Character: path to TR2025 male death probabilities
+#' @param tr_qx_female_file Character: path to TR2025 female death probabilities
+#'
+#' @return data.table with columns: year, sex, births
+#'
+#' @export
+calculate_tr2025_implied_births <- function(
+    years,
+    tr_population_file = "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv",
+    tr_qx_male_file = "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv",
+    tr_qx_female_file = "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
+) {
+
+  # Load TR2025 data
+  tr_pop <- data.table::fread(tr_population_file)
+  tr_qx_m <- data.table::fread(tr_qx_male_file)
+  tr_qx_f <- data.table::fread(tr_qx_female_file)
+
+  results <- data.table::rbindlist(lapply(years, function(yr) {
+    # Get age 0 population by sex
+    age0_m <- tr_pop[Year == yr & Age == 0, `M Tot`]
+    age0_f <- tr_pop[Year == yr & Age == 0, `F Tot`]
+
+    if (length(age0_m) == 0 || length(age0_f) == 0) {
+      cli::cli_alert_warning("No TR2025 population data for year {yr}")
+      return(NULL)
+    }
+
+    # Get infant mortality (q0) by sex
+    q0_m <- tr_qx_m[Year == yr, `0`]
+    q0_f <- tr_qx_f[Year == yr, `0`]
+
+    if (length(q0_m) == 0 || length(q0_f) == 0) {
+      cli::cli_alert_warning("No TR2025 mortality data for year {yr}")
+      return(NULL)
+    }
+
+    # Calculate implied births: survivors = births * (1 - q0)
+    # Therefore: births = survivors / (1 - q0)
+    births_m <- age0_m / (1 - q0_m)
+    births_f <- age0_f / (1 - q0_f)
+
+    data.table::data.table(
+      year = c(yr, yr),
+      sex = c("male", "female"),
+      births = c(births_m, births_f)
+    )
+  }))
+
+  if (nrow(results) > 0) {
+    cli::cli_alert_success(
+      "Calculated TR2025 implied births for {length(years)} year(s): {paste(years, collapse=', ')}"
+    )
+  }
+
+  results
+}
+
+#' Substitute NCHS births with TR2025 implied births for specified years
+#'
+#' @description
+#' Replaces NCHS birth counts with TR2025's implied births for specified years.
+#' This allows the model to match TR2025's population projections which were
+#' based on birth assumptions that differed from actual NCHS data.
+#'
+#' @param nchs_births data.table: NCHS births by year and age (from nchs_births_raw)
+#' @param tr2025_births data.table: TR2025 implied births by year and sex
+#' @param substitute_years Integer vector: years to substitute (e.g., c(2023, 2024))
+#'
+#' @return data.table with substituted birth counts
+#'
+#' @details
+#' The substitution preserves the age distribution from NCHS data but scales
+#' the total to match TR2025. This is done because TR2025 only provides total
+#' births (by sex), not births by mother's age.
+#'
+#' @export
+substitute_tr2025_births <- function(nchs_births, tr2025_births, substitute_years) {
+
+  if (is.null(substitute_years) || length(substitute_years) == 0) {
+    cli::cli_alert_info("No birth substitution years specified - using NCHS data as-is")
+    return(nchs_births)
+  }
+
+  dt <- data.table::copy(nchs_births)
+
+  for (yr in substitute_years) {
+    # Get TR2025 total births for this year
+    tr_total <- tr2025_births[year == yr, sum(births)]
+
+    if (length(tr_total) == 0 || is.na(tr_total)) {
+      cli::cli_alert_warning("No TR2025 births for year {yr} - keeping NCHS data")
+      next
+    }
+
+    # Get NCHS total births for this year
+    nchs_total <- dt[year == yr, sum(births)]
+
+    if (nchs_total == 0) {
+      cli::cli_alert_warning("No NCHS births for year {yr} - cannot substitute")
+      next
+    }
+
+    # Calculate scaling factor
+    scale_factor <- tr_total / nchs_total
+
+    # Apply scaling (preserves age distribution)
+    dt[year == yr, births := births * scale_factor]
+
+    cli::cli_alert_info(
+      "Year {yr}: Substituted TR2025 births ({format(round(tr_total), big.mark=',')} vs NCHS {format(round(nchs_total), big.mark=',')}, scale={round(scale_factor, 4)})"
+    )
+  }
+
+  dt
+}

@@ -120,11 +120,39 @@ list(
   # FERTILITY SUBPROCESS TARGETS
   # ===========================================================================
 
+  # TR2025 implied births (derived from their age 0 population + infant mortality)
+  # Used for birth substitution when configured
+  tar_target(
+    tr2025_implied_births,
+    {
+      substitute_years <- config_assumptions$fertility$use_tr2025_births_for_years
+      if (is.null(substitute_years) || length(substitute_years) == 0) {
+        # Return empty data.table if no substitution configured
+        return(data.table::data.table(year = integer(), sex = character(), births = numeric()))
+      }
+      calculate_tr2025_implied_births(years = substitute_years)
+    }
+  ),
+
+  # NCHS births with optional TR2025 substitution for specified years
+  # Preserves NCHS age distribution but scales totals to match TR2025
+  tar_target(
+    nchs_births_adjusted,
+    {
+      substitute_years <- config_assumptions$fertility$use_tr2025_births_for_years
+      substitute_tr2025_births(
+        nchs_births = nchs_births_raw,
+        tr2025_births = tr2025_implied_births,
+        substitute_years = substitute_years
+      )
+    }
+  ),
+
   # Step 1: Calculate historical birth rates (1980-2024)
   tar_target(
     fertility_rates_historical,
     calculate_historical_birth_rates(
-      births = nchs_births_raw,
+      births = nchs_births_adjusted,  # Use adjusted births (with TR2025 substitution if configured)
       population = census_female_pop,
       min_age = config_assumptions$fertility$min_fertility_age,
       max_age = config_assumptions$fertility$max_fertility_age

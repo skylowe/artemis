@@ -22,15 +22,27 @@ fertility:
   reference_age: 30
   # Ultimate attainment years
   projection_start_year: 2025
+  # TR2025: Ultimate period TFR reached in 2045
   ultimate_year: 2045
+  # TR2025: Age 30 reaches ultimate in 2036
   age30_ultimate_year: 2036
-  # Interpolation weight exponent (1.0 = linear, >1 = convex/front-loaded)
-  weight_exponent: 3.5
-  # Base year for projections (latest year with both birth and population data)
-  rate_base_year: 2023
+  # Interpolation weight exponent (TR2025 uses 1.5)
+  # 1.0 = linear, >1 = front-loaded (faster initial change)
+  weight_exponent: 1.5
+  # Base year for projections
+  # TR2025 uses 2024 with estimated rates (TFR=1.62 from provisional data)
+  # We use 2023 since we don't have provisional 2024 data
+  rate_base_year: 2024
   # Years to exclude from trend calculations
   exclude_years:
     - 1997  # NCHS age imputation method change
+  # TR2025 birth substitution
+  # TR2025 assumed higher births for 2023-2024 than actual NCHS data shows.
+  # This option substitutes TR2025's implied births (derived from their age 0
+  # population adjusted for infant mortality) for the specified years.
+  use_tr2025_births_for_years:
+    - 2023
+    - 2024
 
 mortality:
   # Projection parameters
