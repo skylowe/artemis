@@ -1215,10 +1215,15 @@ calculate_net_immigration <- function(year,
 #'
 #' Where P is population as of December 31 of each year.
 #'
+#' IMPORTANT: D_{x}^z = qx_x * P_{x-1}^{z-1}
+#' Deaths at age x during year z are applied to people who WILL BE age x
+#' (i.e., people who were age x-1 at end of year z-1).
+#'
 #' @param year Integer: projection year
 #' @param population_prev data.table: population at end of previous year (Dec 31, z-1)
 #' @param births data.table: births during year by sex, pop_status
-#' @param deaths data.table: deaths during year by age, sex, pop_status
+#' @param deaths data.table: deaths during year by age, sex, pop_status (age 0 only used)
+#' @param mortality_qx data.table: death probabilities by year, age, sex (for ages 1+)
 #' @param net_immigration data.table: net immigration by age, sex, pop_status
 #' @param config List: configuration parameters
 #'
@@ -1229,6 +1234,7 @@ project_population_year <- function(year,
                                      population_prev,
                                      births,
                                      deaths,
+                                     mortality_qx,
                                      net_immigration,
                                      config = NULL) {
 
@@ -1244,7 +1250,7 @@ project_population_year <- function(year,
 
   age0_pop <- births[, .(sex, pop_status, population = births)]
 
-  # Subtract infant deaths
+  # Subtract infant deaths (D_0 = qx_0 * births, passed in deaths parameter)
   infant_deaths <- deaths[age == 0, .(sex, pop_status, deaths)]
   age0_pop <- merge(age0_pop, infant_deaths, by = c("sex", "pop_status"), all.x = TRUE)
   age0_pop[is.na(deaths), deaths := 0]
@@ -1261,6 +1267,9 @@ project_population_year <- function(year,
 
   # === Ages 1+: Survive from previous year ===
   # P_{x,s,p}^z = P_{x-1,s,p}^{z-1} - D_{x,s,p}^z + NI_{x,s,p}^z
+  #
+  # IMPORTANT: D_{x}^z = qx_x * P_{x-1}^{z-1}
+  # Deaths at age x must be calculated on the AGED population (people who were x-1)
 
   # Age population forward: people who were age x-1 last year are now age x
   aged_pop <- data.table::copy(population_prev)
@@ -1273,10 +1282,12 @@ project_population_year <- function(year,
   # Aggregate for ages at max_age (people aging into 100+ from 99 and 100+)
   aged_pop <- aged_pop[, .(population = sum(population)), by = .(year, age, sex, pop_status)]
 
-  # Subtract deaths for ages 1+
-  deaths_1plus <- deaths[age > 0, .(age, sex, pop_status, deaths)]
-  aged_pop <- merge(aged_pop, deaths_1plus, by = c("age", "sex", "pop_status"), all.x = TRUE)
-  aged_pop[is.na(deaths), deaths := 0]
+  # Calculate deaths for ages 1+ on the AGED population (correct methodology)
+  # D_x = qx_x * aged_pop[x] where aged_pop[x] = population_prev[x-1]
+  year_qx <- mortality_qx[year == target_year, .(age, sex, qx)]
+  aged_pop <- merge(aged_pop, year_qx, by = c("age", "sex"), all.x = TRUE)
+  aged_pop[is.na(qx), qx := 0]
+  aged_pop[, deaths := qx * population]
   aged_pop[, population := population - deaths]
 
   # Add net immigration for ages 1+
@@ -1398,7 +1409,8 @@ run_population_projection <- function(starting_population,
       year = yr,
       population_prev = current_pop,
       births = births,
-      deaths = deaths,
+      deaths = deaths,  # Used for age 0 (infant deaths)
+      mortality_qx = mortality_qx,  # Used for ages 1+ (deaths calculated on aged pop)
       net_immigration = net_imm,
       config = config
     )
