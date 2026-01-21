@@ -1343,6 +1343,8 @@ run_population_projection <- function(starting_population,
                                        end_year = 2099,
                                        config = NULL,
                                        qx_100_119 = NULL,
+                                       tr2025_births = NULL,
+                                       tr2025_births_years = NULL,
                                        verbose = TRUE) {
 
   if (is.null(config)) {
@@ -1351,6 +1353,14 @@ run_population_projection <- function(starting_population,
 
   if (verbose) {
     cli::cli_h1("Population Projection ({start_year + 1}-{end_year})")
+  }
+
+  # Check if we should use TR2025 births for specific years
+  use_tr2025_births <- !is.null(tr2025_births) && !is.null(tr2025_births_years) &&
+                       length(tr2025_births_years) > 0 && nrow(tr2025_births) > 0
+
+  if (use_tr2025_births && verbose) {
+    cli::cli_alert_info("Using TR2025 births for years: {paste(tr2025_births_years, collapse=', ')}")
   }
 
   projection_years <- (start_year + 1):end_year
@@ -1439,6 +1449,32 @@ run_population_projection <- function(starting_population,
       population_end = NULL,  # Will estimate midyear from start
       config = config
     )
+
+    # Scale births to TR2025 totals for specified years
+    if (use_tr2025_births && yr %in% tr2025_births_years) {
+      tr_births_yr <- tr2025_births[year == yr]
+      if (nrow(tr_births_yr) > 0) {
+        # Get TR2025 births by sex
+        tr_male <- tr_births_yr[sex == "male", births]
+        tr_female <- tr_births_yr[sex == "female", births]
+
+        # Scale our calculated births to match TR2025 totals by sex
+        our_male <- births[sex == "male", sum(births)]
+        our_female <- births[sex == "female", sum(births)]
+
+        if (our_male > 0 && length(tr_male) > 0) {
+          births[sex == "male", births := births * (tr_male / our_male)]
+        }
+        if (our_female > 0 && length(tr_female) > 0) {
+          births[sex == "female", births := births * (tr_female / our_female)]
+        }
+
+        if (verbose && yr == tr2025_births_years[1]) {
+          new_total <- sum(births$births)
+          cli::cli_alert("Scaled {yr} births to TR2025: {format(round(new_total), big.mark=',')}")
+        }
+      }
+    }
 
     # 2. Calculate deaths for this year (use working qx with dynamic 100+)
     deaths <- calculate_projected_deaths(

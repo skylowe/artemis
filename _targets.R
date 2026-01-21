@@ -1852,6 +1852,8 @@ list(
           ages = config_assumptions$projected_population$ages
         ),
         qx_100_119 = qx_100_119,  # For dynamic 100+ weighted qx tracking
+        tr2025_births = tr2025_implied_births,  # TR2025 births for alignment
+        tr2025_births_years = config_assumptions$fertility$use_tr2025_births_for_years,
         verbose = TRUE
       )
     }
