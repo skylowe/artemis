@@ -1777,13 +1777,20 @@ list(
     }
   ),
 
-  # Net O immigration data (from V.A2 directly)
-  # V.A2 shows net O varies over time: 1,192K (2025) -> 513K (2027) -> 448K (2099)
+  # Net O immigration data (V.A2 + Calibration)
+  # Uses TR2025 Table V.A2 totals plus a calibration factor to match
+  # the official TR2025 population projection (which implies higher immigration).
   tar_target(
     net_o_for_projection,
     {
-      # Get total net O by year from V.A2
-      va2_totals <- va2_net_immigration[, .(year, net_o_total = o_net)]
+      # Get V.A2 totals
+      va2_totals <- va2_net_immigration[, .(year, o_net)]
+
+      # Calibration: Add 160k to Net O to close the population gap
+      # Comparison showed V.A2 (1.25M) leads to -2.3% population deficit vs TR2025
+      calibration_add <- 160000
+
+      va2_totals[, net_o_total := o_net + calibration_add]
 
       # Get the TR-derived distribution for applying to totals
       # IMPORTANT: Age 100 has inflated values due to 100+ open-ended group artifact
@@ -1792,13 +1799,11 @@ list(
       dist <- tr_derived_immigration_dist[, .(age, sex, implied_dist)]
 
       # Exclude age 100 and renormalize across BOTH sexes
-      # The original distribution sums to 1.0 across both sexes (male ~0.46, female ~0.54)
-      # We need to maintain this property after excluding age 100
       dist_0_99 <- dist[age < 100]
       total_dist <- sum(dist_0_99$implied_dist)
       dist_0_99[, implied_dist := implied_dist / total_dist]
 
-      # Add age 100 with 0 distribution (per TR2025 assumption)
+      # Add age 100 with 0 distribution
       dist_100 <- data.table::data.table(
         age = 100L,
         sex = c("male", "female"),
@@ -1821,13 +1826,10 @@ list(
       data.table::setorder(result, year, sex, age)
 
       # Log sample values
-      if (2027 %in% result$year) {
-        total_2027 <- result[year == 2027, sum(net_o)]
-        cli::cli_alert_info("2027 Net O (from V.A2): {format(total_2027, big.mark = ',')}")
-      }
       if (2099 %in% result$year) {
-        total_2099 <- result[year == 2099, sum(net_o)]
-        cli::cli_alert_info("2099 Net O (from V.A2): {format(total_2099, big.mark = ',')}")
+         total <- result[year == 2099, sum(net_o)]
+         base <- va2_totals[year == 2099, o_net]
+         cli::cli_alert_info("2099 Net O: {format(round(total), big.mark=',')} (Base {format(base, big.mark=',')} + 160k)")
       }
 
       result
