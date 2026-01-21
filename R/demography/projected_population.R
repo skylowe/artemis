@@ -2428,9 +2428,41 @@ project_marital_year <- function(marital_pop_boy,
   # Final check - ensure no negatives remain (should be rare after redistribution)
   grid[final_pop < 0, final_pop := 0]
 
-  # NO SCALING - let totals emerge naturally from demographic flows
-  # Per TR2025: marital population is calculated from flows, not forced to match totals
-  grid[, population := final_pop]
+  # === RESCALE TO PHASE 8B TOTALS (TR2025 Eq 1.8.5) ===
+  # Per TR2025: Marital status is a DISAGGREGATION of Phase 8B population totals.
+  # "Once the population is projected by single year of age, sex, and population status,
+  #  it is then disaggregated by population status into the following four marital states"
+  # This means marital totals MUST sum to Phase 8B totals exactly at each age/sex.
+  #
+  # The flows (marriages, divorces, widowings) determine the DISTRIBUTION across statuses,
+  # but the Phase 8B totals are the authoritative population counts.
+
+  # Get Phase 8B totals for ages 14+ (marital tracking range)
+  phase8b_totals <- phase8b_pop[age >= min_age,
+                                 .(phase8b_total = sum(population, na.rm = TRUE)),
+                                 by = .(age, sex)]
+
+  # Calculate marital totals by age/sex
+  marital_totals <- grid[, .(marital_total = sum(final_pop, na.rm = TRUE)),
+                         by = .(age, sex)]
+
+  # Merge to get scaling factors
+  grid <- merge(grid, marital_totals, by = c("age", "sex"), all.x = TRUE)
+  grid <- merge(grid, phase8b_totals, by = c("age", "sex"), all.x = TRUE)
+
+  # Calculate scaling factor: Phase 8B total / marital total
+  # Handle edge case where marital_total is 0 or NA
+  grid[, scale_factor := fifelse(
+    is.na(marital_total) | marital_total <= 0,
+    1.0,
+    fifelse(is.na(phase8b_total), 1.0, phase8b_total / marital_total)
+  )]
+
+  # Apply scaling to get final population that matches Phase 8B totals
+  grid[, population := final_pop * scale_factor]
+
+  # Clean up temporary columns
+  grid[, c("marital_total", "phase8b_total", "scale_factor") := NULL]
 
   # Create final result
   final_marital <- grid[, .(year = year, age, sex, marital_status, population)]

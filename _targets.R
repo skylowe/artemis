@@ -1931,15 +1931,21 @@ list(
       marital_pop <- marital_projection$marital_population
       phase8b_pop <- population_projection$population
 
-      # Aggregate marital by year, age, sex
-      marital_totals <- marital_pop[, .(marital_total = sum(population, na.rm = TRUE)),
+      # Get starting year - validation only applies to PROJECTED years (starting_year + 1 onwards)
+      # Year 2022 is historical marital data, not projected, so it won't match Phase 8B
+      start_year <- config_assumptions$projected_population$starting_year
+      first_proj_year <- start_year + 1
+
+      # Aggregate marital by year, age, sex (projected years only)
+      marital_totals <- marital_pop[year >= first_proj_year,
+                                     .(marital_total = sum(population, na.rm = TRUE)),
                                      by = .(year, age, sex)]
 
-      # Aggregate Phase 8B by year, age, sex (ages 14-100)
+      # Aggregate Phase 8B by year, age, sex (ages 14-100, projected years only)
       min_age <- config_assumptions$projected_population$ages$marriage_min
       max_age <- config_assumptions$projected_population$ages$max_age_group
 
-      phase8b_totals <- phase8b_pop[age >= min_age & age <= max_age,
+      phase8b_totals <- phase8b_pop[year >= first_proj_year & age >= min_age & age <= max_age,
                                      .(phase8b_total = sum(population, na.rm = TRUE)),
                                      by = .(year, age, sex)]
 
@@ -1953,11 +1959,12 @@ list(
       comparison[, diff := abs(marital_total - phase8b_total)]
       comparison[phase8b_total > 0, pct_diff := diff / phase8b_total * 100]
 
-      # Summary statistics
+      # Summary statistics (projected years only)
       max_pct_diff <- comparison[, max(pct_diff, na.rm = TRUE)]
       mean_pct_diff <- comparison[, mean(pct_diff, na.rm = TRUE)]
       n_large_diff <- comparison[pct_diff > 1, .N]
 
+      cli::cli_alert_info("Validating projected years {first_proj_year}-{max(comparison$year)}")
       cli::cli_alert_info("Max percentage difference: {round(max_pct_diff, 4)}%")
       cli::cli_alert_info("Mean percentage difference: {round(mean_pct_diff, 6)}%")
 
