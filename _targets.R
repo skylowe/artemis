@@ -98,6 +98,44 @@ list(
     cue = tar_cue(mode = "thorough")
   ),
 
+  # TR2025 female population for fertility rate calculations (when use_tr_historical_population = true)
+  # Extracts female population by age from TR2025 SSPopDec file
+  tar_target(
+    tr2025_female_pop,
+    {
+      tr_file <- config_assumptions$projected_population$tr_historical_population_file
+      if (is.null(tr_file) || !file.exists(tr_file)) {
+        cli::cli_alert_warning("TR2025 population file not found, returning empty data")
+        return(data.table::data.table(year = integer(), age = integer(), population = numeric()))
+      }
+
+      tr_pop <- data.table::fread(tr_file)
+      # Extract female population for fertility years (1980-2024) and ages (10-54)
+      years <- config_assumptions$data_sources$population_estimates$start_year:
+               config_assumptions$data_sources$population_estimates$end_year
+      result <- tr_pop[Year %in% years & Age >= 10 & Age <= 54,
+                       .(year = Year, age = Age, population = `F Tot`)]
+      data.table::setorder(result, year, age)
+      cli::cli_alert_success("Loaded TR2025 female population for {length(unique(result$year))} years")
+      result
+    }
+  ),
+
+  # Female population for fertility calculations - uses TR2025 or Census based on config
+  tar_target(
+    female_pop_for_fertility,
+    {
+      use_tr <- config_assumptions$projected_population$use_tr_historical_population
+      if (isTRUE(use_tr)) {
+        cli::cli_alert_info("Using TR2025 population for fertility rate calculations")
+        tr2025_female_pop
+      } else {
+        cli::cli_alert_info("Using Census population for fertility rate calculations")
+        census_female_pop
+      }
+    }
+  ),
+
   # Historical birth rates (1917-1979) - DEFERRED
   # Only needed for historical output series, not projection methodology
   # tar_target(
@@ -149,11 +187,12 @@ list(
   ),
 
   # Step 1: Calculate historical birth rates (1980-2024)
+  # Uses TR2025 or Census female population based on use_tr_historical_population config
   tar_target(
     fertility_rates_historical,
     calculate_historical_birth_rates(
       births = nchs_births_adjusted,  # Use adjusted births (with TR2025 substitution if configured)
-      population = census_female_pop,
+      population = female_pop_for_fertility,  # TR2025 or Census based on config
       min_age = config_assumptions$fertility$min_fertility_age,
       max_age = config_assumptions$fertility$max_fertility_age
     )
