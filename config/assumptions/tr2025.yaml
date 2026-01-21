@@ -366,11 +366,22 @@ immigration:
   ultimate_net_lpr_immigration: 787500
 
   # =========================================================================
+  # Table V.A2 - Immigration Assumptions
+  # =========================================================================
+  # Net immigration values are loaded directly from TR2025 Table V.A2
+  # This ensures exact alignment with Trustees Report assumptions
+  va2_file: "data/raw/SSA_TR2025/SingleYearTRTables_TR2025.xlsx"
+  va2_alternative: "intermediate"  # Options: "intermediate", "low", "high"
+
+  # =========================================================================
   # O (Other/Temp/Unlawful) Immigration Configuration
   # =========================================================================
-  # Controls whether O emigration is calculated dynamically (grows with stock)
-  # or uses a constant net O assumption matching TR2025 Table V.A2
-
+  # Net O immigration values come directly from V.A2, which shows:
+  # - 2025: 1,192K net O
+  # - 2026: 517K net O
+  # - 2027+: Declining from 513K to 448K (emigration grows with stock)
+  #
+  # Gross O immigration assumptions (used for ODIST calculation only)
   o_immigration:
     # Gross O immigration (ultimate, from 2026+)
     # TR2025: 1,350,000 for unauthorized + nonimmigrant arrivals
@@ -378,19 +389,6 @@ immigration:
 
     # Transition year gross (2025 only - higher due to policy assumptions)
     transition_gross_o: 2000000
-
-    # Dynamic emigration toggle:
-    # - true: Emigration grows with O population stock (more realistic)
-    # - false: Use constant net O assumption (matches TR2025 exactly)
-    dynamic_emigration: false
-
-    # Ultimate net O immigration (used when dynamic_emigration = false)
-    # TR2025 Table V.A2: 550,000 net other immigration per year
-    ultimate_net_o: 550000
-
-    # Transition net O (2025 only)
-    # Higher in first year due to policy assumptions
-    transition_net_o: 1250000
 
 # =========================================================================
 # Marriage Configuration (TR2025 Intermediate Assumptions)

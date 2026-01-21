@@ -57,10 +57,11 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
    - Key targets: `tr2025_population_long`, `tr2025_qx_long`, `tr_derived_immigration_dist`
 
 **Known Limitation - Total Immigration Gap:**
-- Our total net immigration (1.337M/year) matches TR2025 Table V.A2 exactly
-- But TR2025 population projections imply ~1.96M/year net immigration
-- This ~620K annual gap explains the remaining ~1% population divergence
-- Using V.A2 totals ensures consistency with published assumptions
+- Our total net immigration from V.A2 (e.g., 1,301K in 2027) matches TR2025 Table V.A2 exactly
+- But TR2025 population projections imply higher net immigration (~1.96M/year)
+- This gap (~650K annual) explains the remaining ~1% population divergence
+- Using V.A2 totals ensures consistency with published Trustees Report assumptions
+- V.A2 now properly parsed by alternative (Intermediate/Low/High) with correct section boundaries
 
 ### Historical Population Subprocess Status (COMPLETE)
 - **Purpose:** Estimate Social Security area population for Dec 31, 1940 through Dec 31, 2022
@@ -82,18 +83,28 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - NO^z_{x,s,t} - Net O immigration (Eq 1.5.3)
   - OP^z_{x,s,t} - O population stock (Eq 1.5.4)
   - DACA population by age/sex
-- **TR2025 Assumptions:** Ultimate 1,350,000/year starting 2026
-- **Data Sources:** DHS nonimmigrant/DACA data, ACS foreign-born arrivals, CBO migration
+- **TR2025 Assumptions:** Gross O = 1,350,000/year starting 2026; Net O varies (see V.A2)
+- **Data Sources:** DHS nonimmigrant/DACA data, ACS foreign-born arrivals, CBO migration, TR2025 V.A2
 - **Key files:** `R/demography/temp_unlawful_immigration.R`, `temp_unlawful_emigration.R`, `temp_unlawful_stock.R`, `daca_projection.R`, `R/validation/validate_o_immigration.R`
-- **Pipeline targets:** `o_immigration_projection`, `daca_projection`, `o_immigration_validation`
+- **Pipeline targets:** `o_immigration_projection`, `daca_projection`, `o_immigration_validation`, `va2_net_immigration`, `net_o_for_projection`
 - **Key results (2025-2099):**
-  - O Immigration: 2,000,000 (2025) → 1,350,000 (2026+)
-  - O Emigration: ~304K (2025) → ~601K (2099)
-  - Net O: ~1.25M (2025) → ~299K (2099)
+  - O Immigration (gross): 2,000,000 (2025) → 1,350,000 (2026+)
+  - O Emigration: ~358K (2025) → ~452K (2099)
+  - Net O (from V.A2): 1,192K (2025), 513K (2027), 448K (2099) - varies as emigration grows with stock
   - O Population: 12.13M (2025) → 23.28M (2099)
   - DACA: 800K peak (2017), declining to ~220K by 2040
-- **Validation:** All checks pass, Net O error -2.2% average
+- **Validation:** All checks pass
 - **AOS Fix:** Uses TR2025 V.A2 values (450K AOS) instead of historical ratio
+
+**V.A2 Net Immigration Integration (January 2026):**
+- Net LPR and Net O values now loaded directly from Table V.A2 for exact TR2025 alignment
+- `get_tr2025_va2_net_immigration()` parses V.A2 by alternative (Intermediate/Low/High)
+- Key insight: V.A2 Net O varies from 513K (2027) to 448K (2099), not constant
+- Removed `dynamic_emigration` config option - V.A2 values used directly
+- Configuration in `config/assumptions/tr2025.yaml`:
+  - `va2_file`: Path to SingleYearTRTables_TR2025.xlsx
+  - `va2_alternative`: "intermediate" (default), "low", or "high"
+- Population projection uses `net_o_for_projection` target which applies V.A2 totals to TR-derived age-sex distribution
 
 ### Marriage Subprocess Status (COMPLETE)
 - **Purpose:** Project annual age-specific marriage rates by husband age × wife age

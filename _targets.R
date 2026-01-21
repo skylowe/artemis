@@ -1714,11 +1714,74 @@ list(
     }
   ),
 
-  # Net O immigration data (extracted from projection result)
+  # ===========================================================================
+  # V.A2 NET IMMIGRATION (Direct from TR2025)
+  # ===========================================================================
+  # Load net immigration values directly from Table V.A2 instead of
+  # calculating dynamically. This ensures exact alignment with TR2025.
+
+  # Load V.A2 data for specified alternative
+  tar_target(
+    va2_net_immigration,
+    {
+      alternative <- config_assumptions$immigration$va2_alternative
+      if (is.null(alternative)) alternative <- "intermediate"
+
+      # Get data directory from config, or use default
+      va2_file <- config_assumptions$immigration$va2_file
+      if (is.null(va2_file) || va2_file == "") {
+        data_dir <- "data/raw/SSA_TR2025"
+      } else {
+        data_dir <- dirname(va2_file)
+        if (data_dir == ".") data_dir <- "data/raw/SSA_TR2025"
+      }
+
+      get_tr2025_va2_net_immigration(
+        years = config_assumptions$metadata$projection_period$start_year:
+                config_assumptions$metadata$projection_period$end_year,
+        alternative = alternative,
+        data_dir = data_dir,
+        convert_to_persons = TRUE
+      )
+    }
+  ),
+
+  # Net O immigration data (from V.A2 directly)
+  # V.A2 shows net O varies over time: 1,192K (2025) -> 513K (2027) -> 448K (2099)
   tar_target(
     net_o_for_projection,
     {
-      o_immigration_projection$net_o_immigration
+      # Get total net O by year from V.A2
+      va2_totals <- va2_net_immigration[, .(year, net_o_total = o_net)]
+
+      # Get the TR-derived distribution for applying to totals
+      dist <- tr_derived_immigration_dist[, .(age, sex, implied_dist)]
+
+      # Apply distribution to V.A2 totals
+      result_list <- lapply(unique(va2_totals$year), function(yr) {
+        yr_total <- va2_totals[year == yr, net_o_total]
+        if (length(yr_total) == 0 || is.na(yr_total)) return(NULL)
+
+        yr_dist <- data.table::copy(dist)
+        yr_dist[, year := yr]
+        yr_dist[, net_o := yr_total * implied_dist]
+        yr_dist[, .(year, age, sex, net_o)]
+      })
+
+      result <- data.table::rbindlist(result_list)
+      data.table::setorder(result, year, sex, age)
+
+      # Log sample values
+      if (2027 %in% result$year) {
+        total_2027 <- result[year == 2027, sum(net_o)]
+        cli::cli_alert_info("2027 Net O (from V.A2): {format(total_2027, big.mark = ',')}")
+      }
+      if (2099 %in% result$year) {
+        total_2099 <- result[year == 2099, sum(net_o)]
+        cli::cli_alert_info("2099 Net O (from V.A2): {format(total_2099, big.mark = ',')}")
+      }
+
+      result
     }
   ),
 
