@@ -1707,9 +1707,40 @@ list(
       proj_years <- unique(proj_qx$year)
       hist_qx <- hist_qx[!year %in% proj_years]
 
-      data.table::rbindlist(
+      combined_qx <- data.table::rbindlist(
         list(hist_qx, proj_qx),
         use.names = TRUE
+      )
+
+      # Note: Dynamic weighted qx for 100+ is now handled in run_population_projection
+      # using the qx_100_119 target, which tracks the internal age distribution
+      # within 100+ as it evolves over time.
+
+      combined_qx
+    }
+  ),
+
+  # qx for ages 100-119 (for dynamic 100+ weighted qx calculation)
+  # This is passed to run_population_projection for year-by-year weighted qx
+  tar_target(
+    qx_100_119,
+    {
+      male_proj_file <- config_assumptions$mortality$starting_tr_qx$male_qx_proj_file
+      female_proj_file <- config_assumptions$mortality$starting_tr_qx$female_qx_proj_file
+
+      if (is.null(male_proj_file)) {
+        male_proj_file <- "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
+      }
+      if (is.null(female_proj_file)) {
+        female_proj_file <- "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
+      }
+
+      load_tr2025_qx_all_years(
+        male_qx_file = male_proj_file,
+        female_qx_file = female_proj_file,
+        start_year = 2023,
+        end_year = 2100,
+        ages = 100:119
       )
     }
   ),
@@ -1820,6 +1851,7 @@ list(
           population_status = config_assumptions$projected_population$population_status,
           ages = config_assumptions$projected_population$ages
         ),
+        qx_100_119 = qx_100_119,  # For dynamic 100+ weighted qx tracking
         verbose = TRUE
       )
     }

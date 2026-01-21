@@ -3395,3 +3395,341 @@ integrate_infant_mortality <- function(qx, q0) {
 
   dt
 }
+
+#' Calculate weighted average qx for 100+ age group
+#'
+#' @description
+#' Calculates a weighted average qx for the open-ended 100+ age group based on
+#' the implied age distribution within the group. TR2025 has separate qx values
+#' for ages 100-119, and using the weighted average produces more accurate
+#' mortality for the 100+ group than using qx at age 100 alone.
+#'
+#' @param qx_data data.table: mortality qx with columns year, age, sex, qx
+#'   Must include ages 100-119.
+#' @param years Integer vector: years to calculate weighted qx for
+#'
+#' @return data.table with columns: year, sex, weighted_qx_100plus
+#'
+#' @details
+#' The method:
+#' 1. Calculate implied age distribution within 100+ using survival probabilities
+#'    Starting with weight=1 at age 100, w(a+1) = w(a) * (1 - qx(a))
+#' 2. Normalize weights to sum to 1
+#' 3. Compute weighted average: sum(w(a) * qx(a)) for a = 100 to 119
+#'
+#' @export
+calculate_weighted_qx_100plus <- function(qx_data, years = NULL) {
+  qx_data <- data.table::as.data.table(qx_data)
+
+  if (is.null(years)) {
+    years <- unique(qx_data$year)
+  }
+
+  # Check that we have ages 100-119
+  max_qx_age <- max(qx_data$age)
+  if (max_qx_age < 119) {
+    cli::cli_warn("qx_data only goes to age {max_qx_age}, need 119 for weighted average")
+    return(NULL)
+  }
+
+  results <- list()
+
+  for (yr in years) {
+    for (s in c("male", "female")) {
+      # Get qx values for ages 100-119
+      qx_100_119 <- qx_data[year == yr & sex == s & age >= 100 & age <= 119,
+                            .(age, qx)][order(age)]
+
+      if (nrow(qx_100_119) < 20) {
+        next  # Skip if missing data
+      }
+
+      # Calculate survival weights
+      # w[1] = 1 (age 100), w[i+1] = w[i] * (1 - qx[i])
+      weights <- numeric(20)
+      weights[1] <- 1.0
+
+      for (i in 2:20) {
+        weights[i] <- weights[i-1] * (1 - qx_100_119$qx[i-1])
+      }
+
+      # Normalize to sum to 1
+      weights <- weights / sum(weights)
+
+      # Calculate weighted average qx
+      weighted_qx <- sum(weights * qx_100_119$qx)
+
+      results[[length(results) + 1]] <- data.table::data.table(
+        year = yr,
+        sex = s,
+        weighted_qx_100plus = weighted_qx
+      )
+    }
+  }
+
+  data.table::rbindlist(results)
+}
+
+#' Apply weighted qx for age 100+ to mortality data
+#'
+#' @description
+#' Replaces the qx at age 100 with the weighted average qx for the 100+ group.
+#' This accounts for the higher mortality at ages 101+ within the open-ended group.
+#'
+#' @param qx_data data.table: mortality qx with columns year, age, sex, qx
+#' @param qx_100_119 data.table: qx for ages 100-119 (from TR2025 projected files)
+#'
+#' @return data.table with qx at age 100 replaced by weighted average
+#'
+#' @export
+apply_weighted_qx_100plus <- function(qx_data, qx_100_119) {
+  qx_data <- data.table::copy(qx_data)
+
+  # Calculate weighted qx for each year/sex
+  weighted_qx <- calculate_weighted_qx_100plus(qx_100_119, years = unique(qx_data$year))
+
+  if (is.null(weighted_qx) || nrow(weighted_qx) == 0) {
+    cli::cli_warn("Could not calculate weighted qx for 100+, using original values")
+    return(qx_data)
+  }
+
+  # Merge weighted qx
+  qx_data <- merge(qx_data, weighted_qx, by = c("year", "sex"), all.x = TRUE)
+
+  # Replace qx at age 100 with weighted value
+  qx_data[age == 100 & !is.na(weighted_qx_100plus), qx := weighted_qx_100plus]
+  qx_data[, weighted_qx_100plus := NULL]
+
+  n_updated <- qx_data[age == 100 & year %in% weighted_qx$year, .N]
+  cli::cli_alert_success("Applied weighted qx for 100+ group to {n_updated} year/sex combinations")
+
+  qx_data
+}
+
+# =============================================================================
+# DYNAMIC WEIGHTED QX FOR 100+ GROUP
+# =============================================================================
+# These functions track the internal age distribution within 100+ as it evolves
+# over time, providing year-specific weighted qx values that reflect the actual
+# composition of the 100+ population.
+
+#' Initialize internal 100+ age distribution
+#'
+#' @description
+#' Creates the initial internal age distribution within the 100+ group based on
+#' the starting population. Uses survival probabilities from qx to estimate
+#' how the 100+ population is distributed across ages 100-119.
+#'
+#' @param population_100plus Numeric: total population in the 100+ group
+#' @param qx_100_119 data.table: qx values for ages 100-119 for a single year/sex
+#' @param sex Character: "male" or "female"
+#'
+#' @return Named numeric vector of population at each age 100-119
+#'
+#' @export
+initialize_100plus_distribution <- function(population_100plus, qx_100_119, sex) {
+  # Sort qx by age
+  qx_100_119 <- data.table::as.data.table(qx_100_119)[order(age)]
+
+  # Calculate survival-based weights
+  # w[1] = 1 (age 100), w[i+1] = w[i] * (1 - qx[i])
+  weights <- numeric(20)
+  weights[1] <- 1.0
+
+  for (i in 2:20) {
+    weights[i] <- weights[i-1] * (1 - qx_100_119$qx[i-1])
+  }
+
+  # Normalize to sum to 1
+  weights <- weights / sum(weights)
+
+  # Distribute population according to weights
+  distribution <- population_100plus * weights
+  names(distribution) <- as.character(100:119)
+
+  distribution
+}
+
+#' Evolve 100+ internal distribution forward one year
+#'
+#' @description
+#' Advances the internal 100+ age distribution by one year:
+#' 1. Apply mortality at each age (using age-specific qx)
+#' 2. Age survivors forward (100->101, 101->102, ..., 118->119)
+#' 3. Add new 100-year-olds from age 99 survivors
+#' 4. Terminal age 119 accumulates (no aging out)
+#'
+#' @param current_dist Named numeric vector: current population at ages 100-119
+#' @param new_100_pop Numeric: new entrants to age 100 (survivors from age 99)
+#' @param qx_100_119 data.table: qx values for ages 100-119 for this year/sex
+#'
+#' @return Named numeric vector: updated population at ages 100-119
+#'
+#' @export
+evolve_100plus_distribution <- function(current_dist, new_100_pop, qx_100_119) {
+  # Sort qx by age
+  qx_100_119 <- data.table::as.data.table(qx_100_119)[order(age)]
+
+  # Get qx values as vector (ages 100-119)
+  qx_vec <- qx_100_119$qx
+
+  # Current population at each age
+  pop_vec <- as.numeric(current_dist)
+
+  # Apply mortality: survivors = pop * (1 - qx)
+  survivors <- pop_vec * (1 - qx_vec)
+
+  # Age forward: people at age a move to age a+1
+  # new_dist[1] = new 100-year-olds
+  # new_dist[2] = survivors from age 100
+  # ...
+ # new_dist[20] = survivors from age 118 + survivors from age 119 (terminal)
+  new_dist <- numeric(20)
+  new_dist[1] <- new_100_pop
+  new_dist[2:19] <- survivors[1:18]
+  new_dist[20] <- survivors[19] + survivors[20]  # Age 119 is terminal
+
+  names(new_dist) <- as.character(100:119)
+  new_dist
+}
+
+#' Calculate dynamic weighted qx from current distribution
+#'
+#' @description
+#' Computes the weighted average qx for the 100+ group based on the current
+#' internal age distribution. This gives a year-specific mortality rate that
+#' reflects the actual composition of the 100+ population.
+#'
+#' @param current_dist Named numeric vector: current population at ages 100-119
+#' @param qx_100_119 data.table: qx values for ages 100-119 for this year/sex
+#'
+#' @return Numeric: weighted average qx for the 100+ group
+#'
+#' @export
+calculate_dynamic_weighted_qx <- function(current_dist, qx_100_119) {
+  # Sort qx by age
+  qx_100_119 <- data.table::as.data.table(qx_100_119)[order(age)]
+
+  # Get population weights (normalize to sum to 1)
+  pop_vec <- as.numeric(current_dist)
+  total_pop <- sum(pop_vec)
+
+  if (total_pop <= 0) {
+    # Fallback to qx at age 100 if no population
+    return(qx_100_119$qx[1])
+  }
+
+  weights <- pop_vec / total_pop
+
+  # Weighted average qx
+  weighted_qx <- sum(weights * qx_100_119$qx)
+
+  weighted_qx
+}
+
+#' Create 100+ distribution tracker for projection
+#'
+#' @description
+#' Creates a tracker object that maintains the internal 100+ distribution
+#' for both sexes throughout the projection. This is used by the projection
+#' loop to get dynamic weighted qx values each year.
+#'
+#' @param starting_pop_100plus data.table: starting 100+ population by sex
+#' @param qx_100_119 data.table: qx values for ages 100-119 (all years, both sexes)
+#' @param start_year Integer: starting year of projection
+#'
+#' @return List with:
+#'   - male: named numeric vector of male population at ages 100-119
+#'   - female: named numeric vector of female population at ages 100-119
+#'   - qx_data: reference to qx_100_119 data
+#'   - current_year: current year in projection
+#'
+#' @export
+create_100plus_tracker <- function(starting_pop_100plus, qx_100_119, start_year) {
+  # Get starting population by sex
+  male_pop <- starting_pop_100plus[sex == "male", sum(population, na.rm = TRUE)]
+  female_pop <- starting_pop_100plus[sex == "female", sum(population, na.rm = TRUE)]
+
+  # Get qx for start year (or closest available)
+  available_years <- unique(qx_100_119$year)
+  init_year <- if (start_year %in% available_years) start_year else min(available_years)
+
+  male_qx <- qx_100_119[year == init_year & sex == "male", .(age, qx)]
+  female_qx <- qx_100_119[year == init_year & sex == "female", .(age, qx)]
+
+  # Initialize distributions
+  male_dist <- initialize_100plus_distribution(male_pop, male_qx, "male")
+  female_dist <- initialize_100plus_distribution(female_pop, female_qx, "female")
+
+  list(
+    male = male_dist,
+    female = female_dist,
+    qx_data = qx_100_119,
+    current_year = start_year
+  )
+}
+
+#' Get dynamic weighted qx for current year
+#'
+#' @description
+#' Returns the weighted qx for the 100+ group based on the current internal
+#' distribution. Call this during projection to get the year-specific qx.
+#'
+#' @param tracker List: 100+ distribution tracker from create_100plus_tracker
+#' @param year Integer: current projection year
+#' @param sex Character: "male" or "female"
+#'
+#' @return Numeric: weighted qx for the 100+ group
+#'
+#' @export
+get_dynamic_weighted_qx <- function(tracker, target_year, target_sex) {
+  # Get current distribution
+  dist <- if (target_sex == "male") tracker$male else tracker$female
+
+  # Get qx for this year (use local vars to avoid data.table scoping issues)
+  qx_year <- tracker$qx_data[year == target_year & sex == target_sex, .(age, qx)]
+
+  # If year not available, use closest
+  if (nrow(qx_year) == 0) {
+    available_years <- unique(tracker$qx_data$year)
+    closest_year <- available_years[which.min(abs(available_years - target_year))]
+    qx_year <- tracker$qx_data[year == closest_year & sex == target_sex, .(age, qx)]
+  }
+
+  calculate_dynamic_weighted_qx(dist, qx_year)
+}
+
+#' Update tracker after one projection year
+#'
+#' @description
+#' Evolves the internal 100+ distribution forward by one year. Call this
+#' at the end of each projection year after population has been updated.
+#'
+#' @param tracker List: 100+ distribution tracker
+#' @param year Integer: year just completed
+#' @param new_100_male Numeric: new male entrants to age 100 (from age 99 survivors)
+#' @param new_100_female Numeric: new female entrants to age 100 (from age 99 survivors)
+#'
+#' @return Updated tracker list
+#'
+#' @export
+update_100plus_tracker <- function(tracker, target_year, new_100_male, new_100_female) {
+  # Get qx for this year (use local var to avoid data.table scoping issues)
+  male_qx <- tracker$qx_data[year == target_year & sex == "male", .(age, qx)]
+  female_qx <- tracker$qx_data[year == target_year & sex == "female", .(age, qx)]
+
+  # Use closest year if not available
+  if (nrow(male_qx) == 0) {
+    available_years <- unique(tracker$qx_data$year)
+    closest_year <- available_years[which.min(abs(available_years - target_year))]
+    male_qx <- tracker$qx_data[year == closest_year & sex == "male", .(age, qx)]
+    female_qx <- tracker$qx_data[year == closest_year & sex == "female", .(age, qx)]
+  }
+
+  # Evolve distributions
+  tracker$male <- evolve_100plus_distribution(tracker$male, new_100_male, male_qx)
+  tracker$female <- evolve_100plus_distribution(tracker$female, new_100_female, female_qx)
+  tracker$current_year <- target_year
+
+  tracker
+}

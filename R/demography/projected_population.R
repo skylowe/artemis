@@ -1342,6 +1342,7 @@ run_population_projection <- function(starting_population,
                                        start_year = 2022,
                                        end_year = 2099,
                                        config = NULL,
+                                       qx_100_119 = NULL,
                                        verbose = TRUE) {
 
   if (is.null(config)) {
@@ -1370,6 +1371,35 @@ run_population_projection <- function(starting_population,
   # Current population (will be updated each year)
   current_pop <- start_pop
 
+  # Make a working copy of mortality_qx that we can modify for dynamic 100+ qx
+  mortality_qx_working <- data.table::copy(mortality_qx)
+
+  # Initialize 100+ distribution tracker if qx_100_119 provided
+  tracker_100plus <- NULL
+  use_dynamic_100plus <- !is.null(qx_100_119) && nrow(qx_100_119) > 0
+
+  if (use_dynamic_100plus) {
+    if (verbose) {
+      cli::cli_alert_info("Using dynamic weighted qx for 100+ group")
+    }
+
+    # Get starting 100+ population
+    starting_100plus <- start_pop[age == 100, .(sex, population)]
+
+    # Create tracker
+    tracker_100plus <- create_100plus_tracker(
+      starting_pop_100plus = starting_100plus,
+      qx_100_119 = qx_100_119,
+      start_year = start_year
+    )
+
+    if (verbose) {
+      male_100plus <- sum(tracker_100plus$male)
+      female_100plus <- sum(tracker_100plus$female)
+      cli::cli_alert("Initial 100+ distribution: Male={format(round(male_100plus), big.mark=',')} Female={format(round(female_100plus), big.mark=',')}")
+    }
+  }
+
   if (verbose) {
     cli::cli_progress_bar("Projecting population", total = length(projection_years))
   }
@@ -1377,6 +1407,28 @@ run_population_projection <- function(starting_population,
   for (yr in projection_years) {
     if (verbose) {
       cli::cli_progress_update()
+    }
+
+    # Update qx at age 100 with dynamic weighted value if tracking
+    if (use_dynamic_100plus && !is.null(tracker_100plus)) {
+      # Get dynamic weighted qx for this year
+      year_qx_100_119 <- qx_100_119[year == yr]
+
+      # If no data for this year, use closest available
+      if (nrow(year_qx_100_119) == 0) {
+        available_years <- unique(qx_100_119$year)
+        closest_year <- available_years[which.min(abs(available_years - yr))]
+        year_qx_100_119 <- qx_100_119[year == closest_year]
+      }
+
+      for (s in c("male", "female")) {
+        sex_qx <- year_qx_100_119[sex == s, .(age, qx)]
+        current_dist <- if (s == "male") tracker_100plus$male else tracker_100plus$female
+        dynamic_qx <- calculate_dynamic_weighted_qx(current_dist, sex_qx)
+
+        # Update mortality_qx_working for age 100
+        mortality_qx_working[year == yr & age == 100 & sex == s, qx := dynamic_qx]
+      }
     }
 
     # 1. Calculate births for this year
@@ -1388,10 +1440,10 @@ run_population_projection <- function(starting_population,
       config = config
     )
 
-    # 2. Calculate deaths for this year
+    # 2. Calculate deaths for this year (use working qx with dynamic 100+)
     deaths <- calculate_projected_deaths(
       year = yr,
-      mortality_qx = mortality_qx,
+      mortality_qx = mortality_qx_working,
       population = current_pop,
       config = config
     )
@@ -1404,16 +1456,43 @@ run_population_projection <- function(starting_population,
       config = config
     )
 
-    # 4. Project population to end of year
+    # 4. Project population to end of year (use working qx)
     new_pop <- project_population_year(
       year = yr,
       population_prev = current_pop,
       births = births,
       deaths = deaths,  # Used for age 0 (infant deaths)
-      mortality_qx = mortality_qx,  # Used for ages 1+ (deaths calculated on aged pop)
+      mortality_qx = mortality_qx_working,  # Used for ages 1+ (deaths calculated on aged pop)
       net_immigration = net_imm,
       config = config
     )
+
+    # Update 100+ tracker for next year
+    if (use_dynamic_100plus && !is.null(tracker_100plus)) {
+      # Calculate new 100-year-olds: survivors from age 99 who aged to 100
+      # This is the population at age 99 at end of previous year, survived through this year
+      pop_99_prev <- current_pop[age == 99, .(sex, pop99 = population)]
+
+      # Get qx at age 99 for this year
+      qx_99 <- mortality_qx_working[year == yr & age == 99, .(sex, qx99 = qx)]
+      pop_99_prev <- merge(pop_99_prev, qx_99, by = "sex", all.x = TRUE)
+      pop_99_prev[is.na(qx99), qx99 := 0]
+
+      # Survivors who reach age 100
+      new_100_male <- pop_99_prev[sex == "male", pop99 * (1 - qx99)]
+      new_100_female <- pop_99_prev[sex == "female", pop99 * (1 - qx99)]
+
+      if (length(new_100_male) == 0) new_100_male <- 0
+      if (length(new_100_female) == 0) new_100_female <- 0
+
+      # Update tracker (uses tracker$qx_data internally)
+      tracker_100plus <- update_100plus_tracker(
+        tracker = tracker_100plus,
+        target_year = yr,
+        new_100_male = new_100_male,
+        new_100_female = new_100_female
+      )
+    }
 
     # Store results
     all_populations[[as.character(yr)]] <- new_pop
