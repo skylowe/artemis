@@ -1755,14 +1755,32 @@ list(
       va2_totals <- va2_net_immigration[, .(year, net_o_total = o_net)]
 
       # Get the TR-derived distribution for applying to totals
+      # IMPORTANT: Age 100 has inflated values due to 100+ open-ended group artifact
+      # in the back-calculation. TR2025 assumes zero immigration at 100+, so we
+      # exclude age 100 and renormalize the distribution for ages 0-99.
       dist <- tr_derived_immigration_dist[, .(age, sex, implied_dist)]
+
+      # Exclude age 100 and renormalize across BOTH sexes
+      # The original distribution sums to 1.0 across both sexes (male ~0.46, female ~0.54)
+      # We need to maintain this property after excluding age 100
+      dist_0_99 <- dist[age < 100]
+      total_dist <- sum(dist_0_99$implied_dist)
+      dist_0_99[, implied_dist := implied_dist / total_dist]
+
+      # Add age 100 with 0 distribution (per TR2025 assumption)
+      dist_100 <- data.table::data.table(
+        age = 100L,
+        sex = c("male", "female"),
+        implied_dist = 0
+      )
+      dist_clean <- rbind(dist_0_99, dist_100)
 
       # Apply distribution to V.A2 totals
       result_list <- lapply(unique(va2_totals$year), function(yr) {
         yr_total <- va2_totals[year == yr, net_o_total]
         if (length(yr_total) == 0 || is.na(yr_total)) return(NULL)
 
-        yr_dist <- data.table::copy(dist)
+        yr_dist <- data.table::copy(dist_clean)
         yr_dist[, year := yr]
         yr_dist[, net_o := yr_total * implied_dist]
         yr_dist[, .(year, age, sex, net_o)]
