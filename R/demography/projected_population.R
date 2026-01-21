@@ -1236,7 +1236,8 @@ project_population_year <- function(year,
                                      deaths,
                                      mortality_qx,
                                      net_immigration,
-                                     config = NULL) {
+                                     config = NULL,
+                                     qx_100_119 = NULL) {
 
   if (is.null(config)) {
     config <- get_projected_population_config()
@@ -1265,7 +1266,7 @@ project_population_year <- function(year,
   age0_pop[, `:=`(year = target_year, age = 0L)]
   age0_pop <- age0_pop[, .(year, age, sex, pop_status, population)]
 
-  # === Ages 1+: Survive from previous year ===
+  # === Ages 1 to max_age-1: Survive from previous year (standard calculation) ===
   # P_{x,s,p}^z = P_{x-1,s,p}^{z-1} - D_{x,s,p}^z + NI_{x,s,p}^z
   #
   # IMPORTANT: D_{x}^z = qx_x * P_{x-1}^{z-1}
@@ -1276,19 +1277,88 @@ project_population_year <- function(year,
   aged_pop[, age := age + 1L]
   aged_pop[, year := target_year]
 
-  # Cap at max age (100+ group)
-  aged_pop[age > max_age, age := max_age]
+  # === Special handling for 100+ group ===
+  # New entrants from age 99 should get raw qx_100 (lower mortality)
+  # Existing 100+ population should get weighted qx (higher mortality)
+  # This prevents over-estimating deaths by applying high weighted qx to new 100-year-olds
 
-  # Aggregate for ages at max_age (people aging into 100+ from 99 and 100+)
-  aged_pop <- aged_pop[, .(population = sum(population)), by = .(year, age, sex, pop_status)]
+  if (!is.null(qx_100_119) && nrow(qx_100_119) > 0) {
+    # Separate populations: new entrants from 99 vs existing 100+
+    pop_from_99 <- aged_pop[age == max_age]  # People who were 99, now 100
+    pop_from_100plus <- aged_pop[age > max_age]  # People who were 100+, stay at 100+
+    pop_other <- aged_pop[age < max_age]  # Ages 1 to 99
 
-  # Calculate deaths for ages 1+ on the AGED population (correct methodology)
-  # D_x = qx_x * aged_pop[x] where aged_pop[x] = population_prev[x-1]
-  year_qx <- mortality_qx[year == target_year, .(age, sex, qx)]
-  aged_pop <- merge(aged_pop, year_qx, by = c("age", "sex"), all.x = TRUE)
-  aged_pop[is.na(qx), qx := 0]
-  aged_pop[, deaths := qx * population]
-  aged_pop[, population := population - deaths]
+    # Get raw qx_100 for new entrants (from qx_100_119 data)
+    # Convert age to integer for consistent matching
+    qx_100_119_int <- data.table::copy(qx_100_119)
+    qx_100_119_int[, age := as.integer(age)]
+    year_qx_raw <- qx_100_119_int[year == target_year & age == 100L, .(sex, raw_qx_100 = qx)]
+    if (nrow(year_qx_raw) == 0) {
+      # Use closest available year
+      available_years <- unique(qx_100_119_int$year)
+      closest_year <- available_years[which.min(abs(available_years - target_year))]
+      year_qx_raw <- qx_100_119_int[year == closest_year & age == 100L, .(sex, raw_qx_100 = qx)]
+    }
+
+    # Get weighted qx_100 for existing 100+ (from mortality_qx which has weighted values)
+    mortality_qx_int <- data.table::copy(mortality_qx)
+    mortality_qx_int[, age := as.integer(age)]
+    year_qx_weighted <- mortality_qx_int[year == target_year & age == max_age, .(sex, weighted_qx = qx)]
+
+    # Apply raw qx_100 to new entrants from age 99
+    pop_from_99 <- merge(pop_from_99, year_qx_raw, by = "sex", all.x = TRUE)
+    pop_from_99[is.na(raw_qx_100), raw_qx_100 := 0]
+    pop_from_99[, deaths := raw_qx_100 * population]
+    pop_from_99[, population := population - deaths]
+    pop_from_99[, `:=`(raw_qx_100 = NULL, deaths = NULL)]
+
+    # Apply weighted qx to existing 100+ (cap age first)
+    pop_from_100plus[, age := max_age]
+    pop_from_100plus <- merge(pop_from_100plus, year_qx_weighted, by = "sex", all.x = TRUE)
+    pop_from_100plus[is.na(weighted_qx), weighted_qx := 0]
+    pop_from_100plus[, deaths := weighted_qx * population]
+    pop_from_100plus[, population := population - deaths]
+    pop_from_100plus[, `:=`(weighted_qx = NULL, deaths = NULL)]
+
+    # Combine survivors at age 100+
+    pop_100plus_combined <- data.table::rbindlist(list(pop_from_99, pop_from_100plus), use.names = TRUE)
+    pop_100plus_combined <- pop_100plus_combined[, .(population = sum(population)),
+                                                   by = .(year, age, sex, pop_status)]
+
+    # Handle ages 1-99 normally
+    year_qx <- mortality_qx[year == target_year, .(age, sex, qx)]
+    # Ensure age types match for merge
+    year_qx[, age := as.integer(age)]
+    pop_other <- merge(pop_other, year_qx, by = c("age", "sex"), all.x = TRUE)
+    pop_other[is.na(qx), qx := 0]
+    pop_other[, deaths := qx * population]
+    pop_other[, population := population - deaths]
+    pop_other[, `:=`(qx = NULL, deaths = NULL)]
+
+    # Ensure consistent column order before combining
+    pop_other <- pop_other[, .(year, age, sex, pop_status, population)]
+    pop_100plus_combined <- pop_100plus_combined[, .(year, age, sex, pop_status, population)]
+
+    # Combine all ages
+    aged_pop <- data.table::rbindlist(list(pop_other, pop_100plus_combined), use.names = TRUE)
+
+  } else {
+    # Original behavior: single qx for all at age 100+
+    # Cap at max age (100+ group)
+    aged_pop[age > max_age, age := max_age]
+
+    # Aggregate for ages at max_age (people aging into 100+ from 99 and 100+)
+    aged_pop <- aged_pop[, .(population = sum(population)), by = .(year, age, sex, pop_status)]
+
+    # Calculate deaths for ages 1+ on the AGED population (correct methodology)
+    # D_x = qx_x * aged_pop[x] where aged_pop[x] = population_prev[x-1]
+    year_qx <- mortality_qx[year == target_year, .(age, sex, qx)]
+    aged_pop <- merge(aged_pop, year_qx, by = c("age", "sex"), all.x = TRUE)
+    aged_pop[is.na(qx), qx := 0]
+    aged_pop[, deaths := qx * population]
+    aged_pop[, population := population - deaths]
+    aged_pop[, `:=`(qx = NULL, deaths = NULL)]
+  }
 
   # Add net immigration for ages 1+
   imm_1plus <- net_immigration[age > 0, .(age, sex, pop_status, net_immigration)]
@@ -1493,35 +1563,45 @@ run_population_projection <- function(starting_population,
     )
 
     # 4. Project population to end of year (use working qx)
+    # Pass qx_100_119 for separate mortality calculation on new 100-year-olds vs existing 100+
     new_pop <- project_population_year(
       year = yr,
       population_prev = current_pop,
       births = births,
       deaths = deaths,  # Used for age 0 (infant deaths)
-      mortality_qx = mortality_qx_working,  # Used for ages 1+ (deaths calculated on aged pop)
+      mortality_qx = mortality_qx_working,  # Used for ages 1-99 and weighted qx for existing 100+
       net_immigration = net_imm,
-      config = config
+      config = config,
+      qx_100_119 = qx_100_119  # Raw qx values for proper 100+ mortality calculation
     )
 
     # Update 100+ tracker for next year
     if (use_dynamic_100plus && !is.null(tracker_100plus)) {
       # Calculate new 100-year-olds: survivors from age 99 who aged to 100
-      # This is the population at age 99 at end of previous year, survived through this year
-      pop_99_prev <- current_pop[age == 99, .(sex, pop99 = population)]
+      # These people face raw qx_100 (not qx_99) since they ARE 100 during year z
+      # This matches the mortality calculation in project_population_year
+      pop_99_prev <- current_pop[age == 99, .(pop99 = sum(population)), by = sex]
 
-      # Get qx at age 99 for this year
-      qx_99 <- mortality_qx_working[year == yr & age == 99, .(sex, qx99 = qx)]
-      pop_99_prev <- merge(pop_99_prev, qx_99, by = "sex", all.x = TRUE)
-      pop_99_prev[is.na(qx99), qx99 := 0]
+      # Get raw qx at age 100 for this year (from qx_100_119, not the weighted value)
+      year_qx_100_119 <- qx_100_119[year == yr]
+      if (nrow(year_qx_100_119) == 0) {
+        available_years <- unique(qx_100_119$year)
+        closest_year <- available_years[which.min(abs(available_years - yr))]
+        year_qx_100_119 <- qx_100_119[year == closest_year]
+      }
+      raw_qx_100 <- year_qx_100_119[age == 100, .(sex, raw_qx = qx)]
 
-      # Survivors who reach age 100
-      new_100_male <- pop_99_prev[sex == "male", pop99 * (1 - qx99)]
-      new_100_female <- pop_99_prev[sex == "female", pop99 * (1 - qx99)]
+      pop_99_prev <- merge(pop_99_prev, raw_qx_100, by = "sex", all.x = TRUE)
+      pop_99_prev[is.na(raw_qx), raw_qx := 0]
+
+      # Survivors who reach age 100 (after facing raw qx_100)
+      new_100_male <- pop_99_prev[sex == "male", pop99 * (1 - raw_qx)]
+      new_100_female <- pop_99_prev[sex == "female", pop99 * (1 - raw_qx)]
 
       if (length(new_100_male) == 0) new_100_male <- 0
       if (length(new_100_female) == 0) new_100_female <- 0
 
-      # Update tracker (uses tracker$qx_data internally)
+      # Update tracker (uses tracker$qx_data internally for aging existing 100+)
       tracker_100plus <- update_100plus_tracker(
         tracker = tracker_100plus,
         target_year = yr,
