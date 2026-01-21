@@ -260,29 +260,76 @@ immigration:
 
     # Age range for immigration
     min_age: 0
-    max_age: 99
+    max_age: 100  # 100 represents 100+ open-ended group
 
     # =========================================================================
     # Age-Sex Distribution Method
     # =========================================================================
-    # Controls how immigration is distributed across ages and sexes.
+    # Controls the source of the immigration age-sex distribution.
     #
     # Options:
-    #   "dhs" - Uses DHS expanded tables with Beers interpolation to distribute
-    #           LPR immigration by age and sex. Based on actual LPR admission data.
-    #   "calibrated" - Uses distribution calibrated via optimization to minimize
-    #                  population projection error vs TR2025. Shifts weight toward
-    #                  younger ages compared to DHS. Loaded from:
-    #                  data/processed/calibrated_lpr_distribution.csv
+    #   "dhs" - Use DHS expanded tables (2018-2023) with Beers interpolation
+    #           Represents actual LPR admission patterns by age and sex.
+    #           Note: DHS shows different age pattern than TR2025 population implies.
+    #
+    #   "tr_derived" - Use distribution back-calculated from TR2025 population
+    #           projections. Computed by target `tr_derived_immigration_dist` using:
+    #             implied_NI = P(x,z) - P(x-1,z-1) * (1 - qx)
+    #           Averaged over years 2023-2030.
+    #           Ensures population projection aligns with TR2025.
+    #
+    # Key differences between methods:
+    #   Age Group   DHS%    TR-Derived%   DHS shows less at young ages
+    #   0-17        16.0    24.0          (39% lower)
+    #   18-24       10.2    16.1          (37% lower)
+    #   25-44       43.7    37.1          (18% higher)
+    #   45-64       21.0    11.7          (80% higher)
+    #   65-84        4.5     7.5          (40% lower)
+    #   85-99        4.7     3.6          (31% higher)
     # =========================================================================
-    distribution_method: "calibrated"
+    distribution_method: "tr_derived"  # Options: "dhs", "tr_derived"
 
-    # DHS distribution configuration
-    dhs_distribution:
-      distribution_years: [2018, 2019, 2020, 2021, 2022, 2023]
-
-    # Reference years for distribution calculation
+    # DHS distribution years (used when distribution_method = "dhs")
     distribution_years: [2018, 2019, 2020, 2021, 2022, 2023]
+
+    # TR-derived distribution years (averaged over these years)
+    tr_derived_years: [2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030]
+
+    # =========================================================================
+    # Age 100+ Override
+    # =========================================================================
+    # The TR-derived distribution has unreliable values for age 100+ because
+    # the back-calculation formula doesn't work correctly for open-ended groups.
+    # This override sets explicit values for the 100+ age group.
+    #
+    # When distribution_method = "dhs", the elderly_override section below
+    # also applies to ages 85-99.
+    # =========================================================================
+    age_100_override:
+      enabled: true
+      # Age 100+: Small net immigration (based on examining TR2025 100+ population growth)
+      # TR2025 100+ population grows by ~3,000/year on average (2024-2030)
+      # This growth includes survivors + net immigration
+      # Estimate: ~0 net immigration at 100+ (most growth is from 99 survivors)
+      annual_total: 0
+      female_share: 0.65
+
+    # =========================================================================
+    # Elderly Immigration Override (Ages 85+) - FOR DHS METHOD ONLY
+    # =========================================================================
+    # Only used when distribution_method = "dhs"
+    # DHS data shows almost no immigration at ages 85+ (~0.03% of total).
+    # However, TR2025 population projections imply ~3.5% of net immigration
+    # goes to ages 85-99. This override adjusts for this discrepancy.
+    # =========================================================================
+    elderly_override:
+      enabled: true
+      ages_85_99:
+        annual_total: 68500
+        female_share: 0.60
+      age_100_plus:
+        annual_total: -4000
+        female_share: 0.65
 
     # NEW/AOS split method:
     # - "assumption": Use TR2025 V.A2 values directly (450K AOS, recommended)

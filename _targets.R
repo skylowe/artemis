@@ -712,24 +712,102 @@ list(
   # Uses DHS data for age-sex distributions and NEW/AOS ratio, TR2025 for totals
   # Produces all 5 required outputs: L (LPR), NEW, AOS, E (Emigration), NL (Net LPR)
 
+  # Step 0a: Load TR2025 population in long format for TR-derived distribution
+  tar_target(
+    tr2025_population_long,
+    {
+      file_path <- here::here("data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv")
+      if (!file.exists(file_path)) {
+        cli::cli_abort("TR2025 population file not found: {file_path}")
+      }
+
+      tr_pop <- data.table::fread(file_path)
+      # Convert to long format: year, age, sex, population
+      tr_pop_long <- data.table::rbindlist(list(
+        tr_pop[, .(year = Year, age = Age, sex = "male", population = `M Tot`)],
+        tr_pop[, .(year = Year, age = Age, sex = "female", population = `F Tot`)]
+      ))
+      cli::cli_alert_success("Loaded TR2025 population: {nrow(tr_pop_long)} rows")
+      tr_pop_long
+    }
+  ),
+
+  # Step 0b: Load TR2025 qx in long format for TR-derived distribution
+  tar_target(
+    tr2025_qx_long,
+    {
+      male_file <- here::here("data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv")
+      female_file <- here::here("data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv")
+
+      if (!file.exists(male_file) || !file.exists(female_file)) {
+        cli::cli_abort("TR2025 qx files not found")
+      }
+
+      # Load and melt male qx
+      tr_qx_male <- data.table::fread(male_file, skip = 1)
+      tr_qx_m <- data.table::melt(tr_qx_male, id.vars = "Year",
+                                   variable.name = "age_chr", value.name = "qx")
+      tr_qx_m[, age := as.integer(as.character(age_chr))]
+      tr_qx_m[, sex := "male"]
+
+      # Load and melt female qx
+      tr_qx_female <- data.table::fread(female_file, skip = 1)
+      tr_qx_f <- data.table::melt(tr_qx_female, id.vars = "Year",
+                                   variable.name = "age_chr", value.name = "qx")
+      tr_qx_f[, age := as.integer(as.character(age_chr))]
+      tr_qx_f[, sex := "female"]
+
+      # Combine
+      tr_qx <- data.table::rbindlist(list(tr_qx_m, tr_qx_f))
+      tr_qx <- tr_qx[, .(year = Year, age, sex, qx)]
+
+      cli::cli_alert_success("Loaded TR2025 qx: {nrow(tr_qx)} rows")
+      tr_qx
+    }
+  ),
+
+  # Step 0c: Calculate TR2025-derived immigration distribution
+  # Back-calculates implied immigration from TR2025 population projections
+  tar_target(
+    tr_derived_immigration_dist,
+    calculate_tr_derived_distribution(
+      tr_population = tr2025_population_long,
+      tr_qx = tr2025_qx_long,
+      years = 2023:2030  # Average over first 8 projection years
+    )
+  ),
+
   # Step 1: Calculate LPR immigration distribution
-  # Method controlled by config: "dhs" or "calibrated"
+  # Method controlled by config: "dhs" (DHS expanded tables) or "tr_derived" (TR2025-derived)
   tar_target(
     lpr_distribution,
     {
       method <- config_assumptions$immigration$lpr$distribution_method
-      if (is.null(method)) method <- "dhs"  # Default to DHS if not specified
+      if (is.null(method)) method <- "tr_derived"  # Default to TR-derived
 
-      dhs_years <- config_assumptions$immigration$lpr$dhs_distribution$distribution_years
-      if (is.null(dhs_years)) {
-        dhs_years <- config_assumptions$immigration$lpr$distribution_years
+      # Calculate approximate total net immigration for override proportions
+      # Using ultimate values: net LPR (~788K) + net O (~750K) = ~1.54M
+      total_net_imm <- config_assumptions$immigration$ultimate_net_lpr_immigration +
+                       (config_assumptions$immigration$o_immigration$ultimate_gross_o * 0.5)
+
+      if (method == "dhs") {
+        # DHS-based distribution with elderly override for ages 85+
+        get_immigration_distribution(
+          method = "dhs",
+          dhs_data = load_dhs_lpr_data(),
+          dhs_years = config_assumptions$immigration$lpr$distribution_years,
+          elderly_override = config_assumptions$immigration$lpr$elderly_override,
+          total_net_immigration = total_net_imm
+        )
+      } else {
+        # TR2025-derived distribution with age 100+ override
+        get_immigration_distribution(
+          method = "tr_derived",
+          tr_derived_data = tr_derived_immigration_dist,
+          age_100_override = config_assumptions$immigration$lpr$age_100_override,
+          total_net_immigration = total_net_imm
+        )
       }
-
-      get_immigration_distribution(
-        method = method,
-        dhs_data = if (method == "dhs") load_dhs_lpr_data() else NULL,
-        dhs_years = dhs_years
-      )
     }
   ),
 

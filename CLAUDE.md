@@ -45,6 +45,22 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 **Methodology Deviations from TR2025:**
 1. Emigration distribution uses CBO 2021-2024 data instead of unpublished Census 1980-1990 estimates
 2. Refugee/asylee reclassification not implemented (DHS expanded tables don't separate by refugee status)
+3. Immigration age-sex distribution (January 2026):
+   - Uses TR2025-derived distribution instead of DHS expanded tables
+   - TR-derived distribution back-calculated from TR2025 population projections using: NI = P(x,z) - P(x-1,z-1) × (1-qx)
+   - Computed by pipeline target `tr_derived_immigration_dist` (not loaded from file)
+   - DHS distribution differs significantly from TR2025 implied (e.g., DHS: 0-17=16%, TR: 0-17=25%)
+   - Configuration `distribution_method: "tr_derived"` in `config/assumptions/tr2025.yaml`
+   - Age 100+ values overridden (TR-derived has artifacts for open-ended age group)
+   - Validation results: Age group errors now <2% (was up to -7.5% with DHS distribution)
+   - Total population error stable at ~1.2% across all years (was growing to -4.3%)
+   - Key targets: `tr2025_population_long`, `tr2025_qx_long`, `tr_derived_immigration_dist`
+
+**Known Limitation - Total Immigration Gap:**
+- Our total net immigration (1.337M/year) matches TR2025 Table V.A2 exactly
+- But TR2025 population projections imply ~1.96M/year net immigration
+- This ~620K annual gap explains the remaining ~1% population divergence
+- Using V.A2 totals ensures consistency with published assumptions
 
 ### Historical Population Subprocess Status (COMPLETE)
 - **Purpose:** Estimate Social Security area population for Dec 31, 1940 through Dec 31, 2022

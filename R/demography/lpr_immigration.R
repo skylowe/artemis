@@ -2,6 +2,7 @@
 #'
 #' Functions for projecting LPR immigration by age and sex using:
 #' - DHS data for age-sex distributions (with Beers interpolation to single years)
+#' - Or TR2025-derived distribution (back-calculated from population projections)
 #' - DHS data for NEW/AOS split ratio
 #' - TR2025 assumptions for aggregate totals
 #'
@@ -16,48 +17,376 @@
 NULL
 
 # ===========================================================================
-# DHS-BASED IMMIGRATION DISTRIBUTION
+# IMMIGRATION AGE-SEX DISTRIBUTION
 # ===========================================================================
 
-#' Get immigration distribution from DHS data
+#' Get immigration age-sex distribution
 #'
 #' @description
-#' Returns the immigration age-sex distribution from DHS expanded tables.
-#' Uses Beers interpolation to convert 5-year age groups to single years.
+#' Returns the immigration age-sex distribution using one of two methods:
 #'
-#' @param method Character: distribution method (only "dhs" supported)
-#' @param dhs_data data.table: DHS data from load_dhs_lpr_data()
-#' @param dhs_years Integer vector: years for DHS averaging
-#' @param calibrated_path Path to calibrated distribution CSV (for method = "calibrated")
+#' 1. "dhs" - DHS expanded tables with Beers interpolation (actual LPR admissions)
+#' 2. "tr_derived" - Distribution back-calculated from TR2025 population projections
+#'
+#' The TR-derived method ensures population projections align with TR2025.
+#' The DHS method reflects actual admission patterns but differs from TR2025 implied.
+#'
+#' @param method Character: "dhs" or "tr_derived"
+#' @param dhs_data data.table: DHS data from load_dhs_lpr_data() (for "dhs" method)
+#' @param dhs_years Integer vector: years for DHS averaging (for "dhs" method)
+#' @param tr_derived_data data.table: Pre-computed TR-derived distribution from
+#'   calculate_tr_derived_distribution() (for "tr_derived" method, preferred)
+#' @param tr_derived_file Character: path to TR2025-derived distribution CSV
+#'   (for "tr_derived" method, fallback if tr_derived_data is NULL)
+#' @param elderly_override List: override configuration for ages 85+ (for "dhs" method)
+#' @param age_100_override List: override configuration for age 100+ (for "tr_derived" method)
+#' @param total_net_immigration Numeric: total annual net immigration (for overrides)
 #'
 #' @return data.table with columns: age, sex, distribution
 #'
 #' @export
 get_immigration_distribution <- function(
-    method = "dhs",
+    method = "tr_derived",
     dhs_data = NULL,
     dhs_years = 2018:2023,
-    calibrated_path = "data/processed/calibrated_lpr_distribution.csv"
+    tr_derived_data = NULL,
+    tr_derived_file = "data/processed/tr2025_implied_immigration_distribution.csv",
+    elderly_override = NULL,
+    age_100_override = NULL,
+    total_net_immigration = NULL
 ) {
-  if (method == "calibrated") {
-    if (!file.exists(calibrated_path)) {
-      cli::cli_abort(c(
-        "Calibrated distribution file not found: {calibrated_path}",
-        "i" = "Run scripts/calibrate_lpr_dist.R to generate it"
-      ))
+
+  if (method == "dhs") {
+    # DHS-based distribution with optional elderly override
+    if (is.null(dhs_data)) {
+      cli::cli_abort("dhs_data required for DHS distribution method")
     }
-    cli::cli_alert_info("Using calibrated immigration distribution (optimized to match TR2025)")
-    dist <- data.table::fread(calibrated_path)
-    data.table::setorder(dist, sex, age)
+
+    cli::cli_alert_info("Using DHS-derived immigration distribution")
+    dist <- calculate_lpr_distribution_dhs(dhs_data, dhs_years)
+
+    # Apply elderly override if enabled (for DHS method, this adjusts 85+)
+    if (!is.null(elderly_override) && isTRUE(elderly_override$enabled)) {
+      if (is.null(total_net_immigration)) {
+        cli::cli_abort("total_net_immigration required when elderly_override is enabled")
+      }
+      dist <- apply_elderly_override(dist, elderly_override, total_net_immigration)
+    }
+
+  } else if (method == "tr_derived") {
+    # TR2025-derived distribution
+    cli::cli_alert_info("Using TR2025-derived immigration distribution")
+    dist <- load_tr_derived_distribution(
+      tr_derived_data = tr_derived_data,
+      file_path = tr_derived_file
+    )
+
+    # Apply age 100+ override (TR-derived has artifact values at 100+)
+    if (!is.null(age_100_override) && isTRUE(age_100_override$enabled)) {
+      if (is.null(total_net_immigration)) {
+        cli::cli_abort("total_net_immigration required when age_100_override is enabled")
+      }
+      dist <- apply_age_100_override(dist, age_100_override, total_net_immigration)
+    }
+
+  } else {
+    cli::cli_abort("Unknown distribution method: {method}. Use 'dhs' or 'tr_derived'.")
+  }
+
+  dist
+}
+
+#' Calculate TR2025-derived immigration distribution
+#'
+#' @description
+#' Back-calculates the implied immigration distribution from TR2025 population
+#' projections. Uses the cohort-component identity:
+#'
+#'   implied_NI = P(x,z) - P(x-1,z-1) × (1 - qx)
+#'
+#' Where:
+#' - P(x,z) = population at age x in year z
+#' - qx = probability of death at age x
+#' - implied_NI = net immigration implied by population change
+#'
+#' @param tr_population data.table: TR2025 population with columns year, age, sex, population
+#' @param tr_qx data.table: TR2025 death probabilities with columns year, age, sex, qx
+#' @param years Integer vector: years to calculate (default 2023:2030)
+#'
+#' @return data.table with columns: age, sex, avg_implied, total_implied, implied_dist
+#'
+#' @export
+calculate_tr_derived_distribution <- function(
+    tr_population,
+    tr_qx,
+    years = 2023:2030
+) {
+  cli::cli_alert_info("Calculating TR2025-derived immigration distribution")
+
+  # Ensure data.tables
+
+tr_population <- data.table::as.data.table(tr_population)
+  tr_qx <- data.table::as.data.table(tr_qx)
+
+  # Calculate implied immigration for each year, age, sex
+  implied_list <- list()
+
+  for (yr in years) {
+    for (a in 1:100) {
+      for (s in c("male", "female")) {
+        # Previous year's population at age-1
+        pop_prev <- tr_population[year == yr - 1 & age == a - 1 & sex == s, population]
+        # Current year's population at age
+        pop_now <- tr_population[year == yr & age == a & sex == s, population]
+        # Death probability
+        qx_val <- tr_qx[year == yr & age == a & sex == s, qx]
+
+        if (length(pop_prev) == 1 && length(pop_now) == 1 && length(qx_val) == 1) {
+          # Expected survivors from cohort aging
+          survivors <- pop_prev * (1 - qx_val)
+          # Implied net immigration = actual - expected
+          implied <- pop_now - survivors
+
+          implied_list[[length(implied_list) + 1]] <- data.table::data.table(
+            year = yr,
+            age = a,
+            sex = s,
+            implied_ni = implied
+          )
+        }
+      }
+    }
+  }
+
+  tr_implied <- data.table::rbindlist(implied_list)
+
+  # Average implied immigration by age/sex across years
+  tr_implied_avg <- tr_implied[, .(avg_implied = mean(implied_ni)), by = .(age, sex)]
+  tr_implied_avg[, total_implied := sum(avg_implied)]
+  tr_implied_avg[, implied_dist := avg_implied / total_implied]
+
+  cli::cli_alert_success(
+    "Calculated implied distribution for ages 1-100 (averaged over {length(years)} years)"
+  )
+
+  # Report key statistics
+  total_implied <- tr_implied_avg[, sum(avg_implied)]
+  pct_85_99 <- tr_implied_avg[age >= 85 & age < 100, sum(implied_dist)] * 100
+  cli::cli_alert_info("Total implied annual immigration: {format(round(total_implied), big.mark=',')}")
+  cli::cli_alert_info("Ages 85-99: {round(pct_85_99, 1)}% of total")
+
+  tr_implied_avg[order(sex, age)]
+}
+
+#' Load TR2025-derived immigration distribution
+#'
+#' @description
+#' Processes the TR2025-derived distribution (either from a pre-computed data.table
+#' or from a CSV file) into the format needed for immigration projection.
+#'
+#' @param tr_derived_data data.table: Pre-computed TR-derived distribution from
+#'   calculate_tr_derived_distribution(), or NULL to load from file
+#' @param file_path Path to CSV file (used if tr_derived_data is NULL)
+#'
+#' @return data.table with columns: age, sex, distribution
+#'
+#' @keywords internal
+load_tr_derived_distribution <- function(
+    tr_derived_data = NULL,
+    file_path = "data/processed/tr2025_implied_immigration_distribution.csv"
+) {
+  # Get the implied distribution data
+if (!is.null(tr_derived_data)) {
+    implied <- data.table::copy(tr_derived_data)
+    cli::cli_alert_info("Using pre-computed TR-derived distribution")
+  } else if (file.exists(file_path)) {
+    implied <- data.table::fread(file_path)
+    cli::cli_alert_info("Loaded TR-derived distribution from file")
+  } else {
+    cli::cli_abort("TR2025-derived distribution not available. Either provide tr_derived_data or ensure file exists: {file_path}")
+  }
+
+  # The data has: age, sex, avg_implied, total_implied, implied_dist
+  # We need to transform this to: age, sex, distribution
+
+  # Note: The data has ages 1-100, missing age 0
+  # Also, age 100 values are artifacts from the back-calculation
+
+  # Create distribution for ages 0-99 (exclude 100+ artifact)
+  dist_0_99 <- implied[age < 100, .(age, sex, avg_implied)]
+
+  # Handle missing age 0 by using same distribution as age 1
+  age_1_vals <- dist_0_99[age == 1]
+  age_0_vals <- data.table::data.table(
+    age = 0L,
+    sex = age_1_vals$sex,
+    avg_implied = age_1_vals$avg_implied
+  )
+  dist_0_99 <- rbind(age_0_vals, dist_0_99)
+
+  # Create placeholder for age 100+ (will be overridden)
+  age_100_vals <- data.table::data.table(
+    age = 100L,
+    sex = c("male", "female"),
+    avg_implied = c(0, 0)  # Placeholder, will be set by override
+  )
+  dist_full <- rbind(dist_0_99, age_100_vals)
+
+  # Normalize to distribution (sum to 1) for ages 0-99
+  total_0_99 <- dist_full[age < 100, sum(avg_implied)]
+  dist_full[age < 100, distribution := avg_implied / total_0_99]
+  dist_full[age >= 100, distribution := 0]  # Will be set by override
+
+  cli::cli_alert_success("TR-derived distribution ready (ages 0-99, 100+ placeholder)")
+
+  dist_full[, .(age, sex, distribution)]
+}
+
+#' Apply age 100+ override to distribution
+#'
+#' @description
+#' Sets the age 100+ distribution values and renormalizes ages 0-99.
+#' This is used for TR-derived distribution where 100+ values are artifacts.
+#'
+#' @param dist data.table: distribution with columns age, sex, distribution
+#' @param override List: override configuration with annual_total and female_share
+#' @param total_net_immigration Numeric: total annual net immigration
+#'
+#' @return data.table: adjusted distribution
+#'
+#' @keywords internal
+apply_age_100_override <- function(dist, override, total_net_immigration) {
+  dist <- data.table::copy(dist)
+
+  # Calculate 100+ proportions
+  target_100_total <- override$annual_total
+  target_100_female <- target_100_total * override$female_share
+  target_100_male <- target_100_total * (1 - override$female_share)
+
+  prop_100_female <- target_100_female / total_net_immigration
+  prop_100_male <- target_100_male / total_net_immigration
+
+  # Scale ages 0-99 to make room for 100+
+  current_0_99 <- dist[age < 100, sum(distribution)]
+  target_0_99 <- 1 - (prop_100_female + prop_100_male)
+
+  if (target_0_99 <= 0) {
+    cli::cli_abort("Age 100+ override values exceed total immigration")
+  }
+
+  scale_0_99 <- target_0_99 / current_0_99
+
+  cli::cli_alert_info(
+    "Applying 100+ override: {round(target_100_total)} (scaling 0-99 by {round(scale_0_99, 4)})"
+  )
+
+  # Apply scale to ages 0-99
+  dist[age < 100, distribution := distribution * scale_0_99]
+
+  # Set age 100+
+  dist[age >= 100 & sex == "female", distribution := prop_100_female]
+  dist[age >= 100 & sex == "male", distribution := prop_100_male]
+
+  # Verify distribution sums to 1
+
+  total <- dist[, sum(distribution)]
+  if (abs(total - 1.0) > 0.001) {
+    cli::cli_warn("Distribution sums to {round(total, 6)} after 100+ override")
+  }
+
+  dist
+}
+
+#' Apply elderly immigration override to distribution
+#'
+#' @description
+#' Adjusts the immigration distribution for ages 85+ based on TR2025 implied values.
+#' DHS data shows almost no immigration at ages 85+, but TR2025 population projections
+#' imply approximately 3.5% of net immigration goes to ages 85-99.
+#'
+#' @param dist data.table: base distribution with columns age, sex, distribution
+#' @param override List: override configuration
+#' @param total_net_immigration Numeric: total annual net immigration
+#'
+#' @return data.table: adjusted distribution
+#'
+#' @keywords internal
+apply_elderly_override <- function(dist, override, total_net_immigration) {
+  dist <- data.table::copy(dist)
+
+  # Extract override values
+  ages_85_99 <- override$ages_85_99
+  age_100_plus <- override$age_100_plus
+
+  if (is.null(ages_85_99) || is.null(age_100_plus)) {
+    cli::cli_warn("Elderly override enabled but missing configuration, skipping")
     return(dist)
   }
 
-  # Default: DHS method
-  if (is.null(dhs_data)) {
-    cli::cli_abort("dhs_data required for DHS distribution method")
+  # Calculate target proportions for elderly ages
+  # ages_85_99
+  target_85_99_total <- ages_85_99$annual_total
+  target_85_99_female <- target_85_99_total * ages_85_99$female_share
+  target_85_99_male <- target_85_99_total * (1 - ages_85_99$female_share)
+
+  # age_100_plus
+  target_100_total <- age_100_plus$annual_total
+  target_100_female <- target_100_total * age_100_plus$female_share
+  target_100_male <- target_100_total * (1 - age_100_plus$female_share)
+
+  # Convert to proportions of total
+  prop_85_99_female <- target_85_99_female / total_net_immigration
+  prop_85_99_male <- target_85_99_male / total_net_immigration
+  prop_100_female <- target_100_female / total_net_immigration
+  prop_100_male <- target_100_male / total_net_immigration
+
+  # Current distribution at 0-84
+  current_0_84 <- dist[age < 85, sum(distribution)]
+
+  # Target distribution at 0-84 (remainder after elderly)
+  target_0_84 <- 1 - (prop_85_99_female + prop_85_99_male + prop_100_female + prop_100_male)
+
+  if (target_0_84 <= 0) {
+    cli::cli_abort("Elderly override values exceed total immigration")
   }
-  cli::cli_alert_info("Using DHS-derived immigration distribution")
-  calculate_lpr_distribution_dhs(dhs_data, dhs_years)
+
+  # Scale factor for ages 0-84
+  scale_0_84 <- target_0_84 / current_0_84
+
+  cli::cli_alert_info(
+    "Applying elderly override: 85-99={round(target_85_99_total)}, 100+={round(target_100_total)}"
+  )
+  cli::cli_alert_info(
+    "Scaling ages 0-84 by {round(scale_0_84, 4)} ({round(current_0_84*100, 2)}% -> {round(target_0_84*100, 2)}%)"
+  )
+
+  # Apply scale to ages 0-84
+  dist[age < 85, distribution := distribution * scale_0_84]
+
+  # Distribute 85-99 proportionally within the age range
+  # Use uniform distribution across ages 85-99 (15 ages)
+  n_ages_85_99 <- 15
+  dist[age >= 85 & age < 100 & sex == "female", distribution := prop_85_99_female / n_ages_85_99]
+  dist[age >= 85 & age < 100 & sex == "male", distribution := prop_85_99_male / n_ages_85_99]
+
+  # Set age 100+
+  dist[age >= 100 & sex == "female", distribution := prop_100_female]
+  dist[age >= 100 & sex == "male", distribution := prop_100_male]
+
+  # Verify distribution sums to 1 (within tolerance for negative 100+)
+  total <- dist[, sum(distribution)]
+  if (abs(total - 1.0) > 0.01) {
+    cli::cli_warn("Distribution sums to {round(total, 4)} after elderly override")
+  }
+
+  # Report final distribution
+  elderly_pct <- dist[age >= 85 & age < 100, sum(distribution)] * 100
+  age100_pct <- dist[age >= 100, sum(distribution)] * 100
+  cli::cli_alert_success(
+    "Final distribution: 85-99={round(elderly_pct, 2)}%, 100+={round(age100_pct, 2)}%"
+  )
+
+  dist
 }
 
 # ===========================================================================
