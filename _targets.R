@@ -669,32 +669,23 @@ list(
   # Produces all 5 required outputs: L (LPR), NEW, AOS, E (Emigration), NL (Net LPR)
 
   # Step 1: Calculate LPR immigration distribution
-  # Method controlled by config: "dhs" (default) or "tr2025_derived"
+  # Method controlled by config: "dhs" or "calibrated"
   tar_target(
     lpr_distribution,
     {
       method <- config_assumptions$immigration$lpr$distribution_method
-      if (is.null(method)) method <- "dhs"
+      if (is.null(method)) method <- "dhs"  # Default to DHS if not specified
 
-      if (method == "tr2025_derived") {
-        # Derive distribution from TR2025 population projections
-        tr_config <- config_assumptions$immigration$lpr$tr2025_derived_distribution
-        get_immigration_distribution(
-          method = "tr2025_derived",
-          tr_config = tr_config
-        )
-      } else {
-        # Use DHS-derived distribution (default)
-        dhs_years <- config_assumptions$immigration$lpr$dhs_distribution$distribution_years
-        if (is.null(dhs_years)) {
-          dhs_years <- config_assumptions$immigration$lpr$distribution_years
-        }
-        get_immigration_distribution(
-          method = "dhs",
-          dhs_data = load_dhs_lpr_data(),
-          dhs_years = dhs_years
-        )
+      dhs_years <- config_assumptions$immigration$lpr$dhs_distribution$distribution_years
+      if (is.null(dhs_years)) {
+        dhs_years <- config_assumptions$immigration$lpr$distribution_years
       }
+
+      get_immigration_distribution(
+        method = method,
+        dhs_data = if (method == "dhs") load_dhs_lpr_data() else NULL,
+        dhs_years = dhs_years
+      )
     }
   ),
 

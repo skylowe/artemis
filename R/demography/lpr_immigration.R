@@ -16,194 +16,48 @@
 NULL
 
 # ===========================================================================
-# TR2025-DERIVED IMMIGRATION DISTRIBUTION
+# DHS-BASED IMMIGRATION DISTRIBUTION
 # ===========================================================================
 
-#' Derive TR2025 implied immigration age-sex distribution
+#' Get immigration distribution from DHS data
 #'
 #' @description
-#' Calculates the implied net immigration age-sex distribution from TR2025
-#' population projections by analyzing year-over-year population changes.
+#' Returns the immigration age-sex distribution from DHS expanded tables.
+#' Uses Beers interpolation to convert 5-year age groups to single years.
 #'
-#' Method:
-#' For ages 1-99, net immigration is derived as:
-#'   NI(age, year) = P(age, year) - P(age-1, year-1) * (1 - q_{age-1})
-#'
-#' This reverse-engineers what net immigration TR2025 must have assumed.
-#'
-#' @param years Integer vector: years to analyze (default: 2025:2050)
-#' @param tr_pop_file Character: path to TR2025 population file
-#' @param tr_qx_male_file Character: path to TR2025 male mortality file
-#' @param tr_qx_female_file Character: path to TR2025 female mortality file
-#'
-#' @return data.table with columns: age, sex, distribution (sums to 1)
-#'
-#' @export
-derive_tr2025_immigration_distribution <- function(
-    years = 2025:2050,
-    tr_pop_file = "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv",
-    tr_qx_male_file = "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv",
-    tr_qx_female_file = "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
-) {
-  # Load TR2025 data
-  cli::cli_alert_info("Loading TR2025 data for immigration distribution derivation...")
-  tr_pop <- data.table::fread(tr_pop_file)
-  tr_qx_m <- data.table::fread(tr_qx_male_file)
-  tr_qx_f <- data.table::fread(tr_qx_female_file)
-
-  # Calculate implied net immigration for each year
-  all_ni <- data.table::rbindlist(lapply(years, function(year) {
-    calculate_implied_ni_for_year(year, tr_pop, tr_qx_m, tr_qx_f)
-  }))
-
-  # Average across years to get stable distribution
-  avg_dist <- all_ni[, .(
-    net_immigration = mean(net_immigration)
-  ), by = .(age, sex)]
-
-  # Calculate distribution (normalize to sum to 1)
-  # Note: Some ages may have negative values (net emigration)
-  # We keep the shape but normalize so total sums to 1
-  total <- sum(avg_dist$net_immigration)
-  avg_dist[, distribution := net_immigration / total]
-
-  # Report summary
-  pos_ages <- avg_dist[distribution > 0, .N]
-  neg_ages <- avg_dist[distribution < 0, .N]
-  cli::cli_alert_success(
-    "Derived TR2025 immigration distribution: {pos_ages} ages with immigration, {neg_ages} ages with emigration"
-  )
-
-  # Report age groups
-  avg_dist[, age_group := data.table::fcase(
-    age <= 24, "0-24",
-    age <= 44, "25-44",
-    age <= 64, "45-64",
-    default = "65+"
-  )]
-  by_group <- avg_dist[, .(pct = sum(distribution) * 100), by = age_group]
-  cli::cli_alert_info("Distribution: 0-24: {round(by_group[age_group=='0-24', pct], 1)}%, 25-44: {round(by_group[age_group=='25-44', pct], 1)}%, 45-64: {round(by_group[age_group=='45-64', pct], 1)}%, 65+: {round(by_group[age_group=='65+', pct], 1)}%")
-
-  # Return in standard format
-  data.table::setorder(avg_dist, sex, age)
-  avg_dist[, .(age, sex, distribution)]
-}
-
-#' Calculate implied net immigration for a single year
-#'
-#' @param year Integer: the year to calculate immigration for
-#' @param tr_pop data.table: TR2025 population data
-#' @param tr_qx_m data.table: TR2025 male death probabilities
-#' @param tr_qx_f data.table: TR2025 female death probabilities
-#'
-#' @return data.table with columns: year, age, sex, net_immigration
-#'
-#' @keywords internal
-calculate_implied_ni_for_year <- function(year, tr_pop, tr_qx_m, tr_qx_f) {
-  tr_prev <- tr_pop[Year == year - 1]
-  tr_curr <- tr_pop[Year == year]
-  qx_m <- tr_qx_m[Year == year - 1]
-  qx_f <- tr_qx_f[Year == year - 1]
-
-  # Calculate for ages 1-99
-  results <- data.table::rbindlist(lapply(1:99, function(a) {
-    # Current year population at age a
-    curr_m <- tr_curr[Age == a, `M Tot`]
-    curr_f <- tr_curr[Age == a, `F Tot`]
-
-    # Previous year population at age a-1
-    prev_m <- tr_prev[Age == a - 1, `M Tot`]
-    prev_f <- tr_prev[Age == a - 1, `F Tot`]
-
-    # Survival probability
-    surv_m <- 1 - qx_m[1, get(as.character(a - 1))]
-    surv_f <- 1 - qx_f[1, get(as.character(a - 1))]
-
-    # Implied net immigration
-    ni_m <- curr_m - prev_m * surv_m
-    ni_f <- curr_f - prev_f * surv_f
-
-    data.table::data.table(
-      year = year,
-      age = a,
-      sex = c("male", "female"),
-      net_immigration = c(ni_m, ni_f)
-    )
-  }))
-
-  # Add age 0 with zero (we can't derive it without birth data)
-  age0 <- data.table::data.table(
-    year = year,
-    age = 0L,
-    sex = c("male", "female"),
-    net_immigration = c(0, 0)
-  )
-
-  rbind(age0, results)
-}
-
-#' Get immigration distribution based on config method
-#'
-#' @description
-#' Returns the immigration age-sex distribution based on the configured method.
-#' Supports "dhs" (current DHS-based) or "tr2025_derived" (from TR2025 population).
-#'
-#' @param method Character: "dhs" or "tr2025_derived"
-#' @param dhs_data data.table: DHS data (required if method = "dhs")
+#' @param method Character: distribution method (only "dhs" supported)
+#' @param dhs_data data.table: DHS data from load_dhs_lpr_data()
 #' @param dhs_years Integer vector: years for DHS averaging
-#' @param tr_config List: TR2025 file paths (required if method = "tr2025_derived")
+#' @param calibrated_path Path to calibrated distribution CSV (for method = "calibrated")
 #'
 #' @return data.table with columns: age, sex, distribution
 #'
 #' @export
 get_immigration_distribution <- function(
-    method = c("dhs", "tr2025_derived"),
+    method = "dhs",
     dhs_data = NULL,
     dhs_years = 2018:2023,
-    tr_config = NULL
+    calibrated_path = "data/processed/calibrated_lpr_distribution.csv"
 ) {
-  method <- match.arg(method)
-
-  if (method == "dhs") {
-    if (is.null(dhs_data)) {
-      cli::cli_abort("dhs_data required when method = 'dhs'")
+  if (method == "calibrated") {
+    if (!file.exists(calibrated_path)) {
+      cli::cli_abort(c(
+        "Calibrated distribution file not found: {calibrated_path}",
+        "i" = "Run scripts/calibrate_lpr_dist.R to generate it"
+      ))
     }
-    cli::cli_alert_info("Using DHS-derived immigration distribution")
-    return(calculate_lpr_distribution_dhs(dhs_data, dhs_years))
+    cli::cli_alert_info("Using calibrated immigration distribution (optimized to match TR2025)")
+    dist <- data.table::fread(calibrated_path)
+    data.table::setorder(dist, sex, age)
+    return(dist)
   }
 
-  if (method == "tr2025_derived") {
-    cli::cli_alert_info("Using TR2025-derived immigration distribution")
-
-    # Get file paths from config or use defaults
-    tr_pop_file <- if (!is.null(tr_config$population_file)) {
-      tr_config$population_file
-    } else {
-      "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv"
-    }
-    tr_qx_male_file <- if (!is.null(tr_config$qx_male_file)) {
-      tr_config$qx_male_file
-    } else {
-      "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
-    }
-    tr_qx_female_file <- if (!is.null(tr_config$qx_female_file)) {
-      tr_config$qx_female_file
-    } else {
-      "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
-    }
-    tr_years <- if (!is.null(tr_config$derivation_years)) {
-      tr_config$derivation_years
-    } else {
-      2025:2050
-    }
-
-    return(derive_tr2025_immigration_distribution(
-      years = tr_years,
-      tr_pop_file = tr_pop_file,
-      tr_qx_male_file = tr_qx_male_file,
-      tr_qx_female_file = tr_qx_female_file
-    ))
+  # Default: DHS method
+  if (is.null(dhs_data)) {
+    cli::cli_abort("dhs_data required for DHS distribution method")
   }
+  cli::cli_alert_info("Using DHS-derived immigration distribution")
+  calculate_lpr_distribution_dhs(dhs_data, dhs_years)
 }
 
 # ===========================================================================
