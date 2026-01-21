@@ -138,7 +138,7 @@ tr_population <- data.table::as.data.table(tr_population)
         pop_prev <- tr_population[year == yr - 1 & age == a - 1 & sex == s, population]
         # Current year's population at age
         pop_now <- tr_population[year == yr & age == a & sex == s, population]
-        # Death probability
+        # Death probability at current age/year
         qx_val <- tr_qx[year == yr & age == a & sex == s, qx]
 
         if (length(pop_prev) == 1 && length(pop_now) == 1 && length(qx_val) == 1) {
