@@ -186,12 +186,14 @@ list(
   ),
 
   # Step 4: Calculate ultimate years by age
+  # Uses piecewise linear formula with age 30 as breakpoint (TR2025 methodology)
   tar_target(
     fertility_ultimate_years,
     calculate_ultimate_years(
       min_age = config_assumptions$fertility$min_fertility_age,
       max_age = config_assumptions$fertility$max_fertility_age,
       base_year = config_assumptions$fertility$projection_start_year,
+      age30_ultimate_year = config_assumptions$fertility$age30_ultimate_year,
       end_year = config_assumptions$fertility$ultimate_year
     )
   ),
@@ -208,16 +210,19 @@ list(
     )
   ),
 
-  # Step 6: Solve for ultimate age-30 rate to achieve target CTFR
+  # Step 6: Solve for ultimate age-30 rate to achieve target TFR
+  # Uses exact TR2025 Step 8 weighted formula
   tar_target(
     fertility_ultimate_age30,
     solve_ultimate_age30_rate(
-      target_ctfr = config_assumptions$fertility$ultimate_ctfr,
+      target_tfr = config_assumptions$fertility$ultimate_ctfr,
       base_age30_rate = fertility_rates_for_projection[year == config_assumptions$fertility$rate_base_year & age == 30, birth_rate],
       base_ratios = fertility_age30_ratios[year == config_assumptions$fertility$rate_base_year],
       trend_factors = fertility_trend_factors,
       ultimate_years = fertility_ultimate_years,
-      base_year = config_assumptions$fertility$rate_base_year
+      base_year = config_assumptions$fertility$rate_base_year,
+      age30_ultimate_year = config_assumptions$fertility$age30_ultimate_year,
+      weight_exponent = config_assumptions$fertility$weight_exponent
     )
   ),
 
