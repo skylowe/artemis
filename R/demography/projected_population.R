@@ -2967,7 +2967,7 @@ get_rate_grid_for_year <- function(rates_list, year, min_age = 14, max_age = 100
 # The calculated totals are adjusted to match population totals from Phase 8B.
 # =============================================================================
 
-#' Initialize children by parent ages (Phase 8D.1)
+#' Initialize children by parent ages (Phase 8D.1) - VECTORIZED
 #'
 #' @description
 #' Creates the initial distribution of children (ages 0-18) by father age
@@ -2978,6 +2978,8 @@ get_rate_grid_for_year <- function(rates_list, year, min_age = 14, max_age = 100
 #' number of children (ages 0-18), number of women (ages 14-49), and the number
 #' of married couples by single year of age of husband crossed with single year
 #' of age of wife."
+#'
+#' This vectorized implementation replaces nested for loops with matrix operations.
 #'
 #' @param population_start data.table: Starting population by age and sex
 #' @param couples_grid Matrix: Married couples by husband_age x wife_age (87x87)
@@ -3029,13 +3031,14 @@ initialize_children_by_parents <- function(population_start,
                                    by = age]
   data.table::setorder(total_children_by_age, age)
 
-  # Distribute children to parent age combinations using couples grid
-  # The couples grid shows the age distribution of married couples
-  # Assume children are distributed proportionally to couples
-
-  # For each child age, distribute based on couples at appropriate parent ages
-  # Child age c implies parents were age (father_age - c, mother_age - c) at birth
-  # Constrain mother age to 14-49 (childbearing range)
+  # Convert to vector for easy access
+  total_by_age_vec <- numeric(n_child_ages)
+  for (i in seq_len(nrow(total_children_by_age))) {
+    age_idx <- total_children_by_age$age[i] + 1
+    if (age_idx <= n_child_ages) {
+      total_by_age_vec[age_idx] <- total_children_by_age$total[i]
+    }
+  }
 
   couples_total <- sum(couples_grid, na.rm = TRUE)
   if (couples_total == 0) {
@@ -3043,43 +3046,41 @@ initialize_children_by_parents <- function(population_start,
     couples_total <- 1
   }
 
-  for (c_age in 0:max_child_age) {
-    # Get total children at this age
-    if (c_age + 1 <= nrow(total_children_by_age)) {
-      total_at_age <- total_children_by_age[age == c_age, total]
-      if (length(total_at_age) == 0) total_at_age <- 0
-    } else {
-      total_at_age <- 0
-    }
+  # =========================================================================
+  # VECTORIZED distribution of children to parent ages
+  # =========================================================================
 
+  # Pre-compute valid parent age masks for each child age
+  # father_ages and mother_ages as vectors (current ages)
+  father_ages <- min_parent_age:max_parent_age
+  mother_ages <- min_parent_age:max_parent_age
+
+  # Create outer products for age constraints
+  # father_age_mat[f, m] = father_ages[f] for all m
+  # mother_age_mat[f, m] = mother_ages[m] for all f
+  father_age_mat <- matrix(father_ages, nrow = n_parent_ages, ncol = n_parent_ages, byrow = FALSE)
+  mother_age_mat <- matrix(mother_ages, nrow = n_parent_ages, ncol = n_parent_ages, byrow = TRUE)
+
+  # Ensure couples_grid is the right size
+  couples_use <- matrix(0, nrow = n_parent_ages, ncol = n_parent_ages)
+  couple_rows <- min(nrow(couples_grid), n_parent_ages)
+  couple_cols <- min(ncol(couples_grid), n_parent_ages)
+  couples_use[1:couple_rows, 1:couple_cols] <- couples_grid[1:couple_rows, 1:couple_cols]
+
+  for (c_age in 0:max_child_age) {
+    total_at_age <- total_by_age_vec[c_age + 1]
     if (total_at_age == 0) next
 
-    # Distribute to parent ages
-    # Current parent ages range from (min_parent_age) to (max_parent_age)
-    # At birth, parents were c_age years younger
-    # Mother must have been 14-49 at birth
+    # Ages at birth
+    father_age_at_birth <- father_age_mat - c_age
+    mother_age_at_birth <- mother_age_mat - c_age
 
-    temp_dist <- matrix(0, nrow = n_parent_ages, ncol = n_parent_ages)
+    # Valid mask: mother 14-49 at birth, father >= 14 at birth
+    valid_mask <- (mother_age_at_birth >= 14) & (mother_age_at_birth <= 49) &
+                  (father_age_at_birth >= 14)
 
-    for (f_idx in 1:n_parent_ages) {
-      father_age_now <- min_parent_age + f_idx - 1
-      father_age_at_birth <- father_age_now - c_age
-
-      for (m_idx in 1:n_parent_ages) {
-        mother_age_now <- min_parent_age + m_idx - 1
-        mother_age_at_birth <- mother_age_now - c_age
-
-        # Mother must have been 14-49 at birth
-        if (mother_age_at_birth < 14 || mother_age_at_birth > 49) next
-        # Father must have been at least 14 at birth
-        if (father_age_at_birth < 14) next
-
-        # Use couples grid proportion (at current ages as proxy)
-        if (f_idx <= nrow(couples_grid) && m_idx <= ncol(couples_grid)) {
-          temp_dist[f_idx, m_idx] <- couples_grid[f_idx, m_idx]
-        }
-      }
-    }
+    # Apply mask to couples grid
+    temp_dist <- couples_use * valid_mask
 
     # Normalize and assign
     temp_total <- sum(temp_dist, na.rm = TRUE)
@@ -3087,59 +3088,81 @@ initialize_children_by_parents <- function(population_start,
       temp_dist <- temp_dist * total_at_age / temp_total
     }
 
-    # Initially all children have both parents alive (historical baseline)
+    # Initially all children have both parents alive
     children_array[c_age + 1, , , 1] <- temp_dist
   }
 
-  # Calculate survival probabilities going back in time to estimate fate distribution
-  # For the starting year, we need to estimate how many children have lost parents
-  # This is approximate - ideally would come from historical data
+  # =========================================================================
+  # VECTORIZED cumulative mortality to estimate orphanhood
+  # =========================================================================
 
-  # For each child age, apply cumulative mortality to estimate orphanhood
+  # Pre-compute px (survival) for all ages we might need
+  # Father could have ages from (min_parent_age - max_child_age) to max_parent_age
+  # But qx indices are 0-based (qx[1] = qx for age 0)
+
+  # Build survival prob vectors with proper indexing
+  max_qx_age <- length(qx_male) - 1
+  px_male <- numeric(max_qx_age + 1)
+  px_female <- numeric(max_qx_age + 1)
+  for (a in 0:max_qx_age) {
+    px_male[a + 1] <- 1 - qx_male[a + 1]
+    px_female[a + 1] <- 1 - qx_female[a + 1]
+  }
+
+  # For each child age > 0, compute cumulative survival for each parent age combination
   for (c_age in 1:max_child_age) {
+    # Get children with both alive
+    children_both <- children_array[c_age + 1, , , 1]
+
+    # Skip if no children at this age
+    if (sum(children_both, na.rm = TRUE) == 0) next
+
+    # Compute cumulative survival over c_age years
+    # For father at age f_now, survival = prod(px_male[f_now-c_age+1 : f_now])
+    # For mother at age m_now, survival = prod(px_female[m_now-c_age+1 : m_now])
+
+    father_survival_vec <- numeric(n_parent_ages)
+    mother_survival_vec <- numeric(n_parent_ages)
+
     for (f_idx in 1:n_parent_ages) {
-      father_age_now <- min_parent_age + f_idx - 1
-
-      for (m_idx in 1:n_parent_ages) {
-        mother_age_now <- min_parent_age + m_idx - 1
-        children_both_alive <- children_array[c_age + 1, f_idx, m_idx, 1]
-
-        if (children_both_alive == 0) next
-
-        # Estimate cumulative mortality over child's lifetime
-        # P(father survived c years) ≈ product of (1-qx) for each year
-        father_survival <- 1
-        mother_survival <- 1
-
-        for (yr_back in 1:c_age) {
-          father_age_then <- father_age_now - yr_back + 1
-          mother_age_then <- mother_age_now - yr_back + 1
-
-          if (father_age_then >= 0 && father_age_then <= length(qx_male)) {
-            father_survival <- father_survival * (1 - qx_male[father_age_then + 1])
-          }
-          if (mother_age_then >= 0 && mother_age_then <= length(qx_female)) {
-            mother_survival <- mother_survival * (1 - qx_female[mother_age_then + 1])
-          }
+      f_now <- father_ages[f_idx]
+      surv <- 1
+      for (yr_back in 1:c_age) {
+        age_then <- f_now - yr_back + 1
+        if (age_then >= 0 && age_then <= max_qx_age) {
+          surv <- surv * px_male[age_then + 1]
         }
-
-        # Clamp survival to [0, 1]
-        father_survival <- max(0, min(1, father_survival))
-        mother_survival <- max(0, min(1, mother_survival))
-
-        # Distribute children by fate
-        p_both <- father_survival * mother_survival
-        p_only_father <- father_survival * (1 - mother_survival)
-        p_only_mother <- (1 - father_survival) * mother_survival
-        p_neither <- (1 - father_survival) * (1 - mother_survival)
-
-        # Redistribute from "both alive" to appropriate fates
-        children_array[c_age + 1, f_idx, m_idx, 1] <- children_both_alive * p_both
-        children_array[c_age + 1, f_idx, m_idx, 2] <- children_both_alive * p_only_father
-        children_array[c_age + 1, f_idx, m_idx, 3] <- children_both_alive * p_only_mother
-        children_array[c_age + 1, f_idx, m_idx, 4] <- children_both_alive * p_neither
       }
+      father_survival_vec[f_idx] <- max(0, min(1, surv))
     }
+
+    for (m_idx in 1:n_parent_ages) {
+      m_now <- mother_ages[m_idx]
+      surv <- 1
+      for (yr_back in 1:c_age) {
+        age_then <- m_now - yr_back + 1
+        if (age_then >= 0 && age_then <= max_qx_age) {
+          surv <- surv * px_female[age_then + 1]
+        }
+      }
+      mother_survival_vec[m_idx] <- max(0, min(1, surv))
+    }
+
+    # Create matrices for vectorized computation
+    father_surv_mat <- matrix(father_survival_vec, nrow = n_parent_ages, ncol = n_parent_ages, byrow = FALSE)
+    mother_surv_mat <- matrix(mother_survival_vec, nrow = n_parent_ages, ncol = n_parent_ages, byrow = TRUE)
+
+    # Fate probabilities
+    p_both <- father_surv_mat * mother_surv_mat
+    p_only_father <- father_surv_mat * (1 - mother_surv_mat)
+    p_only_mother <- (1 - father_surv_mat) * mother_surv_mat
+    p_neither <- (1 - father_surv_mat) * (1 - mother_surv_mat)
+
+    # Redistribute from "both alive" to appropriate fates
+    children_array[c_age + 1, , , 1] <- children_both * p_both
+    children_array[c_age + 1, , , 2] <- children_both * p_only_father
+    children_array[c_age + 1, , , 3] <- children_both * p_only_mother
+    children_array[c_age + 1, , , 4] <- children_both * p_neither
   }
 
   # Calculate totals
@@ -3259,12 +3282,15 @@ update_parent_fates <- function(fate_prev, survival_probs) {
   c(new_both, new_only_f, new_only_m, new_neither)
 }
 
-#' Roll forward children one year (Phase 8D.2)
+#' Roll forward children one year (Phase 8D.2) - VECTORIZED
 #'
 #' @description
 #' Ages children forward one year and updates parent ages and survival status.
 #' Per TR2025: "Each year the number of children is then rolled forward a year
 #' to the next age of husband, age of wife, and child age."
+#'
+#' This vectorized implementation replaces nested for loops with array operations
+#' for significant performance improvement.
 #'
 #' @param children_array 4D array: [child_age, father_age, mother_age, fate]
 #' @param new_births_grid Matrix: births distributed to father_age x mother_age
@@ -3296,114 +3322,186 @@ roll_forward_children <- function(children_array,
     dimnames = dimnames(children_array)
   )
 
-  # Add new births at child_age = 0, all with both parents alive
+  # Add new births at child_age = 0, all with both parents alive (fate = 1)
   if (!is.null(new_births_grid) && any(new_births_grid > 0, na.rm = TRUE)) {
-    for (f_idx in 1:n_parent_ages) {
-      for (m_idx in 1:n_parent_ages) {
-        if (f_idx <= nrow(new_births_grid) && m_idx <= ncol(new_births_grid)) {
-          new_array[1, f_idx, m_idx, 1] <- new_births_grid[f_idx, m_idx]
-        }
-      }
+    # Ensure births grid dimensions match
+    births_dim <- pmin(dim(new_births_grid), c(n_parent_ages, n_parent_ages))
+    new_array[1, 1:births_dim[1], 1:births_dim[2], 1] <-
+      new_births_grid[1:births_dim[1], 1:births_dim[2]]
+  }
+
+  # =========================================================================
+  # VECTORIZED aging and fate transitions
+  # =========================================================================
+
+  # Pre-compute survival probability matrices for all parent ages
+  # Father ages: min_parent_age to max_parent_age (indices 1 to n_parent_ages)
+  father_ages <- min_parent_age:max_parent_age
+
+  # Get qx for each father age, handling out-of-range
+  qx_f_vec <- numeric(n_parent_ages)
+  for (i in seq_along(father_ages)) {
+    age <- father_ages[i]
+    if (age >= 0 && age < length(qx_male)) {
+      qx_f_vec[i] <- qx_male[age + 1]
+    } else if (age >= length(qx_male)) {
+      qx_f_vec[i] <- qx_male[length(qx_male)]
+    } else {
+      qx_f_vec[i] <- 0
     }
   }
 
-  # Age existing children forward
-  for (c_age in 0:(max_child_age - 1)) {  # Ages 0-17 become 1-18
+  # Get qx for each mother age
+  mother_ages <- min_parent_age:max_parent_age
+  qx_m_vec <- numeric(n_parent_ages)
+  for (i in seq_along(mother_ages)) {
+    age <- mother_ages[i]
+    if (age >= 0 && age < length(qx_female)) {
+      qx_m_vec[i] <- qx_female[age + 1]
+    } else if (age >= length(qx_female)) {
+      qx_m_vec[i] <- qx_female[length(qx_female)]
+    } else {
+      qx_m_vec[i] <- 0
+    }
+  }
+
+  # Survival probabilities
+  p_f_vec <- 1 - qx_f_vec  # P(father survives) for each father age
+  p_m_vec <- 1 - qx_m_vec  # P(mother survives) for each mother age
+
+  # Create 2D matrices for broadcasting: p_f[f_idx, m_idx] and p_m[f_idx, m_idx]
+  # Using outer product for efficient matrix creation
+  p_f_mat <- matrix(p_f_vec, nrow = n_parent_ages, ncol = n_parent_ages, byrow = FALSE)
+  p_m_mat <- matrix(p_m_vec, nrow = n_parent_ages, ncol = n_parent_ages, byrow = TRUE)
+
+  # Process all child ages 0 to max_child_age-1 (they age to 1 to max_child_age)
+  for (c_age in 0:(max_child_age - 1)) {
     new_c_age <- c_age + 1
 
-    for (f_idx in 1:(n_parent_ages - 1)) {  # Father ages forward by 1
-      father_age_now <- min_parent_age + f_idx - 1
-      new_f_idx <- f_idx + 1
+    # Extract current slice for this child age: [father_age, mother_age, fate]
+    # Dimensions: n_parent_ages x n_parent_ages x 4
+    prev_both <- children_array[c_age + 1, , , 1]
+    prev_only_f <- children_array[c_age + 1, , , 2]
+    prev_only_m <- children_array[c_age + 1, , , 3]
+    prev_neither <- children_array[c_age + 1, , , 4]
 
-      for (m_idx in 1:(n_parent_ages - 1)) {  # Mother ages forward by 1
-        mother_age_now <- min_parent_age + m_idx - 1
-        new_m_idx <- m_idx + 1
+    # --- INTERIOR CELLS: Both parents age forward (indices 1:(n-1) -> 2:n) ---
 
-        # Get current fate distribution
-        fate_prev <- c(
-          children_array[c_age + 1, f_idx, m_idx, 1],
-          children_array[c_age + 1, f_idx, m_idx, 2],
-          children_array[c_age + 1, f_idx, m_idx, 3],
-          children_array[c_age + 1, f_idx, m_idx, 4]
-        )
+    # Source indices: 1:(n_parent_ages-1) for both dimensions
+    # Target indices: 2:n_parent_ages for both dimensions
 
-        if (sum(fate_prev) == 0) next
+    # Get survival probs for source ages (1 to n_parent_ages-1)
+    p_f_int <- p_f_mat[1:(n_parent_ages - 1), 1:(n_parent_ages - 1)]
+    p_m_int <- p_m_mat[1:(n_parent_ages - 1), 1:(n_parent_ages - 1)]
 
-        # Calculate survival probabilities for this year
-        survival <- calculate_parent_survival(
-          father_age_now, mother_age_now,
-          qx_male, qx_female
-        )
+    # Get previous fates for interior cells
+    prev_both_int <- prev_both[1:(n_parent_ages - 1), 1:(n_parent_ages - 1)]
+    prev_only_f_int <- prev_only_f[1:(n_parent_ages - 1), 1:(n_parent_ages - 1)]
+    prev_only_m_int <- prev_only_m[1:(n_parent_ages - 1), 1:(n_parent_ages - 1)]
+    prev_neither_int <- prev_neither[1:(n_parent_ages - 1), 1:(n_parent_ages - 1)]
 
-        # Update fates
-        new_fates <- update_parent_fates(fate_prev, survival)
+    # Compute new fates (vectorized)
+    new_both_int <- prev_both_int * p_f_int * p_m_int
+    new_only_f_int <- prev_both_int * p_f_int * (1 - p_m_int) + prev_only_f_int * p_f_int
+    new_only_m_int <- prev_both_int * (1 - p_f_int) * p_m_int + prev_only_m_int * p_m_int
+    new_neither_int <- prev_both_int * (1 - p_f_int) * (1 - p_m_int) +
+                       prev_only_f_int * (1 - p_f_int) +
+                       prev_only_m_int * (1 - p_m_int) +
+                       prev_neither_int
 
-        # Store in new array at aged position
-        new_array[new_c_age + 1, new_f_idx, new_m_idx, 1] <-
-          new_array[new_c_age + 1, new_f_idx, new_m_idx, 1] + new_fates[1]
-        new_array[new_c_age + 1, new_f_idx, new_m_idx, 2] <-
-          new_array[new_c_age + 1, new_f_idx, new_m_idx, 2] + new_fates[2]
-        new_array[new_c_age + 1, new_f_idx, new_m_idx, 3] <-
-          new_array[new_c_age + 1, new_f_idx, new_m_idx, 3] + new_fates[3]
-        new_array[new_c_age + 1, new_f_idx, new_m_idx, 4] <-
-          new_array[new_c_age + 1, new_f_idx, new_m_idx, 4] + new_fates[4]
-      }
+    # Store in new array at aged positions (indices 2:n for both dimensions)
+    new_array[new_c_age + 1, 2:n_parent_ages, 2:n_parent_ages, 1] <-
+      new_array[new_c_age + 1, 2:n_parent_ages, 2:n_parent_ages, 1] + new_both_int
+    new_array[new_c_age + 1, 2:n_parent_ages, 2:n_parent_ages, 2] <-
+      new_array[new_c_age + 1, 2:n_parent_ages, 2:n_parent_ages, 2] + new_only_f_int
+    new_array[new_c_age + 1, 2:n_parent_ages, 2:n_parent_ages, 3] <-
+      new_array[new_c_age + 1, 2:n_parent_ages, 2:n_parent_ages, 3] + new_only_m_int
+    new_array[new_c_age + 1, 2:n_parent_ages, 2:n_parent_ages, 4] <-
+      new_array[new_c_age + 1, 2:n_parent_ages, 2:n_parent_ages, 4] + new_neither_int
 
-      # Handle mother at max age (stays at max)
-      fate_prev <- c(
-        children_array[c_age + 1, f_idx, n_parent_ages, 1],
-        children_array[c_age + 1, f_idx, n_parent_ages, 2],
-        children_array[c_age + 1, f_idx, n_parent_ages, 3],
-        children_array[c_age + 1, f_idx, n_parent_ages, 4]
-      )
+    # --- MOTHER AT MAX AGE: Father ages, mother stays at max ---
+    # Source: f_idx 1:(n-1), m_idx = n
+    # Target: f_idx 2:n, m_idx = n
 
-      if (sum(fate_prev) > 0) {
-        survival <- calculate_parent_survival(
-          father_age_now, max_parent_age,
-          qx_male, qx_female
-        )
-        new_fates <- update_parent_fates(fate_prev, survival)
+    p_f_max_m <- p_f_vec[1:(n_parent_ages - 1)]
+    p_m_max <- p_m_vec[n_parent_ages]  # scalar
 
-        new_array[new_c_age + 1, new_f_idx, n_parent_ages, 1] <-
-          new_array[new_c_age + 1, new_f_idx, n_parent_ages, 1] + new_fates[1]
-        new_array[new_c_age + 1, new_f_idx, n_parent_ages, 2] <-
-          new_array[new_c_age + 1, new_f_idx, n_parent_ages, 2] + new_fates[2]
-        new_array[new_c_age + 1, new_f_idx, n_parent_ages, 3] <-
-          new_array[new_c_age + 1, new_f_idx, n_parent_ages, 3] + new_fates[3]
-        new_array[new_c_age + 1, new_f_idx, n_parent_ages, 4] <-
-          new_array[new_c_age + 1, new_f_idx, n_parent_ages, 4] + new_fates[4]
-      }
-    }
+    prev_both_max_m <- prev_both[1:(n_parent_ages - 1), n_parent_ages]
+    prev_only_f_max_m <- prev_only_f[1:(n_parent_ages - 1), n_parent_ages]
+    prev_only_m_max_m <- prev_only_m[1:(n_parent_ages - 1), n_parent_ages]
+    prev_neither_max_m <- prev_neither[1:(n_parent_ages - 1), n_parent_ages]
 
-    # Handle father at max age (stays at max)
-    for (m_idx in 1:n_parent_ages) {
-      mother_age_now <- min_parent_age + m_idx - 1
-      new_m_idx <- min(m_idx + 1, n_parent_ages)
+    new_both_max_m <- prev_both_max_m * p_f_max_m * p_m_max
+    new_only_f_max_m <- prev_both_max_m * p_f_max_m * (1 - p_m_max) + prev_only_f_max_m * p_f_max_m
+    new_only_m_max_m <- prev_both_max_m * (1 - p_f_max_m) * p_m_max + prev_only_m_max_m * p_m_max
+    new_neither_max_m <- prev_both_max_m * (1 - p_f_max_m) * (1 - p_m_max) +
+                         prev_only_f_max_m * (1 - p_f_max_m) +
+                         prev_only_m_max_m * (1 - p_m_max) +
+                         prev_neither_max_m
 
-      fate_prev <- c(
-        children_array[c_age + 1, n_parent_ages, m_idx, 1],
-        children_array[c_age + 1, n_parent_ages, m_idx, 2],
-        children_array[c_age + 1, n_parent_ages, m_idx, 3],
-        children_array[c_age + 1, n_parent_ages, m_idx, 4]
-      )
+    new_array[new_c_age + 1, 2:n_parent_ages, n_parent_ages, 1] <-
+      new_array[new_c_age + 1, 2:n_parent_ages, n_parent_ages, 1] + new_both_max_m
+    new_array[new_c_age + 1, 2:n_parent_ages, n_parent_ages, 2] <-
+      new_array[new_c_age + 1, 2:n_parent_ages, n_parent_ages, 2] + new_only_f_max_m
+    new_array[new_c_age + 1, 2:n_parent_ages, n_parent_ages, 3] <-
+      new_array[new_c_age + 1, 2:n_parent_ages, n_parent_ages, 3] + new_only_m_max_m
+    new_array[new_c_age + 1, 2:n_parent_ages, n_parent_ages, 4] <-
+      new_array[new_c_age + 1, 2:n_parent_ages, n_parent_ages, 4] + new_neither_max_m
 
-      if (sum(fate_prev) > 0) {
-        survival <- calculate_parent_survival(
-          max_parent_age, mother_age_now,
-          qx_male, qx_female
-        )
-        new_fates <- update_parent_fates(fate_prev, survival)
+    # --- FATHER AT MAX AGE: Mother ages, father stays at max ---
+    # Source: f_idx = n, m_idx 1:(n-1)
+    # Target: f_idx = n, m_idx 2:n
 
-        new_array[new_c_age + 1, n_parent_ages, new_m_idx, 1] <-
-          new_array[new_c_age + 1, n_parent_ages, new_m_idx, 1] + new_fates[1]
-        new_array[new_c_age + 1, n_parent_ages, new_m_idx, 2] <-
-          new_array[new_c_age + 1, n_parent_ages, new_m_idx, 2] + new_fates[2]
-        new_array[new_c_age + 1, n_parent_ages, new_m_idx, 3] <-
-          new_array[new_c_age + 1, n_parent_ages, new_m_idx, 3] + new_fates[3]
-        new_array[new_c_age + 1, n_parent_ages, new_m_idx, 4] <-
-          new_array[new_c_age + 1, n_parent_ages, new_m_idx, 4] + new_fates[4]
-      }
-    }
+    p_f_max <- p_f_vec[n_parent_ages]  # scalar
+    p_m_max_f <- p_m_vec[1:(n_parent_ages - 1)]
+
+    prev_both_max_f <- prev_both[n_parent_ages, 1:(n_parent_ages - 1)]
+    prev_only_f_max_f <- prev_only_f[n_parent_ages, 1:(n_parent_ages - 1)]
+    prev_only_m_max_f <- prev_only_m[n_parent_ages, 1:(n_parent_ages - 1)]
+    prev_neither_max_f <- prev_neither[n_parent_ages, 1:(n_parent_ages - 1)]
+
+    new_both_max_f <- prev_both_max_f * p_f_max * p_m_max_f
+    new_only_f_max_f <- prev_both_max_f * p_f_max * (1 - p_m_max_f) + prev_only_f_max_f * p_f_max
+    new_only_m_max_f <- prev_both_max_f * (1 - p_f_max) * p_m_max_f + prev_only_m_max_f * p_m_max_f
+    new_neither_max_f <- prev_both_max_f * (1 - p_f_max) * (1 - p_m_max_f) +
+                         prev_only_f_max_f * (1 - p_f_max) +
+                         prev_only_m_max_f * (1 - p_m_max_f) +
+                         prev_neither_max_f
+
+    new_array[new_c_age + 1, n_parent_ages, 2:n_parent_ages, 1] <-
+      new_array[new_c_age + 1, n_parent_ages, 2:n_parent_ages, 1] + new_both_max_f
+    new_array[new_c_age + 1, n_parent_ages, 2:n_parent_ages, 2] <-
+      new_array[new_c_age + 1, n_parent_ages, 2:n_parent_ages, 2] + new_only_f_max_f
+    new_array[new_c_age + 1, n_parent_ages, 2:n_parent_ages, 3] <-
+      new_array[new_c_age + 1, n_parent_ages, 2:n_parent_ages, 3] + new_only_m_max_f
+    new_array[new_c_age + 1, n_parent_ages, 2:n_parent_ages, 4] <-
+      new_array[new_c_age + 1, n_parent_ages, 2:n_parent_ages, 4] + new_neither_max_f
+
+    # --- BOTH PARENTS AT MAX AGE: Both stay at max ---
+    # Source: f_idx = n, m_idx = n
+    # Target: f_idx = n, m_idx = n
+
+    prev_both_mm <- prev_both[n_parent_ages, n_parent_ages]
+    prev_only_f_mm <- prev_only_f[n_parent_ages, n_parent_ages]
+    prev_only_m_mm <- prev_only_m[n_parent_ages, n_parent_ages]
+    prev_neither_mm <- prev_neither[n_parent_ages, n_parent_ages]
+
+    new_both_mm <- prev_both_mm * p_f_max * p_m_max
+    new_only_f_mm <- prev_both_mm * p_f_max * (1 - p_m_max) + prev_only_f_mm * p_f_max
+    new_only_m_mm <- prev_both_mm * (1 - p_f_max) * p_m_max + prev_only_m_mm * p_m_max
+    new_neither_mm <- prev_both_mm * (1 - p_f_max) * (1 - p_m_max) +
+                      prev_only_f_mm * (1 - p_f_max) +
+                      prev_only_m_mm * (1 - p_m_max) +
+                      prev_neither_mm
+
+    new_array[new_c_age + 1, n_parent_ages, n_parent_ages, 1] <-
+      new_array[new_c_age + 1, n_parent_ages, n_parent_ages, 1] + new_both_mm
+    new_array[new_c_age + 1, n_parent_ages, n_parent_ages, 2] <-
+      new_array[new_c_age + 1, n_parent_ages, n_parent_ages, 2] + new_only_f_mm
+    new_array[new_c_age + 1, n_parent_ages, n_parent_ages, 3] <-
+      new_array[new_c_age + 1, n_parent_ages, n_parent_ages, 3] + new_only_m_mm
+    new_array[new_c_age + 1, n_parent_ages, n_parent_ages, 4] <-
+      new_array[new_c_age + 1, n_parent_ages, n_parent_ages, 4] + new_neither_mm
   }
 
   # Children who turn 19 exit the tracking (ages out)
@@ -3455,13 +3553,15 @@ adjust_children_to_total <- function(children_array,
   adjusted
 }
 
-#' Distribute births to parent ages (helper for Phase 8D)
+#' Distribute births to parent ages (helper for Phase 8D) - VECTORIZED
 #'
 #' @description
 #' Distributes total births to father_age x mother_age cells using the
 #' married couples grid and birth rates. Per TR2025: "The births are then
 #' distributed to the age of husband in the same proportions as the age of
 #' husband crossed with age of wife married couples grid."
+#'
+#' This vectorized implementation uses matrix operations.
 #'
 #' @param total_births Total births for the year
 #' @param birth_rates_by_age Birth rates by mother age (14-49)
@@ -3485,16 +3585,25 @@ distribute_births_to_parents <- function(total_births,
   # Create births grid
   births_grid <- matrix(0, nrow = n_parent_ages, ncol = n_parent_ages)
 
-  # Calculate births by mother age using rates
+  # Mother ages for childbearing
   mother_ages <- 14:49
-  births_by_mother <- numeric(length(mother_ages))
+  n_mother_ages <- length(mother_ages)
 
+  # Vectorized: get birth rates and female population for each mother age
+  rates <- numeric(n_mother_ages)
+  rates[1:min(n_mother_ages, length(birth_rates_by_age))] <-
+    birth_rates_by_age[1:min(n_mother_ages, length(birth_rates_by_age))]
+
+  pops <- numeric(n_mother_ages)
   for (i in seq_along(mother_ages)) {
     m_age <- mother_ages[i]
-    rate <- if (i <= length(birth_rates_by_age)) birth_rates_by_age[i] else 0
-    pop <- if (m_age + 1 <= length(female_pop_by_age)) female_pop_by_age[m_age + 1] else 0
-    births_by_mother[i] <- rate * pop
+    if (m_age + 1 <= length(female_pop_by_age)) {
+      pops[i] <- female_pop_by_age[m_age + 1]
+    }
   }
+
+  # Births by mother age
+  births_by_mother <- rates * pops
 
   total_calc_births <- sum(births_by_mother, na.rm = TRUE)
 
@@ -3503,20 +3612,21 @@ distribute_births_to_parents <- function(total_births,
     births_by_mother <- births_by_mother * total_births / total_calc_births
   }
 
-  # Distribute each mother's births to father ages using couples grid proportions
-  for (i in seq_along(mother_ages)) {
-    m_age <- mother_ages[i]
-    m_idx <- m_age - min_parent_age + 1
+  # Get column indices for mother ages in the grid
+  m_indices <- mother_ages - min_parent_age + 1
+  valid_m <- m_indices >= 1 & m_indices <= n_parent_ages
 
-    if (m_idx < 1 || m_idx > n_parent_ages) next
+  # Vectorized distribution: for each valid mother age column
+  for (i in which(valid_m)) {
+    m_idx <- m_indices[i]
+
     if (births_by_mother[i] <= 0) next
 
-    # Get husband age distribution for wives at this age from couples grid
+    # Get husband age distribution from couples grid
     husband_dist <- couples_grid[, m_idx]
     husband_total <- sum(husband_dist, na.rm = TRUE)
 
     if (husband_total > 0) {
-      # Distribute births proportionally to husband ages
       births_grid[, m_idx] <- husband_dist * births_by_mother[i] / husband_total
     }
   }
@@ -3524,12 +3634,14 @@ distribute_births_to_parents <- function(total_births,
   births_grid
 }
 
-#' Aggregate children array to output format (helper for Phase 8D)
+#' Aggregate children array to output format (helper for Phase 8D) - VECTORIZED
 #'
 #' @description
 #' Aggregates the detailed children array into the output format specified
 #' by TR2025: C^z_{x,s,g,f} - children by child age (x), parent sex (s),
 #' parent age group (g), and fate (f).
+#'
+#' This vectorized implementation pre-computes age group indices for efficiency.
 #'
 #' @param children_array 4D array: [child_age, father_age, mother_age, fate]
 #' @param parent_age_groups list: age group definitions (e.g., list("14-24" = 14:24, ...))
@@ -3547,45 +3659,75 @@ aggregate_children_to_output <- function(children_array,
                                           max_child_age = 18) {
 
   fate_names <- c("both_alive", "only_father_alive", "only_mother_alive", "both_deceased")
+  n_parent_ages <- dim(children_array)[2]
+  n_age_groups <- length(parent_age_groups)
+  n_fates <- 4
 
-  result_list <- list()
+  # Pre-compute valid indices for each age group
+  age_group_indices <- lapply(parent_age_groups, function(ages) {
+    idx <- ages - min_parent_age + 1
+    idx[idx >= 1 & idx <= n_parent_ages]
+  })
+
+  # Pre-allocate result data.table
+  n_rows <- (max_child_age + 1) * 2 * n_age_groups * n_fates
+  result <- data.table::data.table(
+    year = rep(year, n_rows),
+    child_age = integer(n_rows),
+    parent_sex = character(n_rows),
+    parent_age_group = character(n_rows),
+    fate = character(n_rows),
+    count = numeric(n_rows)
+  )
+
+  row_idx <- 1
+  grp_names <- names(parent_age_groups)
 
   for (c_age in 0:max_child_age) {
-    for (parent_sex in c("father", "mother")) {
-      for (grp_name in names(parent_age_groups)) {
-        ages <- parent_age_groups[[grp_name]]
+    # Extract slice for this child age
+    child_slice <- children_array[c_age + 1, , , , drop = FALSE]
+    dim(child_slice) <- dim(children_array)[2:4]
 
-        for (f_idx in 1:4) {
-          # Sum across the appropriate dimension
-          count <- 0
+    for (s_idx in 1:2) {
+      parent_sex <- c("father", "mother")[s_idx]
 
-          for (p_age in ages) {
-            p_idx <- p_age - min_parent_age + 1
-            if (p_idx < 1 || p_idx > dim(children_array)[2]) next
+      for (g_idx in seq_along(grp_names)) {
+        grp_name <- grp_names[g_idx]
+        p_indices <- age_group_indices[[g_idx]]
 
-            if (parent_sex == "father") {
-              # Sum across mother ages for this father age
-              count <- count + sum(children_array[c_age + 1, p_idx, , f_idx], na.rm = TRUE)
-            } else {
-              # Sum across father ages for this mother age
-              count <- count + sum(children_array[c_age + 1, , p_idx, f_idx], na.rm = TRUE)
-            }
+        if (length(p_indices) == 0) {
+          # No valid indices - store zeros
+          for (f_idx in 1:n_fates) {
+            data.table::set(result, row_idx, "child_age", c_age)
+            data.table::set(result, row_idx, "parent_sex", parent_sex)
+            data.table::set(result, row_idx, "parent_age_group", grp_name)
+            data.table::set(result, row_idx, "fate", fate_names[f_idx])
+            data.table::set(result, row_idx, "count", 0)
+            row_idx <- row_idx + 1
           }
+        } else {
+          for (f_idx in 1:n_fates) {
+            if (parent_sex == "father") {
+              # Sum across mother ages for these father ages
+              count <- sum(child_slice[p_indices, , f_idx], na.rm = TRUE)
+            } else {
+              # Sum across father ages for these mother ages
+              count <- sum(child_slice[, p_indices, f_idx], na.rm = TRUE)
+            }
 
-          result_list[[length(result_list) + 1]] <- data.table::data.table(
-            year = year,
-            child_age = c_age,
-            parent_sex = parent_sex,
-            parent_age_group = grp_name,
-            fate = fate_names[f_idx],
-            count = count
-          )
+            data.table::set(result, row_idx, "child_age", c_age)
+            data.table::set(result, row_idx, "parent_sex", parent_sex)
+            data.table::set(result, row_idx, "parent_age_group", grp_name)
+            data.table::set(result, row_idx, "fate", fate_names[f_idx])
+            data.table::set(result, row_idx, "count", count)
+            row_idx <- row_idx + 1
+          }
         }
       }
     }
   }
 
-  data.table::rbindlist(result_list)
+  result
 }
 
 #' Project children by parent fate (Phase 8D.6 - Main Function)
