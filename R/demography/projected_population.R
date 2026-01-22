@@ -1305,12 +1305,16 @@ project_population_year <- function(year,
     mortality_qx_int[, age := as.integer(age)]
     year_qx_weighted <- mortality_qx_int[year == target_year & age == max_age, .(sex, weighted_qx = qx)]
 
-    # Apply raw qx_100 to new entrants from age 99
-    pop_from_99 <- merge(pop_from_99, year_qx_raw, by = "sex", all.x = TRUE)
-    pop_from_99[is.na(raw_qx_100), raw_qx_100 := 0]
-    pop_from_99[, deaths := raw_qx_100 * population]
+    # Get qx at age 99 for new entrants (from mortality_qx, not qx_100_119)
+    # They are aged 99 at start of year, so they face q99
+    year_qx_99 <- mortality_qx_int[year == target_year & age == 99L, .(sex, q99 = qx)]
+
+    # Apply q99 to new entrants from age 99
+    pop_from_99 <- merge(pop_from_99, year_qx_99, by = "sex", all.x = TRUE)
+    pop_from_99[is.na(q99), q99 := 0]
+    pop_from_99[, deaths := q99 * population]
     pop_from_99[, population := population - deaths]
-    pop_from_99[, `:=`(raw_qx_100 = NULL, deaths = NULL)]
+    pop_from_99[, `:=`(q99 = NULL, deaths = NULL)]
 
     # Apply weighted qx to existing 100+ (cap age first)
     pop_from_100plus[, age := max_age]
@@ -1329,7 +1333,14 @@ project_population_year <- function(year,
     year_qx <- mortality_qx[year == target_year, .(age, sex, qx)]
     # Ensure age types match for merge
     year_qx[, age := as.integer(age)]
-    pop_other <- merge(pop_other, year_qx, by = c("age", "sex"), all.x = TRUE)
+    
+    # SHIFT QX: Population at age x (EOY) was age x-1 (BOY).
+    # They faced mortality q_{x-1}.
+    # So we match pop(age=x) with qx(age=x-1).
+    # We shift qx age by +1 so that qx(age=x-1) is indexed at age=x
+    year_qx_shifted <- year_qx[, .(age = age + 1L, sex, qx)]
+    
+    pop_other <- merge(pop_other, year_qx_shifted, by = c("age", "sex"), all.x = TRUE)
     pop_other[is.na(qx), qx := 0]
     pop_other[, deaths := qx * population]
     pop_other[, population := population - deaths]
@@ -1350,10 +1361,14 @@ project_population_year <- function(year,
     # Aggregate for ages at max_age (people aging into 100+ from 99 and 100+)
     aged_pop <- aged_pop[, .(population = sum(population)), by = .(year, age, sex, pop_status)]
 
-    # Calculate deaths for ages 1+ on the AGED population (correct methodology)
-    # D_x = qx_x * aged_pop[x] where aged_pop[x] = population_prev[x-1]
+    # Calculate deaths for ages 1+ on the AGED population
+    # SHIFT QX: Match pop(age=x) with qx(age=x-1)
     year_qx <- mortality_qx[year == target_year, .(age, sex, qx)]
-    aged_pop <- merge(aged_pop, year_qx, by = c("age", "sex"), all.x = TRUE)
+    
+    # Shift qx age by +1 so that qx(age=x-1) is indexed at age=x
+    year_qx_shifted <- year_qx[, .(age = age + 1L, sex, qx)]
+    
+    aged_pop <- merge(aged_pop, year_qx_shifted, by = c("age", "sex"), all.x = TRUE)
     aged_pop[is.na(qx), qx := 0]
     aged_pop[, deaths := qx * population]
     aged_pop[, population := population - deaths]

@@ -1786,9 +1786,8 @@ list(
       # Get V.A2 totals
       va2_totals <- va2_net_immigration[, .(year, o_net)]
 
-      # Calibration: Add 160k to Net O to close the population gap
-      # Comparison showed V.A2 (1.25M) leads to -2.3% population deficit vs TR2025
-      calibration_add <- 160000
+      # Calibration: Add 0k to Net O (mortality shift fix handles the gap)
+      calibration_add <- 0
 
       va2_totals[, net_o_total := o_net + calibration_add]
 
@@ -1829,7 +1828,7 @@ list(
       if (2099 %in% result$year) {
          total <- result[year == 2099, sum(net_o)]
          base <- va2_totals[year == 2099, o_net]
-         cli::cli_alert_info("2099 Net O: {format(round(total), big.mark=',')} (Base {format(base, big.mark=',')} + 160k)")
+         cli::cli_alert_info("2099 Net O: {format(round(total), big.mark=',')} (Base {format(base, big.mark=',')} + {format(calibration_add, big.mark=',')})")
       }
 
       result
