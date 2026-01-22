@@ -1661,6 +1661,31 @@ list(
   # PHASE 8B: CORE POPULATION PROJECTION (Equations 1.8.1-1.8.4)
   # ===========================================================================
 
+  # Load TR2025 period life tables for age-last-birthday qx calculation
+  # TR2025's population projection uses age-last-birthday qx, not exact-age qx
+  tar_target(
+    tr2025_period_life_tables,
+    load_tr2025_period_life_tables(
+      male_file = "data/raw/SSA_TR2025/PerLifeTables_M_Alt2_TR2025.csv",
+      female_file = "data/raw/SSA_TR2025/PerLifeTables_F_Alt2_TR2025.csv",
+      start_year = 1900,
+      end_year = 2099
+    )
+  ),
+
+  # Calculate age-last-birthday qx for ages 85+ using period life table L and T values
+  # Formula from TR2025 documentation:
+  #   - Ages 85-99: qx = 1 - L_{x+1}/L_x
+  #   - Age 100+:   q100 = 1 - T_{101}/T_{100}
+  tar_target(
+    qx_age_last_birthday,
+    calculate_age_last_birthday_qx(
+      period_life_table = tr2025_period_life_tables,
+      min_age = 85,
+      max_age = 99
+    )
+  ),
+
   # Combined mortality qx (historical + projected) for population projection
   tar_target(
     mortality_qx_for_projection,
@@ -1712,9 +1737,16 @@ list(
         use.names = TRUE
       )
 
-      # Note: Dynamic weighted qx for 100+ is now handled in run_population_projection
-      # using the qx_100_119 target, which tracks the internal age distribution
-      # within 100+ as it evolves over time.
+      # Apply age-last-birthday qx for ages 85+ (Fix 1)
+      # TR2025 uses qx = 1 - L_{x+1}/L_x for ages 85-99
+      # and q100 = 1 - T_{101}/T_{100} for age 100+
+      # This corrects for the difference between exact-age and age-last-birthday qx
+      cli::cli_alert_info("Applying age-last-birthday qx adjustment for ages 85+")
+      combined_qx <- apply_age_last_birthday_qx(
+        mortality_qx = combined_qx,
+        qx_alb = qx_age_last_birthday,
+        min_age = 85
+      )
 
       combined_qx
     }

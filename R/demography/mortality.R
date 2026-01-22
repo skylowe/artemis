@@ -517,6 +517,187 @@ load_tr2025_qx_all_years <- function(
   tr
 }
 
+#' Load TR2025 period life tables
+#'
+#' @description
+#' Loads TR2025 period life tables which contain Lx and Tx values needed
+#' to calculate age-last-birthday qx. TR2025's population projection uses
+#' age-last-birthday qx, not exact-age qx.
+#'
+#' @param male_file Character: path to male period life table CSV
+#' @param female_file Character: path to female period life table CSV
+#' @param start_year Integer: first year to include (default: 1900)
+#' @param end_year Integer: last year to include (default: 2099)
+#'
+#' @return data.table with columns: year, age, sex, qx, lx, Lx, Tx, ex
+#'
+#' @details
+#' The period life table files have a header that must be skipped.
+#' Column names are: Year, x, q(x), l(x), d(x), L(x), T(x), e(x), ...
+#'
+#' @export
+load_tr2025_period_life_tables <- function(
+    male_file = "data/raw/SSA_TR2025/PerLifeTables_M_Alt2_TR2025.csv",
+    female_file = "data/raw/SSA_TR2025/PerLifeTables_F_Alt2_TR2025.csv",
+    start_year = 1900,
+    end_year = 2099
+) {
+  checkmate::assert_file_exists(male_file)
+  checkmate::assert_file_exists(female_file)
+
+  # Load male life table (skip header rows)
+  lt_m <- data.table::fread(male_file, skip = 4, header = TRUE)
+  data.table::setnames(lt_m, c("Year", "x", "qx", "lx", "dx", "Lx", "Tx", "ex",
+                               "Dx", "Mx", "Ax", "Nx", "ax", "ax_12"))
+  lt_m[, sex := "male"]
+
+  # Load female life table
+  lt_f <- data.table::fread(female_file, skip = 4, header = TRUE)
+  data.table::setnames(lt_f, c("Year", "x", "qx", "lx", "dx", "Lx", "Tx", "ex",
+                               "Dx", "Mx", "Ax", "Nx", "ax", "ax_12"))
+  lt_f[, sex := "female"]
+
+  # Combine and select relevant columns
+  lt <- data.table::rbindlist(list(lt_m, lt_f), use.names = TRUE)
+  lt <- lt[Year >= start_year & Year <= end_year,
+           .(year = Year, age = x, sex, qx_exact = qx, lx, Lx, Tx, ex)]
+
+  data.table::setorder(lt, year, sex, age)
+
+  cli::cli_alert_success(
+    "Loaded TR2025 period life tables: {length(unique(lt$year))} years, ages {min(lt$age)}-{max(lt$age)}"
+  )
+
+  lt
+}
+
+#' Calculate age-last-birthday qx from period life table
+#'
+#' @description
+#' TR2025's population projection uses age-last-birthday qx, not exact-age qx.
+#' This function converts using the formulas from TR2025 documentation:
+#'   - For ages 0-99: qx = 1 - L_{x+1}/L_x
+#'   - For age 100+:  q100 = 1 - T_{101}/T_{100}
+#'
+#' @param period_life_table data.table: output from load_tr2025_period_life_tables()
+#' @param min_age Integer: minimum age to convert (default: 85)
+#' @param max_age Integer: maximum single age before 100+ group (default: 99)
+#'
+#' @return data.table with columns: year, age, sex, qx_alb (age-last-birthday qx)
+#'
+#' @details
+#' For ages below min_age, the exact-age qx is close enough to age-last-birthday qx.
+#' The difference becomes significant at older ages (5-10% for ages 85+).
+#'
+#' @export
+calculate_age_last_birthday_qx <- function(
+    period_life_table,
+    min_age = 85,
+    max_age = 99
+) {
+  checkmate::assert_data_table(period_life_table)
+  checkmate::assert_int(min_age, lower = 0, upper = 99)
+  checkmate::assert_int(max_age, lower = min_age, upper = 99)
+
+  lt <- data.table::copy(period_life_table)
+
+  # Calculate qx = 1 - L_{x+1}/L_x for ages min_age to max_age
+  results <- list()
+
+  for (yr in unique(lt$year)) {
+    for (sx in c("male", "female")) {
+      lt_sub <- lt[year == yr & sex == sx][order(age)]
+
+      # For ages min_age to max_age: qx = 1 - L_{x+1}/L_x
+      for (a in min_age:max_age) {
+        Lx <- lt_sub[age == a, Lx]
+        Lx_next <- lt_sub[age == a + 1, Lx]
+
+        if (length(Lx) > 0 && length(Lx_next) > 0 && Lx > 0) {
+          qx_alb <- 1 - Lx_next / Lx
+          results[[length(results) + 1]] <- data.table::data.table(
+            year = yr, age = a, sex = sx, qx_alb = qx_alb
+          )
+        }
+      }
+
+      # For age 100+: q100 = 1 - T_{101}/T_{100}
+      T100 <- lt_sub[age == 100, Tx]
+      T101 <- lt_sub[age == 101, Tx]
+
+      if (length(T100) > 0 && length(T101) > 0 && T100 > 0) {
+        q100_alb <- 1 - T101 / T100
+        results[[length(results) + 1]] <- data.table::data.table(
+          year = yr, age = 100L, sex = sx, qx_alb = q100_alb
+        )
+      }
+    }
+  }
+
+  result <- data.table::rbindlist(results)
+  data.table::setorder(result, year, sex, age)
+
+  # Report the difference
+  comparison <- merge(
+    result,
+    lt[age >= min_age & age <= 100, .(year, age, sex, qx_exact)],
+    by = c("year", "age", "sex")
+  )
+  comparison[, diff_pct := (qx_alb - qx_exact) / qx_exact * 100]
+
+  mean_diff_85_99 <- comparison[age >= 85 & age <= 99, mean(diff_pct)]
+  mean_diff_100 <- comparison[age == 100, mean(diff_pct)]
+
+  cli::cli_alert_success(
+    "Calculated age-last-birthday qx for ages {min_age}-100"
+  )
+  cli::cli_alert_info(
+    "Mean difference from exact-age qx: ages 85-99 = {round(mean_diff_85_99, 1)}%, age 100+ = {round(mean_diff_100, 1)}%"
+  )
+
+  result
+}
+
+#' Apply age-last-birthday qx adjustment to mortality data
+#'
+#' @description
+#' Replaces exact-age qx values with age-last-birthday qx for specified ages.
+#' This aligns our mortality data with TR2025's population projection methodology.
+#'
+#' @param mortality_qx data.table: mortality qx with columns year, age, sex, qx
+#' @param qx_alb data.table: age-last-birthday qx from calculate_age_last_birthday_qx()
+#' @param min_age Integer: minimum age to replace (default: 85)
+#'
+#' @return data.table with qx values replaced for ages >= min_age
+#'
+#' @export
+apply_age_last_birthday_qx <- function(
+    mortality_qx,
+    qx_alb,
+    min_age = 85
+) {
+  checkmate::assert_data_table(mortality_qx)
+  checkmate::assert_data_table(qx_alb)
+  checkmate::assert_int(min_age, lower = 0)
+
+  dt <- data.table::copy(mortality_qx)
+
+  # Merge with age-last-birthday qx
+  dt <- merge(dt, qx_alb[, .(year, age, sex, qx_alb)],
+              by = c("year", "age", "sex"), all.x = TRUE)
+
+  # Replace qx with qx_alb for ages >= min_age where we have the alb value
+  n_replaced <- dt[age >= min_age & !is.na(qx_alb), .N]
+  dt[age >= min_age & !is.na(qx_alb), qx := qx_alb]
+  dt[, qx_alb := NULL]
+
+  cli::cli_alert_success(
+    "Replaced {n_replaced} qx values with age-last-birthday qx (ages {min_age}+)"
+  )
+
+  dt
+}
+
 #' Apply configured starting AAx method
 #'
 #' @description
