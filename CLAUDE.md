@@ -4,9 +4,9 @@
 R-based replication of the SSA Office of the Chief Actuary's long-range OASDI projection model. Uses `{targets}` for pipeline orchestration and `{renv}` for dependency management.
 
 ## Current Status
-**Phase:** 8 - Projected Population Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 8E - CNI Population (January 22, 2026)
-**Next Step:** Phase 8F - Integration and Main Entry Point
+**Phase:** 8 - Projected Population Subprocess (COMPLETE)
+**Most Recent Completion:** Phase 8F - Integration and Main Entry Point (January 22, 2026)
+**Next Step:** Demography process complete; ready for Economics process
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -167,7 +167,7 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
    - TR2025 uses December 31 marriage grids from the 2015 TR
    - Minor differences expected but methodology is consistent
 
-### Projected Population Subprocess Status (IN PROGRESS - Phase 8E Complete)
+### Projected Population Subprocess Status (COMPLETE)
 - **Purpose:** Project SS area population from Dec 31, 2022 through 2099 using component method
 - **Key Outputs:**
   - B^z_{s,p} - Births by sex and population status (Eq 1.8.1) ✓
@@ -205,6 +205,13 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - CNI total: 328.4M (2022) → 427.0M (2099)
   - CNI/SS ratio: 0.964 (2022) → 0.949 (2099)
   - Pipeline targets: `cni_projection`, `projected_cni_population`, `cni_summary`, `cni_validation`
+- **Phase 8F Status (Complete):** Integration and comprehensive validation
+  - Main entry point: `run_projected_population_full()` orchestrates all phases
+  - Comprehensive validation: `validate_projected_population_comprehensive()`
+  - Validates population identity: P^z = P^{z-1} - D + B + NI
+  - Validates against TR2025 population files
+  - Validates marital consistency, children totals, CNI population
+  - Pipeline targets: `projected_population_validation`, `projected_population_summary`
 - **Key files:** `R/demography/projected_population.R`, `R/data_acquisition/cps_children.R`
 - **Plan document:** `plans/08_demography_projected_population_implementation_plan.md`
 

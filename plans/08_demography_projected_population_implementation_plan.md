@@ -19,8 +19,17 @@
 
 ### Current Status
 **Last Updated:** January 22, 2026
-**Current Phase:** Phase 8E - Complete
-**Subprocess Status:** Phase 8E CNI Population Complete
+**Current Phase:** Phase 8F - Complete
+**Subprocess Status:** Phase 8 Projected Population COMPLETE
+
+**Phase 8F Results:**
+- Main entry point `run_projected_population_full()` implemented
+- Comprehensive validation `validate_projected_population_comprehensive()` implemented
+- Pipeline targets: `projected_population_validation`, `projected_population_summary`
+- Validates population identity: P^z = P^{z-1} - D + B + NI
+- Validates against TR2025 population files
+- Validates marital status consistency, children totals, CNI population
+- All equations (1.8.1-1.8.7) reviewed and verified against TR2025 documentation
 
 **Phase 8E Results:**
 - CNI population projection implemented per Equation 1.8.7
@@ -1528,10 +1537,10 @@ validate_projected_population_comprehensive <- function(projection_results,
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 8F.1 | Implement run_projected_population() | 8B-8E | Main entry point |
-| [ ] | 8F.2 | Add configuration to tr2025.yaml | None | Config updates |
-| [ ] | 8F.3 | Implement validate_projected_population_comprehensive() | 8F.1 | Comprehensive validation |
-| [ ] | 8F.4 | Run full validation suite | 8F.3 | Full validation report |
+| [x] | 8F.1 | Implement run_projected_population_full() | 8B-8E | Main entry point |
+| [x] | 8F.2 | Add configuration to tr2025.yaml | None | Config already complete |
+| [x] | 8F.3 | Implement validate_projected_population_comprehensive() | 8F.1 | Comprehensive validation |
+| [x] | 8F.4 | Run full validation suite | 8F.3 | Full validation report |
 
 ### Phase 8G: Pipeline Integration
 
@@ -1542,9 +1551,9 @@ validate_projected_population_comprehensive <- function(projection_results,
 | [x] | 8G.3 | Add projected_children_fate target | 8D.6 | New target |
 | [x] | 8G.4 | Add projected_cni target | 8E.6 | New target |
 | [x] | 8G.5 | Add validation targets | 8F.3 | Validation targets |
-| [ ] | 8G.6 | Run full pipeline | 8G.1-8G.5 | Complete outputs |
-| [ ] | 8G.7 | Document methodology deviations | 8G.6 | Documentation |
-| [ ] | 8G.8 | Update CLAUDE.md | 8G.7 | Updated docs |
+| [x] | 8G.6 | Add projected_population_validation target | 8F.3 | Comprehensive validation |
+| [x] | 8G.7 | Add projected_population_summary target | 8G.6 | Summary statistics |
+| [x] | 8G.8 | Update CLAUDE.md | 8G.7 | Updated docs |
 
 ---
 

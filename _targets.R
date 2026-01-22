@@ -2210,6 +2210,91 @@ list(
   ),
 
   # ===========================================================================
+  # PHASE 8F: INTEGRATION AND COMPREHENSIVE VALIDATION
+  # ===========================================================================
+  # Main entry point for running all projected population phases together
+  # and comprehensive validation against TR2025 methodology.
+  # ===========================================================================
+
+  # Comprehensive validation of all Phase 8 outputs
+  tar_target(
+    projected_population_validation,
+    {
+      # Build projection results from individual phase outputs
+      projection_results <- list(
+        population = population_projection$population,
+        births = population_projection$births,
+        deaths = population_projection$deaths,
+        net_immigration = population_projection$net_immigration,
+        population_marital = marital_projection$marital_population,
+        children_fate = children_fate_projection$children_fate,
+        cni_population = cni_projection$cni_population
+      )
+
+      # Load TR2025 population for comparison
+      tr2025_pop <- tryCatch({
+        tr_pop_file <- here::here(config_assumptions$projected_population$tr_historical_population_file)
+        if (file.exists(tr_pop_file)) {
+          tr_pop <- data.table::fread(tr_pop_file)
+          # Standardize column names
+          data.table::setnames(tr_pop, tolower(names(tr_pop)))
+          # Rename 'total' to 'population' if present
+          if ("total" %in% names(tr_pop)) {
+            data.table::setnames(tr_pop, "total", "population")
+          }
+          tr_pop
+        } else {
+          NULL
+        }
+      }, error = function(e) NULL)
+
+      validate_projected_population_comprehensive(
+        projection_results = projection_results,
+        tr2025_pop = tr2025_pop,
+        tolerance = 0.02
+      )
+    }
+  ),
+
+  # Summary of all Phase 8 outputs
+  tar_target(
+    projected_population_summary,
+    {
+      pop <- population_projection$population
+      births <- population_projection$births
+      deaths <- population_projection$deaths
+      net_imm <- population_projection$net_immigration
+
+      start_year <- config_assumptions$projected_population$starting_year
+      end_year <- config_assumptions$projected_population$projection_end
+
+      data.table::data.table(
+        metric = c(
+          "Starting population (M)",
+          "Ending population (M)",
+          "Population growth rate (%/year)",
+          "Total births 2023-2099 (M)",
+          "Total deaths 2023-2099 (M)",
+          "Total net immigration 2023-2099 (M)",
+          "CNI/SS ratio (start)",
+          "CNI/SS ratio (end)"
+        ),
+        value = c(
+          round(pop[year == start_year, sum(population)] / 1e6, 2),
+          round(pop[year == end_year, sum(population)] / 1e6, 2),
+          round(100 * ((pop[year == end_year, sum(population)] /
+                        pop[year == start_year, sum(population)])^(1/(end_year - start_year)) - 1), 3),
+          round(births[, sum(births)] / 1e6, 2),
+          round(deaths[, sum(deaths)] / 1e6, 2),
+          round(net_imm[, sum(net_immigration)] / 1e6, 2),
+          round(cni_projection$summary[year == start_year, cni_ss_ratio], 4),
+          round(cni_projection$summary[year == end_year, cni_ss_ratio], 4)
+        )
+      )
+    }
+  ),
+
+  # ===========================================================================
   # PLACEHOLDER: Future process targets will be added here
   # ===========================================================================
   # - Mean children per couple projection (Phase 8D.7 - requires CPS data)

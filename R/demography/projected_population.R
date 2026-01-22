@@ -5176,3 +5176,495 @@ validate_cni_projection <- function(cni_result,
 
   validation_results
 }
+
+
+# =============================================================================
+# PHASE 8F: INTEGRATION AND MAIN ENTRY POINT
+# =============================================================================
+
+#' Run Complete Projected Population (Main Entry Point)
+#'
+#' @description
+#' Main function orchestrating all projected population calculations
+#' (Equations 1.8.1 through 1.8.7) from TR2025 documentation.
+#'
+#' This function integrates:
+#' - Phase 8B: Core population projection (Eq 1.8.1-1.8.4)
+#' - Phase 8C: Marital status disaggregation (Eq 1.8.5)
+#' - Phase 8D: Children by parent survival status (Eq 1.8.6)
+#' - Phase 8E: Civilian noninstitutionalized population (Eq 1.8.7)
+#'
+#' @param starting_population data.table: Population at December 31 of starting year
+#'   from HISTORICAL POPULATION subprocess
+#' @param starting_marital_pop data.table: Population by marital status at starting year
+#' @param starting_couples_grid matrix: Married couples by husband age × wife age
+#' @param birth_rates data.table: Projected birth rates by year and age (from FERTILITY)
+#' @param mortality_qx data.table: Death probabilities by year, age, sex (from MORTALITY)
+#' @param mortality_differentials data.table: Mortality factors by marital status
+#' @param net_lpr data.table: Net LPR immigration by year, age, sex (from LPR IMMIGRATION)
+#' @param net_o data.table: Net O immigration by year, age, sex (from TEMP/UNLAWFUL)
+#' @param marriage_rates list: Projected marriage rates (from MARRIAGE)
+#' @param divorce_rates list: Projected divorce rates (from DIVORCE)
+#' @param historical_cni data.table: Historical CNI population (from HISTORICAL POPULATION)
+#' @param config list: Configuration parameters
+#' @param start_year Integer: Starting year (default: 2022)
+#' @param end_year Integer: Ending year (default: 2099)
+#' @param run_phases Character vector: Which phases to run (default: all)
+#' @param verbose Logical: Print progress (default: TRUE)
+#'
+#' @return list with all outputs:
+#'   - population: P^z_{x,s,p} by year (Eq 1.8.4)
+#'   - population_marital: P^z_{x,s,p,m} by year (Eq 1.8.5)
+#'   - births: B^z_{s,p} by year (Eq 1.8.1)
+#'   - deaths: D^z_{x,s,p} by year (Eq 1.8.2)
+#'   - net_immigration: NI^z_{x,s,p} by year (Eq 1.8.3)
+#'   - children_fate: C^z_{x,s,g,f} by year (Eq 1.8.6)
+#'   - cni_population: N^z_{x,s,m} by year (Eq 1.8.7)
+#'   - married_couples: Marriage grids by year
+#'   - summary: Summary statistics by year
+#'
+#' @details
+#' The projection follows TR2025 methodology exactly:
+#'
+#' 1. **Phase 8B (Eq 1.8.1-1.8.4):** Core population projection using component method
+#'    - Births calculated from age-specific rates × midyear female population
+#'    - Deaths calculated as qx × beginning-of-year population
+#'    - Net immigration = net LPR + net O
+#'    - Population rolled forward: P^z = P^{z-1} - D + NI (and births for age 0)
+#'
+#' 2. **Phase 8C (Eq 1.8.5):** Marital status disaggregation
+#'    - Births assigned to single status
+#'    - Deaths distributed using mortality differentials (2015-2019)
+#'    - Immigration distributed by BOY marital distribution
+#'    - Marriages = rate × geometric mean of midyear unmarried populations
+#'    - Divorces = rate × midyear married couples
+#'    - Widowings from death rates on married population
+#'
+#' 3. **Phase 8D (Eq 1.8.6):** Children by parent survival status
+#'    - Children ages 0-18 tracked by father age × mother age × fate
+#'    - Births distributed to husband age using couples grid proportions
+#'    - Parent survival calculated from mortality rates
+#'    - Adjusted to match Phase 8B population totals
+#'
+#' 4. **Phase 8E (Eq 1.8.7):** CNI population projection
+#'    - USAF projected forward (births - deaths + prorated immigration)
+#'    - Civilian = USAF - total armed forces (constant)
+#'    - CNI = Civilian × CNI/civilian ratio (constant from starting year)
+#'    - Disaggregated into 5 marital statuses
+#'
+#' @export
+run_projected_population_full <- function(starting_population,
+                                           starting_marital_pop = NULL,
+                                           starting_couples_grid = NULL,
+                                           birth_rates,
+                                           mortality_qx,
+                                           mortality_differentials = NULL,
+                                           net_lpr,
+                                           net_o,
+                                           marriage_rates = NULL,
+                                           divorce_rates = NULL,
+                                           historical_cni = NULL,
+                                           config = NULL,
+                                           start_year = 2022,
+                                           end_year = 2099,
+                                           run_phases = c("8B", "8C", "8D", "8E"),
+                                           verbose = TRUE) {
+
+  if (is.null(config)) {
+    config <- get_projected_population_config()
+  }
+
+  if (verbose) {
+    cli::cli_h1("PROJECTED POPULATION SUBPROCESS")
+    cli::cli_alert_info("Starting year: {start_year}")
+    cli::cli_alert_info("End year: {end_year}")
+    cli::cli_alert_info("Phases to run: {paste(run_phases, collapse = ', ')}")
+  }
+
+  results <- list()
+
+
+  # ===========================================================================
+  # PHASE 8B: Core Population Projection (Equations 1.8.1-1.8.4)
+  # ===========================================================================
+  if ("8B" %in% run_phases) {
+    if (verbose) {
+      cli::cli_h2("Phase 8B: Core Population Projection")
+    }
+
+    phase8b <- run_population_projection(
+      starting_population = starting_population,
+      birth_rates = birth_rates,
+      mortality_qx = mortality_qx,
+      net_lpr = net_lpr,
+      net_o = net_o,
+      start_year = start_year,
+      end_year = end_year,
+      config = config,
+      verbose = verbose
+    )
+
+    results$population <- phase8b$population
+    results$births <- phase8b$births
+    results$deaths <- phase8b$deaths
+    results$net_immigration <- phase8b$net_immigration
+    results$phase8b_summary <- phase8b$summary
+  } else {
+    cli::cli_abort("Phase 8B must be included in run_phases")
+  }
+
+  # ===========================================================================
+  # PHASE 8C: Marital Status Disaggregation (Equation 1.8.5)
+  # ===========================================================================
+  if ("8C" %in% run_phases) {
+    if (verbose) {
+      cli::cli_h2("Phase 8C: Marital Status Projection")
+    }
+
+    if (is.null(starting_marital_pop)) {
+      cli::cli_alert_warning("No starting marital population provided, skipping Phase 8C")
+    } else if (is.null(marriage_rates) || is.null(divorce_rates)) {
+      cli::cli_alert_warning("Missing marriage or divorce rates, skipping Phase 8C")
+    } else {
+      phase8c <- run_marital_projection(
+        phase8b_result = phase8b,
+        starting_marital_pop = starting_marital_pop,
+        starting_couples_grid = starting_couples_grid,
+        marriage_rates = marriage_rates,
+        divorce_rates = divorce_rates,
+        mortality_qx = mortality_qx,
+        mortality_differentials = mortality_differentials,
+        start_year = start_year,
+        end_year = end_year,
+        verbose = verbose
+      )
+
+      results$population_marital <- phase8c$marital_population
+      results$married_couples <- phase8c$couples_grids
+      results$phase8c_summary <- phase8c$summary
+    }
+  }
+
+  # ===========================================================================
+  # PHASE 8D: Children by Parent Fate (Equation 1.8.6)
+  # ===========================================================================
+  if ("8D" %in% run_phases && exists("phase8c", inherits = FALSE)) {
+    if (verbose) {
+      cli::cli_h2("Phase 8D: Children by Parent Fate")
+    }
+
+    parent_age_groups <- list(
+      "14-24" = 14:24,
+      "25-34" = 25:34,
+      "35-44" = 35:44,
+      "45-54" = 45:54,
+      "55-64" = 55:64,
+      "65-100" = 65:100
+    )
+
+    phase8d <- project_children_fate(
+      phase8b_result = phase8b,
+      marital_result = phase8c,
+      birth_rates = birth_rates,
+      mortality_qx = mortality_qx,
+      parent_age_groups = parent_age_groups,
+      start_year = start_year,
+      end_year = end_year,
+      max_child_age = config$ages$children_max,
+      min_parent_age = config$ages$marriage_min,
+      max_parent_age = config$ages$max_age,
+      verbose = verbose
+    )
+
+    results$children_fate <- phase8d$children_fate
+    results$phase8d_summary <- phase8d$summary
+  }
+
+  # ===========================================================================
+  # PHASE 8E: CNI Population (Equation 1.8.7)
+  # ===========================================================================
+  if ("8E" %in% run_phases && exists("phase8c", inherits = FALSE)) {
+    if (verbose) {
+      cli::cli_h2("Phase 8E: CNI Population Projection")
+    }
+
+    if (is.null(historical_cni)) {
+      cli::cli_alert_warning("No historical CNI data provided, skipping Phase 8E")
+    } else {
+      phase8e <- project_cni_population(
+        phase8b_result = phase8b,
+        marital_result = phase8c,
+        historical_cni = historical_cni,
+        start_year = start_year,
+        end_year = end_year,
+        verbose = verbose
+      )
+
+      results$cni_population <- phase8e$cni_population
+      results$usaf_population <- phase8e$usaf_population
+      results$civilian_population <- phase8e$civilian_population
+      results$phase8e_summary <- phase8e$summary
+    }
+  }
+
+  # ===========================================================================
+  # Combined Summary
+  # ===========================================================================
+  if (verbose) {
+    cli::cli_h2("Projection Complete")
+
+    # Population summary
+    pop_start <- results$population[year == start_year, sum(population)] / 1e6
+    pop_end <- results$population[year == end_year, sum(population)] / 1e6
+    cli::cli_alert_success("Population: {round(pop_start, 2)}M ({start_year}) -> {round(pop_end, 2)}M ({end_year})")
+
+    # Births summary
+    births_start <- results$births[year == (start_year + 1), sum(births)] / 1e6
+    births_end <- results$births[year == end_year, sum(births)] / 1e6
+    cli::cli_alert_info("Births: {round(births_start, 2)}M ({start_year + 1}) -> {round(births_end, 2)}M ({end_year})")
+
+    # Deaths summary
+    deaths_start <- results$deaths[year == (start_year + 1), sum(deaths)] / 1e6
+    deaths_end <- results$deaths[year == end_year, sum(deaths)] / 1e6
+    cli::cli_alert_info("Deaths: {round(deaths_start, 2)}M ({start_year + 1}) -> {round(deaths_end, 2)}M ({end_year})")
+
+    # Net immigration summary
+    imm_start <- results$net_immigration[year == (start_year + 1), sum(net_immigration)] / 1e6
+    imm_end <- results$net_immigration[year == end_year, sum(net_immigration)] / 1e6
+    cli::cli_alert_info("Net Immigration: {round(imm_start, 2)}M ({start_year + 1}) -> {round(imm_end, 2)}M ({end_year})")
+  }
+
+  results
+}
+
+
+#' Comprehensive Projected Population Validation
+#'
+#' @description
+#' Runs all validation checks on projected population outputs.
+#' Validates against TR2025 population files and internal consistency checks.
+#'
+#' @param projection_results list: Complete projection results from run_projected_population()
+#' @param tr2025_pop data.table: TR2025 official population projections (optional)
+#' @param config list: Configuration parameters
+#' @param tolerance Numeric: Relative tolerance for validation (default: 0.02)
+#'
+#' @return list with comprehensive validation report:
+#'   - population_identity: Whether P = P_prev - D + B + NI holds
+#'   - tr2025_comparison: Comparison with TR2025 (if provided)
+#'   - marital_consistency: Marital status sums to total
+#'   - children_totals: Children by fate sums to total children
+#'   - cni_validation: CNI < total population
+#'   - all_passed: Overall pass/fail
+#'
+#' @export
+validate_projected_population_comprehensive <- function(projection_results,
+                                                         tr2025_pop = NULL,
+                                                         config = NULL,
+                                                         tolerance = 0.02) {
+
+  cli::cli_h1("Comprehensive Projected Population Validation")
+
+  if (is.null(config)) {
+    config <- get_projected_population_config()
+  }
+
+  validation <- list()
+  all_passed <- TRUE
+
+  # ===========================================================================
+  # Test 1: Population Identity (P = P_prev - D + B + NI)
+  # ===========================================================================
+  cli::cli_h2("Test 1: Population Identity Check")
+
+  pop <- projection_results$population
+  births <- projection_results$births
+  deaths <- projection_results$deaths
+  net_imm <- projection_results$net_immigration
+
+  # Check identity for each year
+  years <- sort(unique(pop$year))
+  identity_errors <- list()
+
+  for (yr in years[-1]) {
+    pop_yr <- pop[year == yr, sum(population)]
+    pop_prev <- pop[year == (yr - 1), sum(population)]
+    births_yr <- births[year == yr, sum(births)]
+    deaths_yr <- deaths[year == yr, sum(deaths)]
+    imm_yr <- net_imm[year == yr, sum(net_immigration)]
+
+    expected <- pop_prev - deaths_yr + births_yr + imm_yr
+    error <- abs(pop_yr - expected) / expected
+
+    if (error > 0.001) {
+      identity_errors[[as.character(yr)]] <- error
+    }
+  }
+
+  if (length(identity_errors) == 0) {
+    cli::cli_alert_success("Population identity holds for all years")
+    validation$population_identity <- TRUE
+  } else {
+    cli::cli_alert_warning("{length(identity_errors)} years have identity errors > 0.1%")
+    validation$population_identity <- FALSE
+    all_passed <- FALSE
+  }
+
+  # ===========================================================================
+  # Test 2: TR2025 Population Comparison (if provided)
+  # ===========================================================================
+  if (!is.null(tr2025_pop)) {
+    cli::cli_h2("Test 2: TR2025 Population Comparison")
+
+    tr2025_totals <- tr2025_pop[, .(tr2025_total = sum(population)), by = year]
+    our_totals <- pop[, .(our_total = sum(population)), by = year]
+
+    comparison <- merge(our_totals, tr2025_totals, by = "year")
+    comparison[, pct_diff := 100 * (our_total - tr2025_total) / tr2025_total]
+
+    max_diff <- max(abs(comparison$pct_diff), na.rm = TRUE)
+    mean_diff <- mean(abs(comparison$pct_diff), na.rm = TRUE)
+
+    cli::cli_alert_info("Max difference: {round(max_diff, 2)}%")
+    cli::cli_alert_info("Mean difference: {round(mean_diff, 3)}%")
+
+    if (max_diff < tolerance * 100) {
+      cli::cli_alert_success("All years within {tolerance * 100}% of TR2025")
+      validation$tr2025_comparison <- TRUE
+    } else {
+      cli::cli_alert_warning("Some years exceed {tolerance * 100}% difference")
+      validation$tr2025_comparison <- FALSE
+      all_passed <- FALSE
+    }
+
+    validation$tr2025_comparison_details <- comparison
+  } else {
+    cli::cli_alert_info("TR2025 comparison skipped (no data provided)")
+    validation$tr2025_comparison <- NULL
+  }
+
+  # ===========================================================================
+  # Test 3: Marital Status Consistency
+  # ===========================================================================
+  if (!is.null(projection_results$population_marital)) {
+    cli::cli_h2("Test 3: Marital Status Consistency")
+
+    marital_pop <- projection_results$population_marital
+
+    # Sum marital statuses
+    marital_totals <- marital_pop[, .(marital_total = sum(population)), by = year]
+
+    # Compare with Phase 8B totals (ages 14+)
+    phase8b_totals <- pop[age >= 14, .(phase8b_total = sum(population)), by = year]
+
+    comparison <- merge(marital_totals, phase8b_totals, by = "year")
+    comparison[, pct_diff := 100 * abs(marital_total - phase8b_total) / phase8b_total]
+
+    max_diff <- max(comparison$pct_diff, na.rm = TRUE)
+
+    if (max_diff < 0.1) {
+      cli::cli_alert_success("Marital statuses sum to total (max error: {round(max_diff, 3)}%)")
+      validation$marital_consistency <- TRUE
+    } else {
+      cli::cli_alert_warning("Marital sum error: {round(max_diff, 2)}%")
+      validation$marital_consistency <- FALSE
+      all_passed <- FALSE
+    }
+  } else {
+    validation$marital_consistency <- NULL
+  }
+
+  # ===========================================================================
+
+  # Test 4: Children by Fate Totals
+  # ===========================================================================
+  if (!is.null(projection_results$children_fate)) {
+    cli::cli_h2("Test 4: Children by Fate Totals")
+
+    children_fate <- projection_results$children_fate
+    max_child_age <- config$ages$children_max
+
+    # Sum children by fate - filter to one parent_sex only since each child
+    # appears twice in the data (once for father, once for mother tracking)
+    fate_totals <- children_fate[parent_sex == "father", .(fate_total = sum(count)), by = year]
+
+    # Compare with Phase 8B children totals
+    children_pop <- pop[age <= max_child_age, .(pop_total = sum(population)), by = year]
+
+    comparison <- merge(fate_totals, children_pop, by = "year")
+    comparison[, pct_diff := 100 * abs(fate_total - pop_total) / pop_total]
+
+    max_diff <- max(comparison$pct_diff, na.rm = TRUE)
+
+    if (max_diff < 1.0) {
+      cli::cli_alert_success("Children fate totals match population (max error: {round(max_diff, 2)}%)")
+      validation$children_totals <- TRUE
+    } else {
+      cli::cli_alert_warning("Children total error: {round(max_diff, 2)}%")
+      validation$children_totals <- FALSE
+      all_passed <- FALSE
+    }
+  } else {
+    validation$children_totals <- NULL
+  }
+
+  # ===========================================================================
+  # Test 5: CNI Population Validation
+  # ===========================================================================
+  if (!is.null(projection_results$cni_population)) {
+    cli::cli_h2("Test 5: CNI Population Validation")
+
+    cni_pop <- projection_results$cni_population
+
+    # CNI totals
+    cni_totals <- cni_pop[, .(cni_total = sum(population)), by = year]
+
+    # SS area totals
+    ss_totals <- pop[, .(ss_total = sum(population)), by = year]
+
+    comparison <- merge(cni_totals, ss_totals, by = "year")
+    comparison[, ratio := cni_total / ss_total]
+
+    # Check CNI < SS area for all years
+    invalid_years <- comparison[ratio >= 1]
+
+    if (nrow(invalid_years) == 0) {
+      cli::cli_alert_success("CNI < SS area population for all years")
+      validation$cni_validation <- TRUE
+    } else {
+      cli::cli_alert_danger("{nrow(invalid_years)} years have CNI >= SS population")
+      validation$cni_validation <- FALSE
+      all_passed <- FALSE
+    }
+
+    cli::cli_alert_info("CNI/SS ratio range: {round(min(comparison$ratio), 3)} - {round(max(comparison$ratio), 3)}")
+
+    # Check CNI marital statuses sum to total
+    cni_marital_totals <- cni_pop[, .(marital_sum = sum(population)), by = year]
+    cni_comparison <- merge(cni_marital_totals, cni_totals, by = "year")
+    cni_comparison[, diff := abs(marital_sum - cni_total)]
+
+    if (max(cni_comparison$diff) < 1) {
+      cli::cli_alert_success("CNI marital statuses sum correctly")
+    } else {
+      cli::cli_alert_warning("CNI marital sum has errors")
+    }
+  } else {
+    validation$cni_validation <- NULL
+  }
+
+  # ===========================================================================
+  # Overall Result
+  # ===========================================================================
+  cli::cli_h2("Overall Validation Result")
+
+  validation$all_passed <- all_passed
+
+  if (all_passed) {
+    cli::cli_alert_success("All validation checks PASSED")
+  } else {
+    cli::cli_alert_warning("Some validation checks FAILED")
+  }
+
+  validation
+}
