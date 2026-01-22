@@ -300,12 +300,14 @@ apply_age_100_override <- function(dist, override, total_net_immigration) {
 #' Apply elderly immigration override to distribution
 #'
 #' @description
-#' Adjusts the immigration distribution for ages 85+ based on TR2025 implied values.
-#' DHS data shows almost no immigration at ages 85+, but TR2025 population projections
-#' imply approximately 3.5% of net immigration goes to ages 85-99.
+#' Adjusts the immigration distribution for ages 65+ based on TR2025 implied values.
+#' The TR-derived distribution overestimates elderly immigration significantly:
+#' - Ages 65-84: 2-3x higher than TR2025 implied
+#' - Ages 85-99: ~7x higher than TR2025 implied
+#' - Ages 100+: artifacts from open-ended age group
 #'
 #' @param dist data.table: base distribution with columns age, sex, distribution
-#' @param override List: override configuration
+#' @param override List: override configuration with ages_65_84, ages_85_99, age_100_plus
 #' @param total_net_immigration Numeric: total annual net immigration
 #'
 #' @return data.table: adjusted distribution
@@ -315,56 +317,95 @@ apply_elderly_override <- function(dist, override, total_net_immigration) {
   dist <- data.table::copy(dist)
 
   # Extract override values
+  ages_65_84 <- override$ages_65_84
   ages_85_99 <- override$ages_85_99
   age_100_plus <- override$age_100_plus
 
   if (is.null(ages_85_99) || is.null(age_100_plus)) {
-    cli::cli_warn("Elderly override enabled but missing configuration, skipping")
+    cli::cli_warn("Elderly override enabled but missing 85-99/100+ configuration, skipping")
     return(dist)
   }
 
-  # Calculate target proportions for elderly ages
+  # Calculate target proportions for each elderly age group
+  # ages_65_84 (optional - if not provided, scale with rest of 0-64)
+  if (!is.null(ages_65_84)) {
+    target_65_84_total <- ages_65_84$annual_total
+    target_65_84_female <- target_65_84_total * ages_65_84$female_share
+    target_65_84_male <- target_65_84_total * (1 - ages_65_84$female_share)
+    prop_65_84_female <- target_65_84_female / total_net_immigration
+    prop_65_84_male <- target_65_84_male / total_net_immigration
+  } else {
+    prop_65_84_female <- 0
+    prop_65_84_male <- 0
+    target_65_84_total <- 0
+  }
+
   # ages_85_99
   target_85_99_total <- ages_85_99$annual_total
   target_85_99_female <- target_85_99_total * ages_85_99$female_share
   target_85_99_male <- target_85_99_total * (1 - ages_85_99$female_share)
+  prop_85_99_female <- target_85_99_female / total_net_immigration
+  prop_85_99_male <- target_85_99_male / total_net_immigration
 
   # age_100_plus
   target_100_total <- age_100_plus$annual_total
   target_100_female <- target_100_total * age_100_plus$female_share
   target_100_male <- target_100_total * (1 - age_100_plus$female_share)
-
-  # Convert to proportions of total
-  prop_85_99_female <- target_85_99_female / total_net_immigration
-  prop_85_99_male <- target_85_99_male / total_net_immigration
   prop_100_female <- target_100_female / total_net_immigration
   prop_100_male <- target_100_male / total_net_immigration
 
-  # Current distribution at 0-84
-  current_0_84 <- dist[age < 85, sum(distribution)]
+  # Calculate scaling based on whether ages_65_84 is specified
+  if (!is.null(ages_65_84)) {
+    # Scale ages 0-64 to make room for all elderly overrides
+    current_0_64 <- dist[age < 65, sum(distribution)]
+    target_0_64 <- 1 - (prop_65_84_female + prop_65_84_male +
+                         prop_85_99_female + prop_85_99_male +
+                         prop_100_female + prop_100_male)
 
-  # Target distribution at 0-84 (remainder after elderly)
-  target_0_84 <- 1 - (prop_85_99_female + prop_85_99_male + prop_100_female + prop_100_male)
+    if (target_0_64 <= 0) {
+      cli::cli_abort("Elderly override values exceed total immigration")
+    }
 
-  if (target_0_84 <= 0) {
-    cli::cli_abort("Elderly override values exceed total immigration")
+    scale_0_64 <- target_0_64 / current_0_64
+
+    cli::cli_alert_info(
+      "Applying elderly override: 65-84={round(target_65_84_total)}, 85-99={round(target_85_99_total)}, 100+={round(target_100_total)}"
+    )
+    cli::cli_alert_info(
+      "Scaling ages 0-64 by {round(scale_0_64, 4)} ({round(current_0_64*100, 2)}% -> {round(target_0_64*100, 2)}%)"
+    )
+
+    # Apply scale to ages 0-64
+    dist[age < 65, distribution := distribution * scale_0_64]
+
+    # Distribute 65-84 uniformly (20 ages)
+    n_ages_65_84 <- 20
+    dist[age >= 65 & age < 85 & sex == "female", distribution := prop_65_84_female / n_ages_65_84]
+    dist[age >= 65 & age < 85 & sex == "male", distribution := prop_65_84_male / n_ages_65_84]
+
+  } else {
+    # Original behavior: scale ages 0-84
+    current_0_84 <- dist[age < 85, sum(distribution)]
+    target_0_84 <- 1 - (prop_85_99_female + prop_85_99_male + prop_100_female + prop_100_male)
+
+    if (target_0_84 <= 0) {
+      cli::cli_abort("Elderly override values exceed total immigration")
+    }
+
+    scale_0_84 <- target_0_84 / current_0_84
+
+    cli::cli_alert_info(
+      "Applying elderly override: 85-99={round(target_85_99_total)}, 100+={round(target_100_total)}"
+    )
+    cli::cli_alert_info(
+      "Scaling ages 0-84 by {round(scale_0_84, 4)} ({round(current_0_84*100, 2)}% -> {round(target_0_84*100, 2)}%)"
+    )
+
+    # Apply scale to ages 0-84
+    dist[age < 85, distribution := distribution * scale_0_84]
   }
 
-  # Scale factor for ages 0-84
-  scale_0_84 <- target_0_84 / current_0_84
-
-  cli::cli_alert_info(
-    "Applying elderly override: 85-99={round(target_85_99_total)}, 100+={round(target_100_total)}"
-  )
-  cli::cli_alert_info(
-    "Scaling ages 0-84 by {round(scale_0_84, 4)} ({round(current_0_84*100, 2)}% -> {round(target_0_84*100, 2)}%)"
-  )
-
-  # Apply scale to ages 0-84
-  dist[age < 85, distribution := distribution * scale_0_84]
-
-  # Distribute 85-99 proportionally within the age range
-  # Use uniform distribution across ages 85-99 (15 ages)
+  # Distribute 85-99 uniformly (15 ages)
   n_ages_85_99 <- 15
   dist[age >= 85 & age < 100 & sex == "female", distribution := prop_85_99_female / n_ages_85_99]
   dist[age >= 85 & age < 100 & sex == "male", distribution := prop_85_99_male / n_ages_85_99]
@@ -373,17 +414,18 @@ apply_elderly_override <- function(dist, override, total_net_immigration) {
   dist[age >= 100 & sex == "female", distribution := prop_100_female]
   dist[age >= 100 & sex == "male", distribution := prop_100_male]
 
-  # Verify distribution sums to 1 (within tolerance for negative 100+)
+  # Verify distribution sums to 1
   total <- dist[, sum(distribution)]
   if (abs(total - 1.0) > 0.01) {
     cli::cli_warn("Distribution sums to {round(total, 4)} after elderly override")
   }
 
   # Report final distribution
-  elderly_pct <- dist[age >= 85 & age < 100, sum(distribution)] * 100
+  age_65_84_pct <- dist[age >= 65 & age < 85, sum(distribution)] * 100
+  age_85_99_pct <- dist[age >= 85 & age < 100, sum(distribution)] * 100
   age100_pct <- dist[age >= 100, sum(distribution)] * 100
   cli::cli_alert_success(
-    "Final distribution: 85-99={round(elderly_pct, 2)}%, 100+={round(age100_pct, 2)}%"
+    "Final distribution: 65-84={round(age_65_84_pct, 2)}%, 85-99={round(age_85_99_pct, 2)}%, 100+={round(age100_pct, 2)}%"
   )
 
   dist

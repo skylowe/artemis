@@ -296,22 +296,30 @@ immigration:
     tr_derived_years: [2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030]
 
     # =========================================================================
-    # Elderly Override for TR-Derived Method (Ages 85+)
+    # Elderly Override for TR-Derived Method (Ages 65+)
     # =========================================================================
-    # The TR-derived distribution has unreliable values for ages 85+ because:
+    # The TR-derived distribution has unreliable values for ages 65+ because:
     # - Small population sizes amplify calculation errors
     # - Age 100+ is an open-ended group with different dynamics
+    # - Excess immigration at 65-84 compounds into 85-99 divergence over time
     #
-    # Analysis shows TR-derived distribution allocates 3.5% to 85-99 and 2.9%
-    # to 100+, but TR2025's actual implied immigration is much lower:
-    # - Ages 85-99: ~10,000/year (not 73,000)
-    # - Ages 100+: ~350/year (not 61,000)
+    # Analysis shows TR-derived distribution overestimates elderly immigration:
+    # - Ages 65-84: Our ~105-168K/year vs TR2025 implied ~35-76K/year (2-3x higher)
+    # - Ages 85-99: Our ~73K/year vs TR2025 implied ~10K/year
+    # - Ages 100+: Our ~61K/year vs TR2025 implied ~350/year
     #
     # These overrides set explicit values based on TR2025 implied immigration,
     # calculated by analyzing population transitions with age-last-birthday qx.
     # =========================================================================
     elderly_override_tr_derived:
       enabled: true
+      # Ages 65-84: TR2025 implies ~50,000-75,000 net immigrants per year
+      # Our TR-derived shows 105K-168K (2-3x higher)
+      # Using ~60,000 as middle estimate (average of implied range)
+      # Male: ~27,000, Female: ~33,000 (55% female share)
+      ages_65_84:
+        annual_total: 60000
+        female_share: 0.55
       # Ages 85-99: TR2025 implies ~8,000-10,000 net immigrants per year
       # Calculated from: Imm = P(x,t) - P(x-1,t-1) * (1 - qx_alb)
       # Male: ~3,700, Female: ~4,300 (54% female share)
