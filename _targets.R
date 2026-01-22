@@ -800,11 +800,11 @@ list(
           total_net_immigration = total_net_imm
         )
       } else {
-        # TR2025-derived distribution with age 100+ override
+        # TR2025-derived distribution with elderly override for ages 85+
         get_immigration_distribution(
           method = "tr_derived",
           tr_derived_data = tr_derived_immigration_dist,
-          age_100_override = config_assumptions$immigration$lpr$age_100_override,
+          elderly_override_tr_derived = config_assumptions$immigration$lpr$elderly_override_tr_derived,
           total_net_immigration = total_net_imm
         )
       }

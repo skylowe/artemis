@@ -39,7 +39,7 @@ NULL
 #' @param tr_derived_file Character: path to TR2025-derived distribution CSV
 #'   (for "tr_derived" method, fallback if tr_derived_data is NULL)
 #' @param elderly_override List: override configuration for ages 85+ (for "dhs" method)
-#' @param age_100_override List: override configuration for age 100+ (for "tr_derived" method)
+#' @param elderly_override_tr_derived List: override configuration for ages 85+ (for "tr_derived" method)
 #' @param total_net_immigration Numeric: total annual net immigration (for overrides)
 #'
 #' @return data.table with columns: age, sex, distribution
@@ -52,7 +52,7 @@ get_immigration_distribution <- function(
     tr_derived_data = NULL,
     tr_derived_file = "data/processed/tr2025_implied_immigration_distribution.csv",
     elderly_override = NULL,
-    age_100_override = NULL,
+    elderly_override_tr_derived = NULL,
     total_net_immigration = NULL
 ) {
 
@@ -81,12 +81,12 @@ get_immigration_distribution <- function(
       file_path = tr_derived_file
     )
 
-    # Apply age 100+ override (TR-derived has artifact values at 100+)
-    if (!is.null(age_100_override) && isTRUE(age_100_override$enabled)) {
+    # Apply elderly override for ages 85+ (TR-derived has inflated values at older ages)
+    if (!is.null(elderly_override_tr_derived) && isTRUE(elderly_override_tr_derived$enabled)) {
       if (is.null(total_net_immigration)) {
-        cli::cli_abort("total_net_immigration required when age_100_override is enabled")
+        cli::cli_abort("total_net_immigration required when elderly_override_tr_derived is enabled")
       }
-      dist <- apply_age_100_override(dist, age_100_override, total_net_immigration)
+      dist <- apply_elderly_override(dist, elderly_override_tr_derived, total_net_immigration)
     }
 
   } else {

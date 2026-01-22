@@ -296,23 +296,35 @@ immigration:
     tr_derived_years: [2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030]
 
     # =========================================================================
-    # Age 100+ Override
+    # Elderly Override for TR-Derived Method (Ages 85+)
     # =========================================================================
-    # The TR-derived distribution has unreliable values for age 100+ because
-    # the back-calculation formula doesn't work correctly for open-ended groups.
-    # This override sets explicit values for the 100+ age group.
+    # The TR-derived distribution has unreliable values for ages 85+ because:
+    # - Small population sizes amplify calculation errors
+    # - Age 100+ is an open-ended group with different dynamics
     #
-    # When distribution_method = "dhs", the elderly_override section below
-    # also applies to ages 85-99.
+    # Analysis shows TR-derived distribution allocates 3.5% to 85-99 and 2.9%
+    # to 100+, but TR2025's actual implied immigration is much lower:
+    # - Ages 85-99: ~10,000/year (not 73,000)
+    # - Ages 100+: ~350/year (not 61,000)
+    #
+    # These overrides set explicit values based on TR2025 implied immigration,
+    # calculated by analyzing population transitions with age-last-birthday qx.
     # =========================================================================
-    age_100_override:
+    elderly_override_tr_derived:
       enabled: true
-      # Age 100+: Small net immigration (based on examining TR2025 100+ population growth)
-      # TR2025 100+ population grows by ~3,000/year on average (2024-2030)
-      # This growth includes survivors + net immigration
-      # Estimate: ~0 net immigration at 100+ (most growth is from 99 survivors)
-      annual_total: 0
-      female_share: 0.65
+      # Ages 85-99: TR2025 implies ~8,000-10,000 net immigrants per year
+      # Calculated from: Imm = P(x,t) - P(x-1,t-1) * (1 - qx_alb)
+      # Male: ~3,700, Female: ~4,300 (54% female share)
+      ages_85_99:
+        annual_total: 8000
+        female_share: 0.54
+      # Ages 100+: TR2025 implies ~350 net immigrants per year
+      # Calculated using open-ended group formula:
+      # Imm = P(100+,t) - P(99,t-1)*(1-q99) - P(100+,t-1)*(1-q100+)
+      # Male: ~115, Female: ~220 (65% female share due to longevity)
+      age_100_plus:
+        annual_total: 350
+        female_share: 0.65
 
     # =========================================================================
     # Elderly Immigration Override (Ages 85+) - FOR DHS METHOD ONLY
