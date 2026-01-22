@@ -148,7 +148,8 @@ create_fertility_targets <- function() {
         max_age = config_assumptions$fertility$max_fertility_age,
         base_year = config_assumptions$fertility$projection_start_year,
         age30_ultimate_year = config_assumptions$fertility$age30_ultimate_year,
-        end_year = config_assumptions$fertility$ultimate_year
+        end_year = config_assumptions$fertility$ultimate_year,
+        reference_age = config_assumptions$fertility$reference_age
       )
     ),
 

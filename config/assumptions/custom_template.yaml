@@ -16,14 +16,12 @@ fertility:
   # TR2025 Intermediate: 1.90, Low-Cost: 2.20, High-Cost: 1.60
   ultimate_ctfr: 1.90
 
-  # Cohort that first achieves ultimate CTFR
-  ultimate_cohort_year: 2020
-
   # Age range for fertility calculations (typically fixed)
   min_fertility_age: 14
   max_fertility_age: 49
 
   # Reference age for ratio calculations (typically fixed)
+  # TR methodology uses age 30. Changing this deviates from standard methodology.
   reference_age: 30
 
   # Ultimate attainment years

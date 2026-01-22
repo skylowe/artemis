@@ -13,12 +13,12 @@ metadata:
 fertility:
   # Ultimate cohort TFR assumption
   ultimate_ctfr: 1.90
-  # Cohort that first achieves ultimate CTFR
-  ultimate_cohort_year: 2020
   # Age range for fertility calculations
   min_fertility_age: 14
   max_fertility_age: 49
   # Reference age for ratio calculations
+  # TR2025 methodology uses age 30 as the reference. Changing this value would
+  # deviate from the standard methodology and is not recommended.
   reference_age: 30
   # Ultimate attainment years
   projection_start_year: 2025

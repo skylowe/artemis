@@ -1130,8 +1130,6 @@ metadata:
 fertility:
   # Ultimate cohort TFR assumption
   ultimate_ctfr: 1.90
-  # Cohort that first achieves ultimate CTFR
-  ultimate_cohort_year: 2020
   # Age range for fertility calculations
   min_fertility_age: 14
   max_fertility_age: 49

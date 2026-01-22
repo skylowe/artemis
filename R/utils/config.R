@@ -106,6 +106,25 @@ validate_assumptions <- function(config) {
         .var.name = "max_fertility_age"
       )
     }
+
+    # Check reference_age - TR2025 methodology uses age 30
+    if (!is.null(fertility$reference_age)) {
+      min_age <- if (!is.null(fertility$min_fertility_age)) fertility$min_fertility_age else 14
+      max_age <- if (!is.null(fertility$max_fertility_age)) fertility$max_fertility_age else 49
+      checkmate::assert_integerish(
+        fertility$reference_age,
+        lower = min_age,
+        upper = max_age,
+        .var.name = "reference_age"
+      )
+      if (fertility$reference_age != 30) {
+        cli::cli_warn(c(
+          "Non-standard {.field reference_age}: {fertility$reference_age}",
+          "i" = "TR methodology uses age 30 as the reference age",
+          "i" = "Changing this value deviates from standard methodology"
+        ))
+      }
+    }
   }
 
   invisible(TRUE)

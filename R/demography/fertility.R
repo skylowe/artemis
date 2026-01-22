@@ -144,33 +144,36 @@ calculate_trend_factors <- function(ratios, exclude_years = 1997) {
 #'
 #' @description
 #' Determines when each age reaches its ultimate (constant) birth rate.
-#' Uses a piecewise linear formula with age 30 as the breakpoint.
+#' Uses a piecewise linear formula with the reference age as the breakpoint.
 #'
 #' @param min_age Integer: minimum fertility age (default: 14)
 #' @param max_age Integer: maximum fertility age (default: 49)
 #' @param base_year Integer: projection start year (default: 2025)
-#' @param age30_ultimate_year Integer: year when age 30 reaches ultimate (default: 2036)
+#' @param age30_ultimate_year Integer: year when reference age reaches ultimate (default: 2036)
 #' @param end_year Integer: year when max_age reaches ultimate (default: 2045)
+#' @param reference_age Integer: reference age for ratio calculations (default: 30).
+#'   TR2025 methodology uses age 30 as the reference age. Changing this value
+#'   would deviate from the standard methodology.
 #'
 #' @return data.table with columns: age, ultimate_year
 #'
 #' @details
-#' TR2025 uses a piecewise linear formula with age 30 as the breakpoint:
-#' - Ages 14-30: linear from base_year to age30_ultimate_year
-#' - Ages 31-49: linear from age30_ultimate_year to end_year
+#' TR2025 uses a piecewise linear formula with the reference age as the breakpoint:
+#' - Ages min_age to reference_age: linear from base_year to age30_ultimate_year
+#' - Ages reference_age+1 to max_age: linear from age30_ultimate_year to end_year
 #'
 #' This ensures:
-#' - Age 14 reaches ultimate in base_year (2025)
-#' - Age 30 reaches ultimate in age30_ultimate_year (2036)
-#' - Age 49 reaches ultimate in end_year (2045)
+#' - min_age reaches ultimate in base_year (2025)
+#' - reference_age reaches ultimate in age30_ultimate_year (2036)
+#' - max_age reaches ultimate in end_year (2045)
 #'
 #' @export
 calculate_ultimate_years <- function(min_age = 14, max_age = 49,
                                       base_year = 2025,
                                       age30_ultimate_year = 2036,
-                                      end_year = 2045) {
+                                      end_year = 2045,
+                                      reference_age = 30) {
   ages <- min_age:max_age
-  reference_age <- 30
 
   ultimate_years <- numeric(length(ages))
 
