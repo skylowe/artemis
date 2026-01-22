@@ -42,7 +42,8 @@ NULL
 #' required format for population projection.
 #'
 #' @param fertility_rates data.table: birth rates by year and age (14-49)
-#' @param projection_years Integer vector: years to project (2023-2099)
+#' @param projection_years Integer vector: years to project (default: 2023:2099)
+#' @param config List: optional configuration object to derive projection_years
 #'
 #' @return list with:
 #'   - valid: Logical indicating if data is valid
@@ -57,7 +58,16 @@ NULL
 #' - Years: at minimum 2023-2099
 #'
 #' @export
-verify_fertility_inputs <- function(fertility_rates, projection_years = 2023:2099) {
+verify_fertility_inputs <- function(fertility_rates, projection_years = NULL, config = NULL) {
+  # Derive projection_years from config if not provided
+  if (is.null(projection_years)) {
+    if (!is.null(config)) {
+      years <- get_projection_years(config, "population")
+      projection_years <- years$projection_start:years$projection_end
+    } else {
+      projection_years <- 2023:2099  # Fallback default
+    }
+  }
   cli::cli_h3("Verifying Fertility Inputs (Phase 1)")
 
   # Basic structure validation
@@ -129,7 +139,8 @@ verify_fertility_inputs <- function(fertility_rates, projection_years = 2023:209
 #' in the required format for population projection.
 #'
 #' @param mortality_qx data.table: death probabilities by year, age, sex
-#' @param projection_years Integer vector: years to project (2023-2099)
+#' @param projection_years Integer vector: years to project (default: 2023:2099)
+#' @param config List: optional configuration object to derive projection_years
 #'
 #' @return list with validation results
 #'
@@ -141,7 +152,16 @@ verify_fertility_inputs <- function(fertility_rates, projection_years = 2023:209
 #' - Years: at minimum 2023-2099
 #'
 #' @export
-verify_mortality_inputs <- function(mortality_qx, projection_years = 2023:2099) {
+verify_mortality_inputs <- function(mortality_qx, projection_years = NULL, config = NULL) {
+  # Derive projection_years from config if not provided
+  if (is.null(projection_years)) {
+    if (!is.null(config)) {
+      years <- get_projection_years(config, "population")
+      projection_years <- years$projection_start:years$projection_end
+    } else {
+      projection_years <- 2023:2099  # Fallback default
+    }
+  }
   cli::cli_h3("Verifying Mortality Inputs (Phase 2)")
 
   if (!data.table::is.data.table(mortality_qx)) {
@@ -287,7 +307,8 @@ verify_mortality_marital_differentials <- function(mortality_differentials) {
 #' projection.
 #'
 #' @param net_lpr data.table: net LPR immigration by year, age, sex
-#' @param projection_years Integer vector: years to project
+#' @param projection_years Integer vector: years to project (default: 2023:2099)
+#' @param config List: optional configuration object to derive projection_years
 #'
 #' @return list with validation results
 #'
@@ -298,7 +319,16 @@ verify_mortality_marital_differentials <- function(mortality_differentials) {
 #' - Sex: "male", "female"
 #'
 #' @export
-verify_lpr_immigration_inputs <- function(net_lpr, projection_years = 2023:2099) {
+verify_lpr_immigration_inputs <- function(net_lpr, projection_years = NULL, config = NULL) {
+  # Derive projection_years from config if not provided
+  if (is.null(projection_years)) {
+    if (!is.null(config)) {
+      years <- get_projection_years(config, "population")
+      projection_years <- years$projection_start:years$projection_end
+    } else {
+      projection_years <- 2023:2099  # Fallback default
+    }
+  }
   cli::cli_h3("Verifying LPR Immigration Inputs (Phase 3)")
 
   if (is.null(net_lpr)) {
@@ -361,12 +391,22 @@ verify_lpr_immigration_inputs <- function(net_lpr, projection_years = 2023:2099)
 #' projection.
 #'
 #' @param net_o data.table: net O immigration by year, age, sex
-#' @param projection_years Integer vector: years to project
+#' @param projection_years Integer vector: years to project (default: 2023:2099)
+#' @param config List: optional configuration object to derive projection_years
 #'
 #' @return list with validation results
 #'
 #' @export
-verify_o_immigration_inputs <- function(net_o, projection_years = 2023:2099) {
+verify_o_immigration_inputs <- function(net_o, projection_years = NULL, config = NULL) {
+  # Derive projection_years from config if not provided
+  if (is.null(projection_years)) {
+    if (!is.null(config)) {
+      years <- get_projection_years(config, "population")
+      projection_years <- years$projection_start:years$projection_end
+    } else {
+      projection_years <- 2023:2099  # Fallback default
+    }
+  }
   cli::cli_h3("Verifying O Immigration Inputs (Phase 5)")
 
   if (is.null(net_o)) {
@@ -427,7 +467,8 @@ verify_o_immigration_inputs <- function(net_o, projection_years = 2023:2099) {
 #' projection.
 #'
 #' @param marriage_rates List or data.table: marriage rates by year
-#' @param projection_years Integer vector: years to project
+#' @param projection_years Integer vector: years to project (default: 2023:2099)
+#' @param config List: optional configuration object to derive projection_years
 #'
 #' @return list with validation results
 #'
@@ -438,7 +479,16 @@ verify_o_immigration_inputs <- function(net_o, projection_years = 2023:2099) {
 #' - Prior marital status differentials
 #'
 #' @export
-verify_marriage_inputs <- function(marriage_rates, projection_years = 2023:2099) {
+verify_marriage_inputs <- function(marriage_rates, projection_years = NULL, config = NULL) {
+  # Derive projection_years from config if not provided
+  if (is.null(projection_years)) {
+    if (!is.null(config)) {
+      years <- get_projection_years(config, "population")
+      projection_years <- years$projection_start:years$projection_end
+    } else {
+      projection_years <- 2023:2099  # Fallback default
+    }
+  }
   cli::cli_h3("Verifying Marriage Inputs (Phase 6)")
 
   if (is.null(marriage_rates)) {
@@ -518,12 +568,22 @@ verify_marriage_inputs <- function(marriage_rates, projection_years = 2023:2099)
 #' projection.
 #'
 #' @param divorce_rates List or data.table: divorce rates by year
-#' @param projection_years Integer vector: years to project
+#' @param projection_years Integer vector: years to project (default: 2023:2099)
+#' @param config List: optional configuration object to derive projection_years
 #'
 #' @return list with validation results
 #'
 #' @export
-verify_divorce_inputs <- function(divorce_rates, projection_years = 2023:2099) {
+verify_divorce_inputs <- function(divorce_rates, projection_years = NULL, config = NULL) {
+  # Derive projection_years from config if not provided
+  if (is.null(projection_years)) {
+    if (!is.null(config)) {
+      years <- get_projection_years(config, "population")
+      projection_years <- years$projection_start:years$projection_end
+    } else {
+      projection_years <- 2023:2099  # Fallback default
+    }
+  }
   cli::cli_h3("Verifying Divorce Inputs (Phase 7)")
 
   if (is.null(divorce_rates)) {
@@ -605,7 +665,8 @@ verify_divorce_inputs <- function(divorce_rates, projection_years = 2023:2099) {
 #'
 #' @param historical_population data.table: historical population from Phase 4
 #' @param historical_marital data.table: historical population by marital status
-#' @param starting_year Integer: starting year (default: 2022)
+#' @param starting_year Integer: starting year (default: 2022, or from config)
+#' @param config List: optional configuration object to derive starting_year
 #'
 #' @return list with:
 #'   - population: Starting population by age, sex, population status
@@ -616,7 +677,17 @@ verify_divorce_inputs <- function(divorce_rates, projection_years = 2023:2099) {
 #' @export
 extract_starting_population <- function(historical_population,
                                          historical_marital = NULL,
-                                         starting_year = 2022) {
+                                         starting_year = NULL,
+                                         config = NULL) {
+  # Derive starting_year from config if not provided
+  if (is.null(starting_year)) {
+    if (!is.null(config)) {
+      years <- get_projection_years(config, "population")
+      starting_year <- years$starting_year
+    } else {
+      starting_year <- 2022  # Fallback default
+    }
+  }
   cli::cli_h3("Extracting Starting Population (Dec 31, {starting_year})")
 
   if (!data.table::is.data.table(historical_population)) {
@@ -707,8 +778,9 @@ extract_starting_population <- function(historical_population,
 #' @param divorce_rates Divorce rates from Phase 7
 #' @param historical_population Historical population from Phase 4
 #' @param historical_marital Historical marital population from Phase 4
-#' @param projection_years Years to project (default: 2023:2099)
-#' @param starting_year Starting year for projection (default: 2022)
+#' @param projection_years Years to project (default: 2023:2099, or from config)
+#' @param starting_year Starting year for projection (default: 2022, or from config)
+#' @param config List: optional configuration object to derive projection_years and starting_year
 #'
 #' @return list with:
 #'   - all_valid: TRUE if all inputs are valid
@@ -726,8 +798,20 @@ verify_all_projection_inputs <- function(fertility_rates,
                                           divorce_rates,
                                           historical_population,
                                           historical_marital = NULL,
-                                          projection_years = 2023:2099,
-                                          starting_year = 2022) {
+                                          projection_years = NULL,
+                                          starting_year = NULL,
+                                          config = NULL) {
+  # Derive years from config if not provided
+  if (is.null(projection_years) || is.null(starting_year)) {
+    if (!is.null(config)) {
+      years <- get_projection_years(config, "population")
+      if (is.null(projection_years)) projection_years <- years$projection_start:years$projection_end
+      if (is.null(starting_year)) starting_year <- years$starting_year
+    } else {
+      if (is.null(projection_years)) projection_years <- 2023:2099  # Fallback default
+      if (is.null(starting_year)) starting_year <- 2022
+    }
+  }
   cli::cli_h1("Phase 8A: Input Data Verification")
   cli::cli_alert_info("Projection period: {min(projection_years)}-{max(projection_years)}")
   cli::cli_alert_info("Starting year: {starting_year}")
@@ -860,12 +944,16 @@ validate_input_consistency <- function(inputs) {
 #'
 #' @description
 #' Returns default configuration parameters for projected population calculations.
+#' When a config parameter is provided, year-related values are extracted from it.
+#'
+#' @param config List: optional configuration object (from load_assumptions)
 #'
 #' @return list with configuration parameters
 #'
 #' @export
-get_projected_population_config <- function() {
-  list(
+get_projected_population_config <- function(config = NULL) {
+  # Default values
+  defaults <- list(
     # Time period
     starting_year = 2022,
     projection_start = 2023,
@@ -915,6 +1003,30 @@ get_projected_population_config <- function() {
       c(65, 100)
     )
   )
+
+  # Override with config values if provided
+  if (!is.null(config)) {
+    # Get projection period from metadata
+    proj_period <- get_config_with_default(
+      config, "metadata", "projection_period",
+      default = NULL
+    )
+    if (!is.null(proj_period)) {
+      if (!is.null(proj_period$start_year)) defaults$projection_start <- proj_period$start_year
+      if (!is.null(proj_period$end_year)) defaults$projection_end <- proj_period$end_year
+    }
+
+    # Get projected_population specific values
+    pp <- config$projected_population
+    if (!is.null(pp)) {
+      if (!is.null(pp$starting_year)) defaults$starting_year <- pp$starting_year
+      if (!is.null(pp$projection_start)) defaults$projection_start <- pp$projection_start
+      if (!is.null(pp$projection_end)) defaults$projection_end <- pp$projection_end
+      if (!is.null(pp$extended_end)) defaults$extended_end <- pp$extended_end
+    }
+  }
+
+  defaults
 }
 
 # =============================================================================
@@ -1401,8 +1513,8 @@ run_population_projection <- function(starting_population,
                                        mortality_qx,
                                        net_lpr,
                                        net_o,
-                                       start_year = 2022,
-                                       end_year = 2099,
+                                       start_year = NULL,
+                                       end_year = NULL,
                                        config = NULL,
                                        qx_100_119 = NULL,
                                        tr2025_births = NULL,
@@ -1411,6 +1523,14 @@ run_population_projection <- function(starting_population,
 
   if (is.null(config)) {
     config <- get_projected_population_config()
+  }
+
+  # Derive start_year/end_year from config if not explicitly provided
+  if (is.null(start_year)) {
+    start_year <- config$starting_year %||% 2022
+  }
+  if (is.null(end_year)) {
+    end_year <- config$projection_end %||% 2099
   }
 
   if (verbose) {

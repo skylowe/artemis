@@ -131,10 +131,19 @@ create_projected_population_targets <- function() {
           config_assumptions, "mortality", "starting_tr_qx", "female_qx_proj_file",
           default = "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
         )
+        proj_start <- get_config_with_default(
+          config_assumptions, "metadata", "projection_period", "start_year",
+          default = 2023
+        )
+        proj_end <- get_config_with_default(
+          config_assumptions, "metadata", "projection_period", "end_year",
+          default = 2099
+        )
         load_tr_qx_all_years(
           male_qx_file = male_proj_file,
           female_qx_file = female_proj_file,
-          start_year = 2023, end_year = 2100, ages = 100:119
+          start_year = proj_start, end_year = proj_end + 1, ages = 100:119,
+          config = config_assumptions
         )
       }
     ),

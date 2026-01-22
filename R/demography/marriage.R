@@ -1856,22 +1856,38 @@ calculate_starting_amr <- function(historical_amr, n_years = 5, weights = NULL) 
 #' where progress(t) = (t - start_year) / (ultimate_year - start_year)
 #'
 #' @param starting_amr Numeric: starting AMR value
-#' @param ultimate_amr Numeric: ultimate AMR value (default: 4000)
-#' @param start_year Integer: first projection year (default: 2023)
-#' @param ultimate_year Integer: year when ultimate is reached (default: 2047)
-#' @param end_year Integer: final projection year (default: 2099)
+#' @param ultimate_amr Numeric: ultimate AMR value (default: 4000, or from config)
+#' @param start_year Integer: first projection year (default: 2023, or from config)
+#' @param ultimate_year Integer: year when ultimate is reached (default: 2047, or from config)
+#' @param end_year Integer: final projection year (default: 2099, or from config)
 #' @param convergence_exp Numeric: exponent for convergence curve (default: 2)
 #'   Higher values = more gradual early change, faster late change
+#' @param config List: optional configuration object to derive year parameters
 #'
 #' @return data.table with year and projected_amr columns
 #'
 #' @export
 project_amr <- function(starting_amr,
-                        ultimate_amr = 4000,
-                        start_year = 2023,
-                        ultimate_year = 2047,
-                        end_year = 2099,
-                        convergence_exp = 2) {
+                        ultimate_amr = NULL,
+                        start_year = NULL,
+                        ultimate_year = NULL,
+                        end_year = NULL,
+                        convergence_exp = 2,
+                        config = NULL) {
+  # Derive parameters from config if not provided
+  if (!is.null(config)) {
+    years <- get_projection_years(config, "marriage")
+    if (is.null(start_year)) start_year <- years$projection_start
+    if (is.null(end_year)) end_year <- years$projection_end
+    if (is.null(ultimate_year)) ultimate_year <- years$ultimate_year
+    if (is.null(ultimate_amr)) ultimate_amr <- config$marriage$ultimate_amr %||% 4000
+  } else {
+    # Fallback defaults
+    if (is.null(start_year)) start_year <- 2023
+    if (is.null(ultimate_year)) ultimate_year <- 2047
+    if (is.null(end_year)) end_year <- 2099
+    if (is.null(ultimate_amr)) ultimate_amr <- 4000
+  }
   checkmate::assert_number(starting_amr, lower = 0)
   checkmate::assert_number(ultimate_amr, lower = 0)
   checkmate::assert_integerish(start_year)
@@ -1972,13 +1988,14 @@ scale_margrid_to_target_amr <- function(base_margrid, target_amr, standard_pop_g
 #' @param base_margrid Matrix: base MarGrid to scale
 #' @param historical_amr data.table: historical AMR values for starting calculation
 #' @param standard_pop_grid Matrix: 2010 standard population for AMR calculation
-#' @param ultimate_amr Numeric: ultimate AMR target (default: 4000)
-#' @param start_year Integer: first projection year (default: 2023)
-#' @param ultimate_year Integer: year when ultimate is reached (default: 2047)
-#' @param end_year Integer: final projection year (default: 2099)
+#' @param ultimate_amr Numeric: ultimate AMR target (default: 4000, or from config)
+#' @param start_year Integer: first projection year (default: 2023, or from config)
+#' @param ultimate_year Integer: year when ultimate is reached (default: 2047, or from config)
+#' @param end_year Integer: final projection year (default: 2099, or from config)
 #' @param convergence_exp Numeric: convergence exponent (default: 2)
 #' @param cache_dir Character: directory for caching results
 #' @param force_recompute Logical: force recomputation even if cache exists
+#' @param config List: optional configuration object to derive year parameters
 #'
 #' @return list with:
 #'   - rates: List of rate matrices by year (2023-2099)
@@ -1989,19 +2006,35 @@ scale_margrid_to_target_amr <- function(base_margrid, target_amr, standard_pop_g
 project_marriage_rates <- function(base_margrid,
                                     historical_amr,
                                     standard_pop_grid,
-                                    ultimate_amr = 4000,
-                                    start_year = 2023,
-                                    ultimate_year = 2047,
-                                    end_year = 2099,
+                                    ultimate_amr = NULL,
+                                    start_year = NULL,
+                                    ultimate_year = NULL,
+                                    end_year = NULL,
                                     convergence_exp = 2,
                                     cache_dir = here::here("data/cache/marriage"),
-                                    force_recompute = FALSE) {
+                                    force_recompute = FALSE,
+                                    config = NULL) {
+  # Derive parameters from config if not provided
+  if (!is.null(config)) {
+    years <- get_projection_years(config, "marriage")
+    if (is.null(start_year)) start_year <- years$projection_start
+    if (is.null(end_year)) end_year <- years$projection_end
+    if (is.null(ultimate_year)) ultimate_year <- years$ultimate_year
+    if (is.null(ultimate_amr)) ultimate_amr <- config$marriage$ultimate_amr %||% 4000
+  } else {
+    # Fallback defaults
+    if (is.null(start_year)) start_year <- 2023
+    if (is.null(ultimate_year)) ultimate_year <- 2047
+    if (is.null(end_year)) end_year <- 2099
+    if (is.null(ultimate_amr)) ultimate_amr <- 4000
+  }
+
   # Check for cached results
-  cache_file <- file.path(cache_dir, "projected_rates_2023_2099.rds")
+  cache_file <- file.path(cache_dir, get_cache_filename("projected_rates", start_year, end_year))
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
 
   if (file.exists(cache_file) && !force_recompute) {
-    cli::cli_alert_success("Loading cached projected rates (2023-2099)")
+    cli::cli_alert_success("Loading cached projected rates ({start_year}-{end_year})")
     cached <- readRDS(cache_file)
 
     # Verify cache integrity
@@ -2014,7 +2047,7 @@ project_marriage_rates <- function(base_margrid,
     cli::cli_warn("Cache file corrupt, recomputing...")
   }
 
-  cli::cli_h1("Phase 6E: AMR Projection (2023-2099)")
+  cli::cli_h1("Phase 6E: AMR Projection ({start_year}-{end_year})")
 
   # =========================================================================
   # STEP 1: Calculate starting AMR

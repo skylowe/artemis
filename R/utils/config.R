@@ -331,3 +331,64 @@ select_population_source <- function(tr_pop, census_pop, use_tr) {
     census_pop
   }
 }
+
+#' Get projection year parameters from config
+#'
+#' @description
+#' Extracts projection year parameters from config, with fallback defaults
+#' for backward compatibility.
+#'
+#' @param config List: configuration object
+#' @param component Character: "population", "marriage", "divorce", or "mortality"
+#'
+#' @return List with starting_year, projection_start, projection_end, ultimate_year
+#'
+#' @export
+get_projection_years <- function(config, component = "population") {
+  # Get global projection period from metadata
+
+proj_period <- get_config_with_default(
+    config, "metadata", "projection_period",
+    default = list(start_year = 2023, end_year = 2099)
+  )
+
+  # Get component-specific config
+  comp_config <- switch(component,
+    "population" = config$projected_population,
+    "marriage" = config$marriage,
+    "divorce" = config$divorce,
+    "mortality" = config$mortality,
+    NULL
+  )
+
+  list(
+    starting_year = get_config_with_default(
+      comp_config, "starting_year",
+      default = proj_period$start_year - 1
+    ),
+    projection_start = proj_period$start_year,
+    projection_end = proj_period$end_year,
+    ultimate_year = get_config_with_default(
+      comp_config, "ultimate_year",
+      default = 2047
+    )
+  )
+}
+
+#' Generate cache filename with year range
+#'
+#' @description
+#' Creates a standardized cache filename that includes the year range.
+#' Useful for ensuring cache files are invalidated when year ranges change.
+#'
+#' @param base_name Character: base name (e.g., "projected_rates")
+#' @param start_year Integer: start year
+#' @param end_year Integer: end year
+#' @param ext Character: file extension (default: "rds")
+#'
+#' @return Character: filename like "projected_rates_2023_2099.rds"
+#'
+#' @export
+get_cache_filename <- function(base_name, start_year, end_year, ext = "rds") {
+  sprintf("%s_%d_%d.%s", base_name, start_year, end_year, ext)
+}

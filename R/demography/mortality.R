@@ -461,9 +461,10 @@ load_tr_starting_values <- function(
 #'
 #' @param male_qx_file Character: path to TR2025 male death probability file
 #' @param female_qx_file Character: path to TR2025 female death probability file
-#' @param start_year Integer: first year to include (default: 2024)
-#' @param end_year Integer: last year to include (default: 2099)
+#' @param start_year Integer: first year to include (default: 2024, or from config)
+#' @param end_year Integer: last year to include (default: 2099, or from config)
 #' @param ages Integer vector: ages to include (default: 0:119)
+#' @param config List: optional configuration object to derive year parameters
 #'
 #' @return data.table with qx by year, age, and sex
 #'
@@ -475,10 +476,21 @@ load_tr_starting_values <- function(
 load_tr_qx_all_years <- function(
     male_qx_file = "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv",
     female_qx_file = "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv",
-    start_year = 2024,
-    end_year = 2099,
-    ages = 0:119
+    start_year = NULL,
+    end_year = NULL,
+    ages = 0:119,
+    config = NULL
 ) {
+  # Derive parameters from config if not provided
+  if (!is.null(config)) {
+    years <- get_projection_years(config, "mortality")
+    if (is.null(start_year)) start_year <- years$projection_start
+    if (is.null(end_year)) end_year <- years$projection_end
+  } else {
+    # Fallback defaults
+    if (is.null(start_year)) start_year <- 2024
+    if (is.null(end_year)) end_year <- 2099
+  }
   checkmate::assert_file_exists(male_qx_file)
   checkmate::assert_file_exists(female_qx_file)
   checkmate::assert_int(start_year)
@@ -527,7 +539,8 @@ load_tr_qx_all_years <- function(
 #' @param male_file Character: path to male period life table CSV
 #' @param female_file Character: path to female period life table CSV
 #' @param start_year Integer: first year to include (default: 1900)
-#' @param end_year Integer: last year to include (default: 2099)
+#' @param end_year Integer: last year to include (default: 2099, or from config)
+#' @param config List: optional configuration object to derive year parameters
 #'
 #' @return data.table with columns: year, age, sex, qx, lx, Lx, Tx, ex
 #'
@@ -539,9 +552,21 @@ load_tr_qx_all_years <- function(
 load_tr_period_life_tables <- function(
     male_file = "data/raw/SSA_TR2025/PerLifeTables_M_Alt2_TR2025.csv",
     female_file = "data/raw/SSA_TR2025/PerLifeTables_F_Alt2_TR2025.csv",
-    start_year = 1900,
-    end_year = 2099
+    start_year = NULL,
+    end_year = NULL,
+    config = NULL
 ) {
+  # Derive parameters from config if not provided
+  if (!is.null(config)) {
+    years <- get_projection_years(config, "mortality")
+    # start_year defaults to 1900 for historical coverage, not projection start
+    if (is.null(start_year)) start_year <- 1900
+    if (is.null(end_year)) end_year <- years$projection_end
+  } else {
+    # Fallback defaults
+    if (is.null(start_year)) start_year <- 1900
+    if (is.null(end_year)) end_year <- 2099
+  }
   checkmate::assert_file_exists(male_file)
   checkmate::assert_file_exists(female_file)
 

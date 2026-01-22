@@ -81,7 +81,8 @@
       "Bash(tree:*)",
       "Bash(wc:*)",
       "Bash(git -C /mnt/c/Users/skylo/git/artemis rev-list:*)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(git rm:*)"
     ]
   }
 }
