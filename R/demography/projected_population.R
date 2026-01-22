@@ -5668,3 +5668,124 @@ validate_projected_population_comprehensive <- function(projection_results,
 
   validation
 }
+
+# =============================================================================
+# TARGET HELPER FUNCTIONS
+# =============================================================================
+
+#' Combine mortality qx for population projection (target helper)
+#'
+#' @description
+#' Helper function for the mortality_qx_for_projection target. Combines historical
+#' and projected qx, optionally loading TR2025 historical qx directly, and applies
+#' age-last-birthday adjustments for ages 85+.
+#'
+#' @param mortality_qx_projected data.table: Projected qx from mortality projection
+#' @param mortality_qx_historical data.table: Historical qx (fallback if not using TR qx)
+#' @param qx_age_last_birthday data.table: Age-last-birthday qx for adjustment
+#' @param config List: config_assumptions with mortality settings
+#'
+#' @return data.table with combined qx for all years needed by projection
+#'
+#' @export
+combine_mortality_qx_for_projection <- function(mortality_qx_projected,
+                                                  mortality_qx_historical,
+                                                  qx_age_last_birthday,
+                                                  config) {
+  # Select common columns
+  common_cols <- c("year", "age", "sex", "qx")
+  proj_qx <- mortality_qx_projected[, ..common_cols]
+
+  # Check if using tr_qx method - if so, load TR2025 historical qx
+  method <- config$mortality$starting_aax_method
+  if (!is.null(method) && method == "tr_qx") {
+    cli::cli_alert_info("Using TR2025 historical qx for tr_qx method")
+
+    # Get historical file paths from config
+    male_hist_file <- config$mortality$starting_tr_qx$male_qx_hist_file
+    female_hist_file <- config$mortality$starting_tr_qx$female_qx_hist_file
+
+    # Use default paths if not in config
+    if (is.null(male_hist_file)) {
+      male_hist_file <- "data/raw/SSA_TR2025/DeathProbsE_M_Hist_TR2025.csv"
+    }
+    if (is.null(female_hist_file)) {
+      female_hist_file <- "data/raw/SSA_TR2025/DeathProbsE_F_Hist_TR2025.csv"
+    }
+
+    # Load TR2025 historical qx (1900-2022)
+    hist_qx <- load_tr2025_qx_all_years(
+      male_qx_file = male_hist_file,
+      female_qx_file = female_hist_file,
+      start_year = 1900,
+      end_year = 2022,
+      ages = 0:119
+    )
+
+    # Limit to age 100 (100+ group) like we do for projected
+    hist_qx <- hist_qx[age <= 100]
+    hist_qx <- hist_qx[, ..common_cols]
+  } else {
+    # Use calculated historical qx
+    hist_qx <- mortality_qx_historical[, ..common_cols]
+  }
+
+  # Remove overlapping years from historical (projected takes precedence)
+  proj_years <- unique(proj_qx$year)
+  hist_qx <- hist_qx[!year %in% proj_years]
+
+  combined_qx <- data.table::rbindlist(
+    list(hist_qx, proj_qx),
+    use.names = TRUE
+  )
+
+  # Apply age-last-birthday qx for ages 85+ (Fix 1)
+  cli::cli_alert_info("Applying age-last-birthday qx adjustment for ages 85+")
+  combined_qx <- apply_age_last_birthday_qx(
+    mortality_qx = combined_qx,
+    qx_alb = qx_age_last_birthday,
+    min_age = 85
+  )
+
+  combined_qx
+}
+
+#' Extract starting marital population (target helper)
+#'
+#' @description
+#' Helper function for the starting_marital_pop target. Extracts and processes
+#' historical marital population for the starting year of projection.
+#'
+#' @param historical_population_marital data.table: Historical population by marital status
+#' @param config List: config_assumptions with projected_population settings
+#'
+#' @return data.table with starting year marital population by age, sex, marital_status
+#'
+#' @export
+extract_starting_marital_population <- function(historical_population_marital, config) {
+  cli::cli_h2("Extracting Starting Marital Population")
+  starting_year <- config$projected_population$starting_year
+
+  # Get from historical_population_marital
+  marital_data <- historical_population_marital[year == starting_year]
+
+  # Aggregate by age, sex, marital_status (remove orientation if present)
+  if ("orientation" %in% names(marital_data)) {
+    marital_data <- marital_data[, .(population = sum(population, na.rm = TRUE)),
+                                  by = .(year, age, sex, marital_status)]
+  }
+
+  # Standardize marital status names
+  if ("never_married" %in% marital_data$marital_status) {
+    marital_data[marital_status == "never_married", marital_status := "single"]
+  }
+
+  total_pop <- sum(marital_data$population, na.rm = TRUE)
+  married_pop <- marital_data[marital_status == "married", sum(population, na.rm = TRUE)]
+
+  cli::cli_alert_success(
+    "Starting marital population: {format(round(total_pop/1e6, 2), big.mark=',')}M total, {format(round(married_pop/1e6, 2), big.mark=',')}M married"
+  )
+
+  marital_data
+}

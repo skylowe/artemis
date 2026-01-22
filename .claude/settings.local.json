@@ -77,7 +77,10 @@
       "WebFetch(domain:www2.nber.org)",
       "Bash(kill:*)",
       "Bash(head:*)",
-      "WebFetch(domain:)"
+      "WebFetch(domain:)",
+      "Bash(tree:*)",
+      "Bash(wc:*)",
+      "Bash(git -C /mnt/c/Users/skylo/git/artemis rev-list:*)"
     ]
   }
 }

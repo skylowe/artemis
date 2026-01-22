@@ -1707,3 +1707,54 @@ summarize_grid_by_age_groups <- function(grid,
 
   data.table::rbindlist(results)
 }
+
+# =============================================================================
+# TARGET HELPER FUNCTIONS
+# =============================================================================
+
+#' Load aligned ACS marriage grids (target helper)
+#'
+#' @description
+#' Helper function for the acs_marriage_grids target. Loads cached ACS marriage
+#' grids and aligns them to MarGrid dimensions (87x87, ages 14-100).
+#'
+#' @param cache_dir Character: path to ACS marriage cache directory
+#'
+#' @return List of 87x87 matrices by year
+#'
+#' @export
+load_aligned_acs_marriage_grids <- function(cache_dir = here::here("data/cache/acs_marriage")) {
+  acs_files <- list.files(cache_dir, pattern = "^new_marriages_20[0-9]{2}\\.rds$", full.names = TRUE)
+
+  if (length(acs_files) == 0) {
+    cli::cli_abort("ACS marriage grids not cached - run fetch_acs_new_marriages() first")
+  }
+
+  aligned_grids <- list()
+  for (f in acs_files) {
+    yr <- as.integer(gsub(".*new_marriages_([0-9]{4})\\.rds", "\\1", f))
+    data <- readRDS(f)
+    acs_grid <- data$grid
+    acs_ages <- as.integer(rownames(acs_grid))
+
+    # Align to MarGrid dimensions (87×87, ages 14-100)
+    aligned <- matrix(0, nrow = 87, ncol = 87,
+                      dimnames = list(14:100, 14:100))
+
+    for (i in seq_along(acs_ages)) {
+      h_age <- acs_ages[i]
+      if (h_age < 14 || h_age > 100) next
+      h_idx <- h_age - 14 + 1
+
+      for (j in seq_along(acs_ages)) {
+        w_age <- acs_ages[j]
+        if (w_age < 14 || w_age > 100) next
+        w_idx <- w_age - 14 + 1
+        aligned[h_idx, w_idx] <- acs_grid[i, j]
+      }
+    }
+    aligned_grids[[as.character(yr)]] <- aligned
+  }
+
+  aligned_grids
+}

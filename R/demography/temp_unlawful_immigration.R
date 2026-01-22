@@ -1389,3 +1389,75 @@ validate_odist <- function(odist) {
 
   checks_passed
 }
+
+# =============================================================================
+# TARGET HELPER FUNCTIONS
+# =============================================================================
+
+#' Calculate Net O immigration for population projection (target helper)
+#'
+#' @description
+#' Helper function for the net_o_for_projection target. Takes V.A2 net O totals
+#' and applies the TR-derived age-sex distribution to get net O by age and sex.
+#'
+#' @param va2_net_immigration data.table with V.A2 net immigration values
+#' @param tr_derived_dist data.table: TR-derived immigration distribution from
+#'   calculate_tr_derived_distribution()
+#' @param calibration_add Numeric: additional immigration to add (default: 0)
+#'
+#' @return data.table with columns: year, age, sex, net_o
+#'
+#' @export
+calculate_net_o_for_projection <- function(va2_net_immigration,
+                                            tr_derived_dist,
+                                            calibration_add = 0) {
+  # Get V.A2 totals
+  va2_totals <- va2_net_immigration[, .(year, o_net)]
+
+  # Add calibration
+  va2_totals[, net_o_total := o_net + calibration_add]
+
+  # Get the TR-derived distribution for applying to totals
+  # IMPORTANT: Age 100 has inflated values due to 100+ open-ended group artifact
+  # in the back-calculation. TR2025 assumes zero immigration at 100+, so we
+  # exclude age 100 and renormalize the distribution for ages 0-99.
+  dist <- tr_derived_dist[, .(age, sex, implied_dist)]
+
+  # Exclude age 100 and renormalize across BOTH sexes
+  dist_0_99 <- dist[age < 100]
+  total_dist <- sum(dist_0_99$implied_dist)
+  dist_0_99[, implied_dist := implied_dist / total_dist]
+
+  # Add age 100 with 0 distribution
+  dist_100 <- data.table::data.table(
+    age = 100L,
+    sex = c("male", "female"),
+    implied_dist = 0
+  )
+  dist_clean <- rbind(dist_0_99, dist_100)
+
+  # Apply distribution to V.A2 totals
+  result_list <- lapply(unique(va2_totals$year), function(yr) {
+    yr_total <- va2_totals[year == yr, net_o_total]
+    if (length(yr_total) == 0 || is.na(yr_total)) return(NULL)
+
+    yr_dist <- data.table::copy(dist_clean)
+    yr_dist[, year := yr]
+    yr_dist[, net_o := yr_total * implied_dist]
+    yr_dist[, .(year, age, sex, net_o)]
+  })
+
+  result <- data.table::rbindlist(result_list)
+  data.table::setorder(result, year, sex, age)
+
+  # Log sample values
+  if (2099 %in% result$year) {
+    total <- result[year == 2099, sum(net_o)]
+    base <- va2_totals[year == 2099, o_net]
+    cli::cli_alert_info(
+      "2099 Net O: {format(round(total), big.mark=',')} (Base {format(base, big.mark=',')} + {format(calibration_add, big.mark=',')})"
+    )
+  }
+
+  result
+}

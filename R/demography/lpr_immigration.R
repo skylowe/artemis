@@ -1014,6 +1014,52 @@ calculate_net_lpr <- function(lpr_immigration, emigration) {
 }
 
 # ===========================================================================
+# TARGET HELPER FUNCTIONS
+# ===========================================================================
+
+#' Get LPR distribution for projection (target helper)
+#'
+#' @description
+#' Helper function for the lpr_distribution target. Selects the appropriate
+#' distribution method based on config and applies elderly overrides.
+#'
+#' @param config List: config_assumptions containing immigration settings
+#' @param tr_derived_dist data.table: TR-derived distribution from
+#'   calculate_tr_derived_distribution() (for "tr_derived" method)
+#'
+#' @return data.table with columns: age, sex, distribution
+#'
+#' @export
+get_lpr_distribution_for_projection <- function(config, tr_derived_dist = NULL) {
+  method <- config$immigration$lpr$distribution_method
+  if (is.null(method)) method <- "tr_derived"
+
+  # Calculate approximate total net immigration for override proportions
+  # Using ultimate values: net LPR (~788K) + net O (~750K) = ~1.54M
+  total_net_imm <- config$immigration$ultimate_net_lpr_immigration +
+                   (config$immigration$o_immigration$ultimate_gross_o * 0.5)
+
+  if (method == "dhs") {
+    # DHS-based distribution with elderly override for ages 85+
+    get_immigration_distribution(
+      method = "dhs",
+      dhs_data = load_dhs_lpr_data(),
+      dhs_years = config$immigration$lpr$distribution_years,
+      elderly_override = config$immigration$lpr$elderly_override,
+      total_net_immigration = total_net_imm
+    )
+  } else {
+    # TR2025-derived distribution with elderly override for ages 85+
+    get_immigration_distribution(
+      method = "tr_derived",
+      tr_derived_data = tr_derived_dist,
+      elderly_override_tr_derived = config$immigration$lpr$elderly_override_tr_derived,
+      total_net_immigration = total_net_imm
+    )
+  }
+}
+
+# ===========================================================================
 # MAIN ENTRY POINT
 # ===========================================================================
 

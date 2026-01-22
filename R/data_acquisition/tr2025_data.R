@@ -752,3 +752,75 @@ get_tr2025_va2_net_o <- function(years = 2023:2099,
 
   result
 }
+
+# =============================================================================
+# TR2025 POPULATION AND QX LOADING (for target modularization)
+# =============================================================================
+
+#' Load TR2025 Population in Long Format
+#'
+#' @description
+#' Loads TR2025 December 31 population data and converts to long format
+#' with columns: year, age, sex, population.
+#'
+#' @param file_path Character: path to SSPopDec file (default: Alt2)
+#'
+#' @return data.table with columns: year, age, sex, population
+#'
+#' @export
+load_tr2025_population_long <- function(file_path = here::here("data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv")) {
+  if (!file.exists(file_path)) {
+    cli::cli_abort("TR2025 population file not found: {file_path}")
+  }
+
+  tr_pop <- data.table::fread(file_path)
+
+  # Convert to long format: year, age, sex, population
+  tr_pop_long <- data.table::rbindlist(list(
+    tr_pop[, .(year = Year, age = Age, sex = "male", population = `M Tot`)],
+    tr_pop[, .(year = Year, age = Age, sex = "female", population = `F Tot`)]
+  ))
+
+  cli::cli_alert_success("Loaded TR2025 population: {nrow(tr_pop_long)} rows")
+  tr_pop_long
+}
+
+#' Load TR2025 Death Probabilities (qx) in Long Format
+#'
+#' @description
+#' Loads TR2025 death probability files and converts to long format
+#' with columns: year, age, sex, qx.
+#'
+#' @param male_file Character: path to male qx file
+#' @param female_file Character: path to female qx file
+#'
+#' @return data.table with columns: year, age, sex, qx
+#'
+#' @export
+load_tr2025_qx_long <- function(male_file = here::here("data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"),
+                                 female_file = here::here("data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv")) {
+  if (!file.exists(male_file) || !file.exists(female_file)) {
+    cli::cli_abort("TR2025 qx files not found")
+  }
+
+  # Load and melt male qx
+  tr_qx_male <- data.table::fread(male_file, skip = 1)
+  tr_qx_m <- data.table::melt(tr_qx_male, id.vars = "Year",
+                               variable.name = "age_chr", value.name = "qx")
+  tr_qx_m[, age := as.integer(as.character(age_chr))]
+  tr_qx_m[, sex := "male"]
+
+  # Load and melt female qx
+  tr_qx_female <- data.table::fread(female_file, skip = 1)
+  tr_qx_f <- data.table::melt(tr_qx_female, id.vars = "Year",
+                               variable.name = "age_chr", value.name = "qx")
+  tr_qx_f[, age := as.integer(as.character(age_chr))]
+  tr_qx_f[, sex := "female"]
+
+  # Combine
+  tr_qx <- data.table::rbindlist(list(tr_qx_m, tr_qx_f))
+  tr_qx <- tr_qx[, .(year = Year, age, sex, qx)]
+
+  cli::cli_alert_success("Loaded TR2025 qx: {nrow(tr_qx)} rows")
+  tr_qx
+}
