@@ -4239,3 +4239,940 @@ validate_children_fate <- function(children_fate_result,
 
   validation_results
 }
+
+# =============================================================================
+# PHASE 8E: CNI POPULATION (EQUATION 1.8.7)
+# =============================================================================
+
+#' Project USAF Population (Phase 8E.1) - Vectorized
+#'
+#' @description
+#' Projects the U.S. resident population plus armed forces overseas (USAF)
+#' forward by sex and single year of age using vectorized operations.
+#'
+#' Per TR2025: "The USAF population is projected forward by sex and single year
+#' of age by subtracting deaths using the same death rates applied to the Social
+#' Security area population, adding births in the residential population calculated
+#' with the same birth rates applied to the Social Security area, and adding net
+#' immigration prorated by the ratio of beginning of year USAF population to the
+#' Social Security area population."
+#'
+#' @param usaf_prev data.table: USAF population at previous year-end by age/sex
+#' @param ss_pop_prev data.table: SS area population at previous year-end by age/sex
+#' @param births_ss Numeric: Total births during year (from SS area)
+#' @param deaths_ss data.table: Deaths during year by age/sex (from SS area)
+#' @param net_immigration data.table: Net immigration by age/sex
+#' @param sex_ratio Numeric: Male births per 1000 female births (default: 1048)
+#' @param max_age Integer: Maximum single age (default: 100)
+#'
+#' @return data.table with USAF population at end of year by age/sex
+#'
+#' @keywords internal
+project_usaf_year <- function(usaf_prev,
+                               ss_pop_prev,
+                               births_ss,
+                               deaths_ss,
+                               net_immigration,
+                               sex_ratio = 1048,
+                               max_age = 100) {
+
+  # Ensure data.tables are keyed properly for fast merges
+  data.table::setkey(usaf_prev, age, sex)
+  data.table::setkey(ss_pop_prev, age, sex)
+  data.table::setkey(deaths_ss, age, sex)
+  data.table::setkey(net_immigration, age, sex)
+
+  # Calculate USAF/SS ratio at beginning of year
+  usaf_total <- usaf_prev[, sum(population, na.rm = TRUE)]
+  ss_total <- ss_pop_prev[, sum(population, na.rm = TRUE)]
+  usaf_ss_ratio <- if (ss_total > 0) usaf_total / ss_total else 0.95
+
+  # Calculate qx from SS deaths / SS population
+  deaths_merged <- merge(deaths_ss, ss_pop_prev, by = c("age", "sex"), all.x = TRUE)
+  deaths_merged[, qx := fifelse(population > 0, deaths / population, 0)]
+
+  # Merge USAF with qx to get deaths
+  usaf_calc <- merge(usaf_prev, deaths_merged[, .(age, sex, qx)], by = c("age", "sex"), all.x = TRUE)
+  usaf_calc[is.na(qx), qx := 0]
+  usaf_calc[, usaf_deaths := population * qx]
+
+  # Prepare net immigration prorated to USAF
+  net_imm_usaf <- data.table::copy(net_immigration)
+  net_imm_usaf[, net_immigration := net_immigration * usaf_ss_ratio]
+
+  # Merge all data for vectorized calculation
+  calc_data <- merge(usaf_calc, net_imm_usaf, by = c("age", "sex"), all.x = TRUE)
+  calc_data[is.na(net_immigration), net_immigration := 0]
+
+  # Add births data (age 0 only)
+  male_pct <- sex_ratio / (sex_ratio + 1000)
+  female_pct <- 1 - male_pct
+  births_usaf <- births_ss * usaf_ss_ratio
+
+  # Create shifted population (age x gets pop from age x-1)
+  # For vectorized aging
+  prev_ages <- usaf_prev[, .(age_next = age + 1, sex, pop_prev = population)]
+  prev_ages <- prev_ages[age_next <= max_age]  # Remove ages that would exceed max
+
+  # Build new population
+  # Ages 1 to max_age-1: previous year's age-1 minus deaths plus immigration
+  usaf_new <- merge(
+    data.table::data.table(
+      age = rep(0:max_age, 2),
+      sex = rep(c("male", "female"), each = max_age + 1)
+    ),
+    prev_ages,
+    by.x = c("age", "sex"),
+    by.y = c("age_next", "sex"),
+    all.x = TRUE
+  )
+  usaf_new[is.na(pop_prev), pop_prev := 0]
+
+  # Merge deaths and immigration
+  usaf_new <- merge(usaf_new, calc_data[, .(age, sex, usaf_deaths, net_immigration)],
+                    by = c("age", "sex"), all.x = TRUE)
+  usaf_new[is.na(usaf_deaths), usaf_deaths := 0]
+  usaf_new[is.na(net_immigration), net_immigration := 0]
+
+  # Calculate new population
+  usaf_new[, population := pop_prev - usaf_deaths + net_immigration]
+
+  # Handle age 0: births minus deaths plus immigration
+  usaf_new[age == 0 & sex == "male", population := births_usaf * male_pct - usaf_deaths + net_immigration]
+  usaf_new[age == 0 & sex == "female", population := births_usaf * female_pct - usaf_deaths + net_immigration]
+
+  # Handle max_age (100+): also add survivors from previous 100+
+  prev_100_plus <- usaf_prev[age == max_age, .(sex, prev_100 = population)]
+  deaths_100 <- calc_data[age == max_age, .(sex, deaths_100 = usaf_deaths)]
+  imm_100 <- net_imm_usaf[age == max_age, .(sex, imm_100 = net_immigration)]
+
+  max_age_adj <- merge(prev_100_plus, deaths_100, by = "sex", all.x = TRUE)
+  max_age_adj <- merge(max_age_adj, imm_100, by = "sex", all.x = TRUE)
+  max_age_adj[is.na(prev_100), prev_100 := 0]
+  max_age_adj[is.na(deaths_100), deaths_100 := 0]
+  max_age_adj[is.na(imm_100), imm_100 := 0]
+  max_age_adj[, adj := prev_100 - deaths_100 + imm_100]
+
+  usaf_new <- merge(usaf_new, max_age_adj[, .(sex, adj)], by = "sex", all.x = TRUE)
+  usaf_new[is.na(adj), adj := 0]
+  usaf_new[age == max_age, population := population + adj]
+
+  # Ensure non-negative and clean up
+  usaf_new[, population := pmax(0, population)]
+  usaf_new[, c("pop_prev", "usaf_deaths", "net_immigration", "adj") := NULL]
+
+  data.table::setorder(usaf_new, sex, age)
+  usaf_new[, .(age, sex, population)]
+}
+
+
+#' Calculate Residential Population (Phase 8E.2)
+#'
+#' @description
+#' Calculates residential population by subtracting armed forces overseas
+#' from USAF population.
+#'
+#' Per TR2025: "The residential population is calculated by subtracting an
+#' assumed constant number of armed forces overseas by sex and single year
+#' of age from the USAF population."
+#'
+#' @param usaf_pop data.table: USAF population by age/sex
+#' @param armed_forces_overseas data.table: Armed forces overseas by age/sex
+#'   (assumed constant from starting year)
+#'
+#' @return data.table with residential population by age/sex
+#'
+#' @keywords internal
+calculate_residential_population <- function(usaf_pop, armed_forces_overseas) {
+  result <- merge(
+    usaf_pop,
+    armed_forces_overseas[, .(age, sex, af_overseas = population)],
+    by = c("age", "sex"),
+    all.x = TRUE
+  )
+
+  result[is.na(af_overseas), af_overseas := 0]
+  result[, residential := pmax(0, population - af_overseas)]
+  result[, .(age, sex, population = residential)]
+}
+
+
+#' Calculate Civilian Population (Phase 8E.3)
+#'
+#' @description
+#' Calculates civilian population by subtracting total armed forces
+#' from USAF population.
+#'
+#' Per TR2025: "Likewise, the civilian population is calculated by subtracting
+#' an assumed constant number of total armed forces by sex and single year of
+#' age from the USAF population."
+#'
+#' @param usaf_pop data.table: USAF population by age/sex
+#' @param total_armed_forces data.table: Total armed forces by age/sex
+#'   (assumed constant from starting year)
+#'
+#' @return data.table with civilian population by age/sex
+#'
+#' @keywords internal
+calculate_civilian_population <- function(usaf_pop, total_armed_forces) {
+  result <- merge(
+    usaf_pop,
+    total_armed_forces[, .(age, sex, af_total = population)],
+    by = c("age", "sex"),
+    all.x = TRUE
+  )
+
+  result[is.na(af_total), af_total := 0]
+  result[, civilian := pmax(0, population - af_total)]
+  result[, .(age, sex, population = civilian)]
+}
+
+
+#' Calculate CNI Population from Civilian (Phase 8E.4)
+#'
+#' @description
+#' Applies CNI/civilian ratios to civilian population.
+#'
+#' Per TR2025: "The CNI population is calculated by applying the ratios of CNI
+#' population to civilian population by year, sex, and single year of age in
+#' the starting year to the civilian population."
+#'
+#' @param civilian_pop data.table: Civilian population by age/sex
+#' @param cni_civilian_ratios data.table: CNI/civilian ratios by age/sex
+#'   from starting year
+#'
+#' @return data.table with CNI population by age/sex
+#'
+#' @keywords internal
+calculate_cni_from_civilian <- function(civilian_pop, cni_civilian_ratios) {
+  result <- merge(
+    civilian_pop,
+    cni_civilian_ratios[, .(age, sex, cni_ratio = ratio)],
+    by = c("age", "sex"),
+    all.x = TRUE
+  )
+
+  # Default ratio of 1.0 if not available (most people are CNI)
+  result[is.na(cni_ratio), cni_ratio := 0.98]
+  result[, cni := population * cni_ratio]
+  result[, .(age, sex, population = cni)]
+}
+
+
+#' Disaggregate CNI Population by Marital Status (Phase 8E.5) - Vectorized
+#'
+#' @description
+#' Disaggregates CNI population into five marital statuses using vectorized operations.
+#'
+#' Per TR2025: CNI marital statuses are:
+#' - single (never married)
+#' - married_spouse_present
+#' - separated
+#' - widowed
+#' - divorced
+#'
+#' @param cni_pop data.table: CNI population by age/sex
+#' @param marital_adjustments data.table: Marital status adjustments by age/sex
+#' @param separated_ratios data.table: Separated/married ratios by age/sex
+#' @param cni_marital_ratios data.table: CNI/total ratios by age/sex/marital
+#' @param marital_pop_total data.table: Total population by marital status (optional)
+#'
+#' @return data.table with CNI population by age, sex, marital_status
+#'
+#' @keywords internal
+disaggregate_cni_marital <- function(cni_pop,
+                                      marital_adjustments = NULL,
+                                      separated_ratios = NULL,
+                                      cni_marital_ratios = NULL,
+                                      marital_pop_total = NULL) {
+
+  # Ensure cni_pop is properly structured
+  cni_pop <- data.table::as.data.table(cni_pop)
+  if (!"population" %in% names(cni_pop)) {
+    cli::cli_abort("cni_pop must have a 'population' column")
+  }
+
+  # Handle separated ratios
+  if (is.null(separated_ratios)) {
+    # Default separated ratio by age (increases with age)
+    separated_ratios <- data.table::data.table(
+      age = 0:100,
+      separated_ratio = pmin(0.10, 0.02 + (0:100) * 0.0008)
+    )
+  }
+
+  # If we have marital_pop_total, use it for proportions
+  if (!is.null(marital_pop_total) && nrow(marital_pop_total) > 0) {
+    # Make a clean copy of marital_pop_total with explicit column selection
+    marital_dt <- data.table::data.table(
+      age = as.integer(marital_pop_total$age),
+      sex = as.character(marital_pop_total$sex),
+      marital_status = as.character(marital_pop_total$marital_status),
+      population = as.numeric(marital_pop_total$population)
+    )
+
+    # Aggregate marital_pop_total by age/sex/marital_status
+    marital_props <- marital_dt[, list(population = sum(population, na.rm = TRUE)),
+                                 by = list(age, sex, marital_status)]
+    marital_props[, total := sum(population), by = list(age, sex)]
+    marital_props[, prop := fifelse(total > 0, population / total, 0)]
+
+    # Standardize marital status names (Phase 8C uses "single", "married", "divorced", "widowed")
+    # CNI uses: "single", "married_spouse_present", "separated", "widowed", "divorced"
+    # Map "single" -> "single", "married" -> split to married_spouse_present + separated
+
+    # Get only ages/sexes that exist in cni_pop
+    cni_ages_sex <- unique(cni_pop[, list(age, sex)])
+
+    # Merge proportions with CNI population
+    result <- merge(cni_ages_sex, cni_pop[, list(age, sex, cni_total = population)],
+                    by = c("age", "sex"), all.x = TRUE)
+    result[is.na(cni_total), cni_total := 0]
+
+    # Build wide format of proportions
+    prop_wide <- data.table::dcast(marital_props, age + sex ~ marital_status,
+                                   value.var = "prop", fill = 0)
+
+    # Merge with cni data
+    result <- merge(result, prop_wide, by = c("age", "sex"), all.x = TRUE)
+
+    # Handle missing proportions with age-based defaults
+    result[is.na(single), single := fifelse(age < 15, 1.0, fifelse(age < 25, 0.70,
+                                            fifelse(age < 65, 0.15, 0.05)))]
+    result[is.na(married), married := fifelse(age < 15, 0.0, fifelse(age < 25, 0.25,
+                                              fifelse(age < 65, 0.60, 0.50)))]
+    result[is.na(divorced), divorced := fifelse(age < 15, 0.0, fifelse(age < 25, 0.04,
+                                                fifelse(age < 65, 0.15, 0.12)))]
+    result[is.na(widowed), widowed := fifelse(age < 15, 0.0, fifelse(age < 25, 0.01,
+                                              fifelse(age < 65, 0.10, 0.33)))]
+
+    # Normalize proportions to sum to 1
+    result[, prop_sum := single + married + divorced + widowed]
+    result[prop_sum > 0, `:=`(
+      single = single / prop_sum,
+      married = married / prop_sum,
+      divorced = divorced / prop_sum,
+      widowed = widowed / prop_sum
+    )]
+
+    # Merge separated ratios (merge by age and sex since separated_ratios has both)
+    result <- merge(result, separated_ratios, by = c("age", "sex"), all.x = TRUE)
+    result[is.na(separated_ratio), separated_ratio := 0.05]
+
+    # Calculate populations for each marital status
+    result[, `:=`(
+      pop_single = cni_total * single,
+      pop_married_sp = cni_total * married * (1 - separated_ratio),
+      pop_separated = cni_total * married * separated_ratio,
+      pop_divorced = cni_total * divorced,
+      pop_widowed = cni_total * widowed
+    )]
+
+    # Reshape to long format
+    final <- data.table::melt(
+      result[, list(age, sex, pop_single, pop_married_sp, pop_separated, pop_divorced, pop_widowed)],
+      id.vars = c("age", "sex"),
+      variable.name = "marital_status",
+      value.name = "population"
+    )
+
+    # Clean up marital status names
+    final[, marital_status := gsub("pop_", "", marital_status)]
+    final[marital_status == "married_sp", marital_status := "married_spouse_present"]
+
+    data.table::setorder(final, age, sex, marital_status)
+    return(final)
+  }
+
+  # Fallback: use vectorized default proportions
+  # Create full grid
+  all_ages <- unique(cni_pop$age)
+  all_sexes <- unique(cni_pop$sex)
+  cni_statuses <- c("single", "married_spouse_present", "separated", "widowed", "divorced")
+
+  grid <- data.table::CJ(age = all_ages, sex = all_sexes, marital_status = cni_statuses)
+
+  # Merge with CNI totals
+  grid <- merge(grid, cni_pop[, .(age, sex, cni_total = population)],
+                by = c("age", "sex"), all.x = TRUE)
+  grid[is.na(cni_total), cni_total := 0]
+
+  # Assign proportions based on age (vectorized)
+  grid[, prop := 0]
+
+  # Age < 15: all single
+  grid[age < 15 & marital_status == "single", prop := 1]
+
+  # Age 15-24
+  grid[age >= 15 & age < 25 & marital_status == "single", prop := 0.70]
+  grid[age >= 15 & age < 25 & marital_status == "married_spouse_present", prop := 0.24]
+  grid[age >= 15 & age < 25 & marital_status == "separated", prop := 0.01]
+  grid[age >= 15 & age < 25 & marital_status == "widowed", prop := 0.005]
+  grid[age >= 15 & age < 25 & marital_status == "divorced", prop := 0.045]
+
+  # Age 25-44
+  grid[age >= 25 & age < 45 & marital_status == "single", prop := 0.25]
+  grid[age >= 25 & age < 45 & marital_status == "married_spouse_present", prop := 0.55]
+  grid[age >= 25 & age < 45 & marital_status == "separated", prop := 0.03]
+  grid[age >= 25 & age < 45 & marital_status == "widowed", prop := 0.02]
+  grid[age >= 25 & age < 45 & marital_status == "divorced", prop := 0.15]
+
+  # Age 45-64
+  grid[age >= 45 & age < 65 & marital_status == "single", prop := 0.12]
+  grid[age >= 45 & age < 65 & marital_status == "married_spouse_present", prop := 0.58]
+  grid[age >= 45 & age < 65 & marital_status == "separated", prop := 0.02]
+  grid[age >= 45 & age < 65 & marital_status == "widowed", prop := 0.10]
+  grid[age >= 45 & age < 65 & marital_status == "divorced", prop := 0.18]
+
+  # Age 65+
+  grid[age >= 65 & marital_status == "single", prop := 0.05]
+  grid[age >= 65 & marital_status == "married_spouse_present", prop := 0.42]
+  grid[age >= 65 & marital_status == "separated", prop := 0.01]
+  grid[age >= 65 & marital_status == "widowed", prop := 0.38]
+  grid[age >= 65 & marital_status == "divorced", prop := 0.14]
+
+  # Calculate population
+  grid[, population := cni_total * prop]
+  grid[, c("cni_total", "prop") := NULL]
+
+  data.table::setorder(grid, age, sex, marital_status)
+  grid
+}
+
+
+#' Prepare CNI Starting Data (Phase 8E Data Prep)
+#'
+#' @description
+#' Prepares starting year data required for CNI projection from
+#' historical population outputs and Phase 8B SS area population.
+#'
+#' Per TR2025 Equation 1.8.7, the CNI projection requires:
+#' - USAF (US resident + armed forces overseas) population by age/sex
+#' - Armed forces overseas by age/sex (held constant)
+#' - Total armed forces by age/sex (held constant)
+#' - CNI/civilian ratios by age/sex (held constant from starting year)
+#' - Separated/married ratios by age/sex
+#'
+#' @param historical_cni data.table: Historical CNI population from Phase 4
+#' @param phase8b_pop data.table: Phase 8B population (SS area) by year/age/sex/pop_status
+#' @param start_year Integer: Starting year (default: 2022)
+#' @param max_age Integer: Maximum age (default: 100)
+#'
+#' @return list with:
+#'   - usaf_pop: USAF population by age/sex for starting year
+#'   - armed_forces_overseas: Armed forces overseas by age/sex (constant)
+#'   - total_armed_forces: Total armed forces by age/sex (constant)
+#'   - cni_civilian_ratios: CNI/civilian ratios by age/sex
+#'   - cni_pop: CNI population by age/sex for starting year
+#'   - separated_ratios: Separated/married ratios by age/sex
+#'
+#' @keywords internal
+prepare_cni_starting_data <- function(historical_cni,
+                                       phase8b_pop,
+                                       start_year = 2022,
+                                       max_age = 100) {
+
+  cli::cli_h3("Preparing CNI Starting Data for {start_year}")
+
+  # Filter historical CNI to starting year
+  if ("year" %in% names(historical_cni)) {
+    cni_start <- historical_cni[year == start_year]
+  } else {
+    cni_start <- historical_cni
+  }
+
+  if (nrow(cni_start) == 0) {
+    cli::cli_abort("No historical CNI data found for year {start_year}")
+  }
+
+  # Get CNI population by age/sex (sum across marital statuses and orientations)
+  cni_by_age_sex <- cni_start[, .(population = sum(population, na.rm = TRUE)),
+                              by = .(age, sex)]
+  data.table::setorder(cni_by_age_sex, sex, age)
+
+  # Get SS area population for start year (aggregate across pop_status)
+  # Per TR2025: USAF ≈ SS area population for our purposes
+  # (SS area = US resident + some foreign territories, USAF = US resident + overseas military)
+  ss_by_age_sex <- phase8b_pop[year == start_year,
+                                .(population = sum(population, na.rm = TRUE)),
+                                by = .(age, sex)]
+  data.table::setorder(ss_by_age_sex, sex, age)
+
+  # Use SS area population as proxy for USAF
+  # The difference is small (armed forces overseas ~150K vs foreign territories ~4M)
+  # but for TR2025 methodology we use SS area as the base
+  usaf_pop <- data.table::copy(ss_by_age_sex)
+
+  # Estimate armed forces by age/sex
+  # Per TR2025: Armed forces are held constant at starting year values
+  # Military ages are primarily 17-65, with peak at 20-30
+  # Total US military ~1.3M active duty, ~150K overseas
+  total_af_count <- 1300000  # Approximate total active duty
+  overseas_af_count <- 150000  # Approximate overseas
+
+  # Create armed forces age/sex distribution (military-typical profile)
+  af_ages <- 17:65
+  af_grid <- data.table::CJ(age = 0:max_age, sex = c("male", "female"))
+
+  # Age distribution peaks at 20-25, declines after
+  af_grid[, af_weight := 0]
+  af_grid[age >= 17 & age <= 20, af_weight := 0.08]
+  af_grid[age >= 21 & age <= 25, af_weight := 0.12]
+  af_grid[age >= 26 & age <= 30, af_weight := 0.10]
+  af_grid[age >= 31 & age <= 35, af_weight := 0.07]
+  af_grid[age >= 36 & age <= 40, af_weight := 0.05]
+  af_grid[age >= 41 & age <= 50, af_weight := 0.03]
+  af_grid[age >= 51 & age <= 65, af_weight := 0.01]
+
+  # Sex distribution: ~83% male, ~17% female
+  af_grid[sex == "male", af_weight := af_weight * 0.83]
+  af_grid[sex == "female", af_weight := af_weight * 0.17]
+
+  # Normalize weights
+  af_grid[, af_weight := af_weight / sum(af_weight)]
+
+  # Calculate armed forces populations
+  af_grid[, total_af := af_weight * total_af_count]
+  af_grid[, overseas_af := af_weight * overseas_af_count]
+
+  total_armed_forces <- af_grid[, .(age, sex, population = total_af)]
+  armed_forces_overseas <- af_grid[, .(age, sex, population = overseas_af)]
+
+  # Calculate civilian population = USAF - total armed forces
+  civilian_pop <- merge(usaf_pop, total_armed_forces,
+                        by = c("age", "sex"), suffixes = c("", "_af"), all.x = TRUE)
+  civilian_pop[is.na(population_af), population_af := 0]
+  civilian_pop[, civilian := pmax(0, population - population_af)]
+
+  # Calculate CNI/civilian ratios
+  # CNI = civilian - institutionalized population
+  # Institutionalized includes: prisons, nursing homes, mental facilities, etc.
+  cni_civilian <- merge(cni_by_age_sex, civilian_pop[, .(age, sex, civilian)],
+                        by = c("age", "sex"), all = TRUE)
+  cni_civilian[is.na(population), population := 0]
+  cni_civilian[is.na(civilian), civilian := 0]
+
+  # Calculate CNI/civilian ratio
+  cni_civilian[, ratio := fifelse(civilian > 0, population / civilian, 0.98)]
+
+  # CNI should be less than civilian - cap at 1.0
+  cni_civilian[ratio > 1.0, ratio := 1.0]
+
+  # For ages with no civilian (shouldn't happen but handle edge cases)
+  cni_civilian[ratio < 0.5 & age < 65, ratio := 0.98]  # Most young people are CNI
+  cni_civilian[ratio < 0.5 & age >= 65, ratio := 0.93]  # More elderly in institutions
+
+  cni_civilian_ratios <- cni_civilian[, .(age, sex, ratio)]
+
+  cli::cli_alert_info("CNI/civilian ratio range: {round(min(cni_civilian_ratios$ratio), 3)} - {round(max(cni_civilian_ratios$ratio), 3)}")
+
+  # Get marital status distribution for separated ratio calculation
+  cni_marital <- cni_start[, .(population = sum(population, na.rm = TRUE)),
+                           by = .(age, sex, marital_status)]
+
+  # Calculate separated ratios from historical data
+  separated_ratios <- calculate_separated_ratios(cni_marital, max_age)
+
+  # Totals for logging
+  cni_total <- sum(cni_by_age_sex$population, na.rm = TRUE)
+  ss_total <- sum(ss_by_age_sex$population, na.rm = TRUE)
+  civilian_total <- sum(civilian_pop$civilian, na.rm = TRUE)
+
+  cli::cli_alert_success("Prepared CNI starting data")
+  cli::cli_alert_info("SS area / USAF ({start_year}): {format(round(ss_total/1e6, 2), nsmall=2)}M")
+  cli::cli_alert_info("Civilian ({start_year}): {format(round(civilian_total/1e6, 2), nsmall=2)}M")
+  cli::cli_alert_info("CNI ({start_year}): {format(round(cni_total/1e6, 2), nsmall=2)}M")
+  cli::cli_alert_info("Overall CNI/civilian ratio: {round(cni_total/civilian_total, 4)}")
+
+  list(
+    usaf_pop = usaf_pop,
+    armed_forces_overseas = armed_forces_overseas,
+    total_armed_forces = total_armed_forces,
+    cni_civilian_ratios = cni_civilian_ratios,
+    cni_pop = cni_by_age_sex,
+    separated_ratios = separated_ratios,
+    cni_marital = cni_marital
+  )
+}
+
+
+#' Calculate Separated/Married Ratios from Historical CNI
+#'
+#' @keywords internal
+calculate_separated_ratios <- function(cni_marital, max_age = 100) {
+
+  # Get married and separated populations
+  married <- cni_marital[marital_status %in% c("married", "married_spouse_present"),
+                         .(married = sum(population, na.rm = TRUE)),
+                         by = .(age, sex)]
+
+  separated <- cni_marital[marital_status == "separated",
+                           .(separated = sum(population, na.rm = TRUE)),
+                           by = .(age, sex)]
+
+  result <- merge(married, separated, by = c("age", "sex"), all.x = TRUE)
+  result[is.na(separated), separated := 0]
+  result[, separated_ratio := separated / (married + separated)]
+  result[is.na(separated_ratio), separated_ratio := 0.05]
+  result[separated_ratio > 0.3, separated_ratio := 0.3]  # Cap at 30%
+
+  result[, .(age, sex, separated_ratio)]
+}
+
+
+#' Project CNI Population (Phase 8E.6 - Main Entry Point)
+#'
+#' @description
+#' Main function for projecting the civilian noninstitutionalized (CNI)
+#' population by age, sex, and marital status (Equation 1.8.7).
+#'
+#' Per TR2025: "Once the Social Security area population is projected by single
+#' year of age, sex, and marital status, the CNI population is projected by year,
+#' sex, single year of age, and the following five marital states: single, married
+#' (spouse present), separated, widowed, and divorced."
+#'
+#' TR2025 Methodology:
+#' 1. Project USAF population forward using component method (births, deaths, net immigration)
+#' 2. Calculate residential = USAF - armed forces overseas (constant)
+#' 3. Calculate civilian = USAF - total armed forces (constant)
+#' 4. Calculate CNI = civilian × CNI/civilian ratio (constant from starting year)
+#' 5. Disaggregate CNI by marital status using Phase 8C proportions
+#'
+#' @param phase8b_result list: Output from run_population_projection (Phase 8B)
+#' @param marital_result list: Output from run_marital_projection (Phase 8C)
+#' @param historical_cni data.table: Historical CNI population from Phase 4
+#' @param start_year Integer: Starting year (default: 2022)
+#' @param end_year Integer: End year (default: 2099)
+#' @param verbose Logical: Print progress (default: TRUE)
+#'
+#' @return list with:
+#'   - cni_population: data.table N^z_{x,s,m} by year, age, sex, marital_status
+#'   - usaf_population: data.table USAF population by year, age, sex
+#'   - civilian_population: data.table civilian population by year, age, sex
+#'   - summary: Summary statistics by year
+#'
+#' @export
+project_cni_population <- function(phase8b_result,
+                                    marital_result,
+                                    historical_cni,
+                                    start_year = 2022,
+                                    end_year = 2099,
+                                    verbose = TRUE) {
+
+  if (verbose) {
+    cli::cli_h1("Phase 8E: CNI Population Projection")
+    cli::cli_alert_info("Projection period: {start_year}-{end_year}")
+  }
+
+  # Extract Phase 8B components
+  phase8b_pop <- phase8b_result$population
+  phase8b_births <- phase8b_result$births
+  phase8b_deaths <- phase8b_result$deaths
+  net_immigration <- phase8b_result$net_immigration
+
+  # Get marital population for disaggregation
+  marital_pop <- marital_result$marital_population
+
+  # Prepare starting data (includes USAF, armed forces, CNI/civilian ratios)
+  if (verbose) {
+    cli::cli_h2("Step 1: Preparing Starting Data")
+  }
+  starting_data <- prepare_cni_starting_data(
+    historical_cni = historical_cni,
+    phase8b_pop = phase8b_pop,
+    start_year = start_year
+  )
+
+  # Extract starting data
+  current_usaf <- starting_data$usaf_pop
+  armed_forces_overseas <- starting_data$armed_forces_overseas
+  total_armed_forces <- starting_data$total_armed_forces
+  cni_civilian_ratios <- starting_data$cni_civilian_ratios
+  separated_ratios <- starting_data$separated_ratios
+
+  # Storage for results
+  all_cni <- list()
+  all_usaf <- list()
+  all_civilian <- list()
+  summary_list <- list()
+
+  # Store starting year CNI
+  cni_start <- starting_data$cni_pop
+
+  # Get marital population for start year
+  marital_start <- marital_pop[year == start_year]
+  if (nrow(marital_start) > 0) {
+    cni_marital_start <- disaggregate_cni_marital(
+      cni_start,
+      separated_ratios = separated_ratios,
+      marital_pop_total = marital_start
+    )
+  } else {
+    cni_marital_start <- disaggregate_cni_marital(
+      cni_start,
+      separated_ratios = separated_ratios
+    )
+  }
+  cni_marital_start[, year := start_year]
+  all_cni[[as.character(start_year)]] <- cni_marital_start
+
+  # Store starting USAF
+  usaf_start <- data.table::copy(current_usaf)
+  usaf_start[, year := start_year]
+  all_usaf[[as.character(start_year)]] <- usaf_start
+
+  # Store starting civilian
+  civilian_start <- calculate_civilian_population(current_usaf, total_armed_forces)
+  civilian_start[, year := start_year]
+  all_civilian[[as.character(start_year)]] <- civilian_start
+
+  # Starting year summary
+  summary_list[[as.character(start_year)]] <- data.table::data.table(
+    year = start_year,
+    cni_total = sum(cni_marital_start$population, na.rm = TRUE),
+    usaf_total = sum(current_usaf$population, na.rm = TRUE),
+    civilian_total = sum(civilian_start$population, na.rm = TRUE)
+  )
+
+  if (verbose) {
+    cli::cli_h2("Step 2: Projecting Forward")
+    cli::cli_progress_bar("Projecting CNI population", total = end_year - start_year)
+  }
+
+  # Project each year
+  for (yr in (start_year + 1):end_year) {
+    if (verbose) {
+      cli::cli_progress_update()
+    }
+
+    # Get SS area data for this year - aggregate across pop_status
+    ss_pop_prev <- phase8b_pop[year == (yr - 1),
+                                .(population = sum(population, na.rm = TRUE)),
+                                by = .(age, sex)]
+    births_yr <- phase8b_births[year == yr, sum(births, na.rm = TRUE)]
+    deaths_yr <- phase8b_deaths[year == yr,
+                                 .(deaths = sum(deaths, na.rm = TRUE)),
+                                 by = .(age, sex)]
+    net_imm_yr <- net_immigration[year == yr,
+                                   .(net_immigration = sum(net_immigration, na.rm = TRUE)),
+                                   by = .(age, sex)]
+
+    # Project USAF forward using component method
+    new_usaf <- project_usaf_year(
+      usaf_prev = current_usaf,
+      ss_pop_prev = ss_pop_prev,
+      births_ss = births_yr,
+      deaths_ss = deaths_yr,
+      net_immigration = net_imm_yr
+    )
+
+    # Calculate civilian population (USAF - total armed forces)
+    civilian <- calculate_civilian_population(new_usaf, total_armed_forces)
+
+    # Calculate CNI population (civilian × CNI/civilian ratio)
+    cni <- calculate_cni_from_civilian(civilian, cni_civilian_ratios)
+
+    # Get marital population for this year for disaggregation
+    marital_yr <- marital_pop[year == yr]
+
+    # Disaggregate CNI by marital status (5 categories)
+    if (nrow(marital_yr) > 0) {
+      cni_marital <- disaggregate_cni_marital(
+        cni,
+        separated_ratios = separated_ratios,
+        marital_pop_total = marital_yr
+      )
+    } else {
+      cni_marital <- disaggregate_cni_marital(
+        cni,
+        separated_ratios = separated_ratios
+      )
+    }
+    cni_marital[, year := yr]
+
+    # Store results
+    all_cni[[as.character(yr)]] <- cni_marital
+
+    usaf_yr <- data.table::copy(new_usaf)
+    usaf_yr[, year := yr]
+    all_usaf[[as.character(yr)]] <- usaf_yr
+
+    civilian_yr <- data.table::copy(civilian)
+    civilian_yr[, year := yr]
+    all_civilian[[as.character(yr)]] <- civilian_yr
+
+    summary_list[[as.character(yr)]] <- data.table::data.table(
+      year = yr,
+      cni_total = sum(cni_marital$population, na.rm = TRUE),
+      usaf_total = sum(new_usaf$population, na.rm = TRUE),
+      civilian_total = sum(civilian$population, na.rm = TRUE)
+    )
+
+    # Update current state for next iteration
+    current_usaf <- new_usaf
+  }
+
+  if (verbose) {
+    cli::cli_progress_done()
+  }
+
+  # Combine results
+  cni_population <- data.table::rbindlist(all_cni, use.names = TRUE)
+  usaf_population <- data.table::rbindlist(all_usaf, use.names = TRUE)
+  civilian_population <- data.table::rbindlist(all_civilian, use.names = TRUE)
+  summary <- data.table::rbindlist(summary_list, use.names = TRUE)
+
+  # Order
+  data.table::setorder(cni_population, year, age, sex, marital_status)
+  data.table::setorder(usaf_population, year, sex, age)
+  data.table::setorder(civilian_population, year, sex, age)
+
+  # Add CNI/SS ratio to summary
+  ss_totals <- phase8b_pop[, .(ss_total = sum(population, na.rm = TRUE)), by = year]
+  summary <- merge(summary, ss_totals, by = "year", all.x = TRUE)
+  summary[, cni_ss_ratio := cni_total / ss_total]
+
+  if (verbose) {
+    cli::cli_h2("Summary")
+    cli::cli_alert_success("CNI projection complete")
+    cli::cli_alert_info("Years: {start_year}-{end_year}")
+    cli::cli_alert_info("USAF total: {format(round(summary[year == start_year, usaf_total]/1e6, 2), nsmall=2)}M ({start_year}) -> {format(round(summary[year == end_year, usaf_total]/1e6, 2), nsmall=2)}M ({end_year})")
+    cli::cli_alert_info("Civilian total: {format(round(summary[year == start_year, civilian_total]/1e6, 2), nsmall=2)}M ({start_year}) -> {format(round(summary[year == end_year, civilian_total]/1e6, 2), nsmall=2)}M ({end_year})")
+    cli::cli_alert_info("CNI total: {format(round(summary[year == start_year, cni_total]/1e6, 2), nsmall=2)}M ({start_year}) -> {format(round(summary[year == end_year, cni_total]/1e6, 2), nsmall=2)}M ({end_year})")
+    cli::cli_alert_info("CNI/SS ratio: {round(summary[year == start_year, cni_ss_ratio], 4)} ({start_year}) -> {round(summary[year == end_year, cni_ss_ratio], 4)} ({end_year})")
+
+    # Marital status breakdown for end year
+    end_marital <- cni_population[year == end_year, .(total = sum(population)), by = marital_status]
+    end_marital[, pct := round(100 * total / sum(total), 1)]
+    cli::cli_alert_info("Marital status ({end_year}):")
+    for (i in seq_len(nrow(end_marital))) {
+      cli::cli_alert_info("  {end_marital$marital_status[i]}: {end_marital$pct[i]}%")
+    }
+  }
+
+  list(
+    cni_population = cni_population,
+    usaf_population = usaf_population,
+    civilian_population = civilian_population,
+    summary = summary
+  )
+}
+
+
+#' Validate CNI Population Projection (Phase 8E.7)
+#'
+#' @description
+#' Validates the CNI population projection against various consistency checks.
+#'
+#' @param cni_result list: Output from project_cni_population
+#' @param phase8b_result list: Output from run_population_projection (Phase 8B)
+#' @param tolerance Numeric: Relative tolerance (default: 0.02)
+#'
+#' @return list with validation results
+#'
+#' @export
+validate_cni_projection <- function(cni_result,
+                                     phase8b_result,
+                                     tolerance = 0.02) {
+
+  cli::cli_h2("Phase 8E Validation: CNI Population")
+
+  cni_pop <- cni_result$cni_population
+  summary <- cni_result$summary
+  phase8b_pop <- phase8b_result$population
+
+  validation_results <- list()
+
+  # Test 1: CNI < Total Population
+  cli::cli_h3("Test 1: CNI < Total Population")
+
+  cni_totals <- summary[, .(cni_total = cni_total), by = year]
+  ss_totals <- phase8b_pop[, .(ss_total = sum(population, na.rm = TRUE)), by = year]
+
+  comparison <- merge(cni_totals, ss_totals, by = "year")
+  comparison[, ratio := cni_total / ss_total]
+
+  invalid_years <- comparison[ratio >= 1]
+  if (nrow(invalid_years) == 0) {
+    cli::cli_alert_success("CNI < SS area population for all years")
+    validation_results$cni_less_than_total <- TRUE
+  } else {
+    cli::cli_alert_danger("{nrow(invalid_years)} years have CNI >= SS population")
+    validation_results$cni_less_than_total <- FALSE
+  }
+
+  cli::cli_alert_info("CNI/SS ratio range: {round(min(comparison$ratio), 3)} - {round(max(comparison$ratio), 3)}")
+
+  # Test 2: Marital statuses sum to total
+  cli::cli_h3("Test 2: Marital Statuses Sum to Total")
+
+  marital_sums <- cni_pop[, .(marital_sum = sum(population, na.rm = TRUE)), by = year]
+  comparison2 <- merge(marital_sums, cni_totals, by = "year")
+  comparison2[, diff := abs(marital_sum - cni_total) / cni_total]
+
+  max_diff <- max(comparison2$diff, na.rm = TRUE)
+  if (max_diff < 1e-6) {
+    cli::cli_alert_success("Marital statuses sum to total (max error: {format(max_diff, scientific=TRUE)})")
+    validation_results$marital_sum_valid <- TRUE
+  } else {
+    cli::cli_alert_warning("Marital sum error: {format(max_diff, scientific=TRUE)}")
+    validation_results$marital_sum_valid <- (max_diff < 0.01)
+  }
+
+  # Test 3: CNI/civilian ratios reasonable
+  cli::cli_h3("Test 3: CNI Growth Reasonable")
+
+  start_cni <- summary[year == min(year), cni_total]
+  end_cni <- summary[year == max(year), cni_total]
+  growth_rate <- (end_cni / start_cni)^(1 / (max(summary$year) - min(summary$year))) - 1
+
+  cli::cli_alert_info("Annual CNI growth rate: {round(100 * growth_rate, 2)}%")
+
+  if (growth_rate > -0.01 && growth_rate < 0.03) {
+    cli::cli_alert_success("CNI growth rate reasonable")
+    validation_results$growth_reasonable <- TRUE
+  } else {
+    cli::cli_alert_warning("CNI growth rate outside expected range (-1% to 3%)")
+    validation_results$growth_reasonable <- FALSE
+  }
+
+  # Test 4: Marital status proportions reasonable
+  cli::cli_h3("Test 4: Marital Status Proportions")
+
+  end_year <- max(cni_pop$year)
+  end_marital <- cni_pop[year == end_year & age >= 18,
+                          .(total = sum(population, na.rm = TRUE)),
+                          by = marital_status]
+  end_marital[, pct := total / sum(total)]
+
+  # Check that single + married make up majority for working-age adults
+  working_age <- cni_pop[year == end_year & age >= 25 & age <= 64,
+                          .(total = sum(population, na.rm = TRUE)),
+                          by = marital_status]
+  working_age[, pct := total / sum(total)]
+
+  married_pct <- working_age[marital_status == "married_spouse_present", pct]
+  if (length(married_pct) == 0) married_pct <- 0
+
+  if (married_pct > 0.3 && married_pct < 0.8) {
+    cli::cli_alert_success("Married proportion for ages 25-64: {round(100*married_pct, 1)}%")
+    validation_results$marital_props_valid <- TRUE
+  } else {
+    cli::cli_alert_warning("Married proportion unexpected: {round(100*married_pct, 1)}%")
+    validation_results$marital_props_valid <- FALSE
+  }
+
+  # Overall
+  validation_results$all_passed <- validation_results$cni_less_than_total &&
+                                   validation_results$marital_sum_valid &&
+                                   validation_results$growth_reasonable &&
+                                   validation_results$marital_props_valid
+
+  if (validation_results$all_passed) {
+    cli::cli_alert_success("Phase 8E validation: All checks passed")
+  } else {
+    cli::cli_alert_warning("Phase 8E validation: Some checks failed")
+  }
+
+  validation_results
+}

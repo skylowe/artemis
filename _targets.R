@@ -2160,9 +2160,58 @@ list(
   ),
 
   # ===========================================================================
+  # PHASE 8E: CNI POPULATION PROJECTION (Equation 1.8.7)
+  # ===========================================================================
+  # Projects civilian noninstitutionalized population by age, sex, and marital
+  # status using USAF population projections and CNI/civilian ratios.
+  # ===========================================================================
+
+  # Run CNI population projection (Phase 8E main)
+  tar_target(
+    cni_projection,
+    {
+      project_cni_population(
+        phase8b_result = population_projection,
+        marital_result = marital_projection,
+        historical_cni = historical_civilian_noninst,
+        start_year = config_assumptions$projected_population$starting_year,
+        end_year = config_assumptions$projected_population$projection_end,
+        verbose = TRUE
+      )
+    }
+  ),
+
+  # Extract CNI population by marital status
+  tar_target(
+    projected_cni_population,
+    {
+      cni_projection$cni_population
+    }
+  ),
+
+  # Extract CNI summary statistics
+  tar_target(
+    cni_summary,
+    {
+      cni_projection$summary
+    }
+  ),
+
+  # Phase 8E validation: Verify CNI projection consistency
+  tar_target(
+    cni_validation,
+    {
+      validate_cni_projection(
+        cni_result = cni_projection,
+        phase8b_result = population_projection,
+        tolerance = 0.02
+      )
+    }
+  ),
+
+  # ===========================================================================
   # PLACEHOLDER: Future process targets will be added here
   # ===========================================================================
-  # - Projected population CNI targets (Phase 8E)
   # - Mean children per couple projection (Phase 8D.7 - requires CPS data)
   # - Economics process targets
   # - Beneficiaries process targets

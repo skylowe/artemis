@@ -5,8 +5,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ## Current Status
 **Phase:** 8 - Projected Population Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 8D - Children by Parent Fate (January 22, 2026)
-**Next Step:** Phase 8E - CNI Population (Equation 1.8.7)
+**Most Recent Completion:** Phase 8E - CNI Population (January 22, 2026)
+**Next Step:** Phase 8F - Integration and Main Entry Point
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -167,7 +167,7 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
    - TR2025 uses December 31 marriage grids from the 2015 TR
    - Minor differences expected but methodology is consistent
 
-### Projected Population Subprocess Status (IN PROGRESS - Phase 8D Complete)
+### Projected Population Subprocess Status (IN PROGRESS - Phase 8E Complete)
 - **Purpose:** Project SS area population from Dec 31, 2022 through 2099 using component method
 - **Key Outputs:**
   - B^z_{s,p} - Births by sex and population status (Eq 1.8.1) ✓
@@ -176,7 +176,7 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - P^z_{x,s,p} - Population by age, sex, population status (Eq 1.8.4) ✓
   - P^z_{x,s,p,m} - Population by marital status (Eq 1.8.5) ✓
   - C^z_{x,s,g,f} - Children by parent survival status (Eq 1.8.6) ✓
-  - N^z_{x,s,m} - Civilian noninstitutionalized population (Eq 1.8.7) - Pending
+  - N^z_{x,s,m} - Civilian noninstitutionalized population (Eq 1.8.7) ✓
 - **TR2025 Assumptions:**
   - Starting Year: December 31, 2022
   - Sex ratio at birth: 1,048 males per 1,000 females
@@ -197,6 +197,14 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - Four fates: both_alive, only_father_alive, only_mother_alive, both_deceased
   - Tracks children by (child_age × father_age × mother_age × fate)
   - Pipeline targets: `children_fate_projection`, `projected_children_fate`, `children_fate_validation`
+- **Phase 8E Status (Complete):** CNI population projection
+  - Implements Equation 1.8.7 - civilian noninstitutionalized population
+  - Five marital statuses: single, married_spouse_present, separated, widowed, divorced
+  - USAF projection using component method, civilian = USAF - armed forces
+  - CNI = civilian × CNI/civilian ratio (constant from starting year)
+  - CNI total: 328.4M (2022) → 427.0M (2099)
+  - CNI/SS ratio: 0.964 (2022) → 0.949 (2099)
+  - Pipeline targets: `cni_projection`, `projected_cni_population`, `cni_summary`, `cni_validation`
 - **Key files:** `R/demography/projected_population.R`, `R/data_acquisition/cps_children.R`
 - **Plan document:** `plans/08_demography_projected_population_implementation_plan.md`
 

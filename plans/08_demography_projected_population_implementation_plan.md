@@ -19,8 +19,17 @@
 
 ### Current Status
 **Last Updated:** January 22, 2026
-**Current Phase:** Phase 8E - Pending
-**Subprocess Status:** Phase 8D Children by Parent Fate Complete
+**Current Phase:** Phase 8E - Complete
+**Subprocess Status:** Phase 8E CNI Population Complete
+
+**Phase 8E Results:**
+- CNI population projection implemented per Equation 1.8.7
+- Pipeline targets: `cni_projection`, `projected_cni_population`, `cni_summary`, `cni_validation`
+- Functions: `project_cni_population()`, `project_usaf_year()`, `calculate_civilian_population()`, `calculate_cni_from_civilian()`, `disaggregate_cni_marital()`, etc.
+- Methodology: USAF projected forward using component method, CNI = civilian × constant ratio
+- CNI/SS ratio: 0.964 (2022) → 0.949 (2099) - correctly below 1.0
+- CNI total: 328.4M (2022) → 427.0M (2099)
+- All validation checks pass
 
 **Phase 8D Results:**
 - Children by parent fate projection implemented per Equation 1.8.6
@@ -1507,13 +1516,13 @@ validate_projected_population_comprehensive <- function(projection_results,
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 8E.1 | Implement project_usaf_population() | 8B.5 | USAF projection |
-| [ ] | 8E.2 | Implement calculate_residential_population() | 8E.1 | Residential pop |
-| [ ] | 8E.3 | Implement calculate_civilian_population() | 8E.1 | Civilian pop |
-| [ ] | 8E.4 | Implement calculate_cni_population() | 8E.3 | CNI pop |
-| [ ] | 8E.5 | Implement disaggregate_cni_marital() | 8E.4 | CNI by marital status |
-| [ ] | 8E.6 | Implement project_cni_population() | 8E.1-8E.5 | Full CNI projection |
-| [ ] | 8E.7 | Validate CNI population | 8E.6 | Validation report |
+| [x] | 8E.1 | Implement project_usaf_population() | 8B.5 | USAF projection |
+| [x] | 8E.2 | Implement calculate_residential_population() | 8E.1 | Residential pop |
+| [x] | 8E.3 | Implement calculate_civilian_population() | 8E.1 | Civilian pop |
+| [x] | 8E.4 | Implement calculate_cni_population() | 8E.3 | CNI pop |
+| [x] | 8E.5 | Implement disaggregate_cni_marital() | 8E.4 | CNI by marital status |
+| [x] | 8E.6 | Implement project_cni_population() | 8E.1-8E.5 | Full CNI projection |
+| [x] | 8E.7 | Validate CNI population | 8E.6 | Validation report |
 
 ### Phase 8F: Integration and Main Entry Point
 
@@ -1531,7 +1540,7 @@ validate_projected_population_comprehensive <- function(projection_results,
 | [x] | 8G.1 | Add projected_population target to _targets.R | 8F.1 | New target |
 | [x] | 8G.2 | Add projected_population_marital target | 8C.11 | New target |
 | [x] | 8G.3 | Add projected_children_fate target | 8D.6 | New target |
-| [ ] | 8G.4 | Add projected_cni target | 8E.6 | New target |
+| [x] | 8G.4 | Add projected_cni target | 8E.6 | New target |
 | [x] | 8G.5 | Add validation targets | 8F.3 | Validation targets |
 | [ ] | 8G.6 | Run full pipeline | 8G.1-8G.5 | Complete outputs |
 | [ ] | 8G.7 | Document methodology deviations | 8G.6 | Documentation |
