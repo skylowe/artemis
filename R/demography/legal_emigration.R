@@ -115,7 +115,7 @@ project_legal_emigration <- function(lpr_immigration,
 #' - 2027+: 262,500 (25% of 1,050,000)
 #'
 #' @export
-get_tr2025_emigration_assumptions <- function(config = NULL, years = 2024:2099) {
+get_tr_emigration_assumptions <- function(config = NULL, years = 2024:2099) {
   # TR2025 LPR immigration assumptions
   lpr_assumptions <- data.table::data.table(
     year = years
@@ -209,7 +209,7 @@ run_legal_emigration_projection <- function(cbo_data = NULL,
 
   # Get LPR assumptions
   if (use_tr_assumptions) {
-    assumptions <- get_tr2025_emigration_assumptions(years = projection_years)
+    assumptions <- get_tr_emigration_assumptions(years = projection_years)
     lpr_totals <- assumptions$total_lpr
     years <- assumptions$year
   } else {

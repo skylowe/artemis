@@ -5714,7 +5714,7 @@ combine_mortality_qx_for_projection <- function(mortality_qx_projected,
     }
 
     # Load TR2025 historical qx (1900-2022)
-    hist_qx <- load_tr2025_qx_all_years(
+    hist_qx <- load_tr_qx_all_years(
       male_qx_file = male_hist_file,
       female_qx_file = female_hist_file,
       start_year = 1900,
@@ -5808,7 +5808,7 @@ extract_starting_marital_population <- function(historical_population_marital, c
 #' @return data.table with columns year, age, sex, pop_status, population
 #'
 #' @export
-load_tr2025_starting_population <- function(tr_file, starting_year = 2022,
+load_tr_starting_population <- function(tr_file, starting_year = 2022,
                                              male_gay_pct = 2.5,
                                              female_lesbian_pct = 4.5) {
   tr_pop <- data.table::fread(tr_file)

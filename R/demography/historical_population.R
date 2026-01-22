@@ -1084,7 +1084,7 @@ load_mortality_data <- function() {
   # Fallback: Try to calculate from mortality.R
   cli::cli_alert_info("Mortality cache not found, using TR2025 mortality data")
   tryCatch({
-    load_tr2025_mortality()
+    load_tr_mortality()
   }, error = function(e) {
     cli::cli_alert_warning("Could not load mortality data: {conditionMessage(e)}")
     NULL
@@ -1094,7 +1094,7 @@ load_mortality_data <- function() {
 #' Load TR2025 Mortality Data
 #'
 #' @keywords internal
-load_tr2025_mortality <- function() {
+load_tr_mortality <- function() {
   # Load from TR2025 raw files
   male_file <- here::here("data/raw/SSA_TR2025/qxprdM_Alt2_TR2025.csv")
   female_file <- here::here("data/raw/SSA_TR2025/qxprdF_Alt2_TR2025.csv")
@@ -1662,7 +1662,7 @@ validate_historical_population <- function(calculated_pop, tolerance = 0.01) {
   cli::cli_h1("Validating Historical Population")
 
   # Load TR2025 population
-  tr2025_pop <- load_tr2025_population("dec")
+  tr2025_pop <- load_tr_population("dec")
 
   if (is.null(tr2025_pop)) {
     cli::cli_alert_warning("TR2025 population file not found")
@@ -1697,7 +1697,7 @@ validate_historical_population <- function(calculated_pop, tolerance = 0.01) {
 #' Load TR2025 Population File
 #'
 #' @keywords internal
-load_tr2025_population <- function(reference_date = "dec") {
+load_tr_population <- function(reference_date = "dec") {
   file_map <- list(
     dec = "SSPopDec_Alt2_TR2025.csv",
     jan = "SSPopJan_Alt2_TR2025.csv",

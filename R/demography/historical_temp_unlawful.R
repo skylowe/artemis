@@ -76,7 +76,7 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
 
   # Step 1: Load TR2025 O flows from V.A2
   cli::cli_h2("Step 1: Loading TR2025 O Flows (Table V.A2)")
-  o_flows <- get_tr2025_historical_o_flows(
+  o_flows <- get_tr_historical_o_flows(
     years = start_year:end_year,
     convert_to_persons = TRUE
   )

@@ -746,7 +746,7 @@ run_full_o_projection <- function(historical_o_pop,
   cli::cli_h2("Step 3: Projecting O Immigration (Equation 1.5.1)")
 
   # Get TR assumptions
-  assumptions <- get_tr2025_o_immigration_assumptions(projection_years, config)
+  assumptions <- get_tr_o_immigration_assumptions(projection_years, config)
 
   # Project O immigration
   o_immigration_results <- list()

@@ -456,7 +456,7 @@ calculate_fertility_totals <- function(birth_rates) {
 #' @return data.table with columns: year, sex, births
 #'
 #' @export
-calculate_tr2025_implied_births <- function(
+calculate_tr_implied_births <- function(
     years,
     tr_population_file = "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv",
     tr_qx_male_file = "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv",
@@ -527,7 +527,7 @@ calculate_tr2025_implied_births <- function(
 #' births (by sex), not births by mother's age.
 #'
 #' @export
-substitute_tr2025_births <- function(nchs_births, tr2025_births, substitute_years) {
+substitute_tr_births <- function(nchs_births, tr2025_births, substitute_years) {
 
   if (is.null(substitute_years) || length(substitute_years) == 0) {
     cli::cli_alert_info("No birth substitution years specified - using NCHS data as-is")

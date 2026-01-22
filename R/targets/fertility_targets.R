@@ -88,7 +88,7 @@ create_fertility_targets <- function() {
         if (is.null(substitute_years) || length(substitute_years) == 0) {
           return(data.table::data.table(year = integer(), sex = character(), births = numeric()))
         }
-        calculate_tr2025_implied_births(years = substitute_years)
+        calculate_tr_implied_births(years = substitute_years)
       }
     ),
 
@@ -97,7 +97,7 @@ create_fertility_targets <- function() {
       nchs_births_adjusted,
       {
         substitute_years <- config_assumptions$fertility$use_tr2025_births_for_years
-        substitute_tr2025_births(
+        substitute_tr_births(
           nchs_births = nchs_births_raw,
           tr2025_births = tr2025_implied_births,
           substitute_years = substitute_years

@@ -33,10 +33,10 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - LPR immigration matches TR2025 assumptions: 1,213,000 (2025-26), 1,050,000 (2027+)
 - Net LPR immigration: 910,000 (2025-26), 788,000 (2027+) from V.A2
 - 11 targets integrated into pipeline, all passing validation
-- Key files: `R/demography/lpr_immigration.R`, `R/demography/legal_emigration.R`, `R/data_acquisition/dhs_immigration.R`, `R/data_acquisition/cbo_migration.R`, `R/data_acquisition/tr2025_data.R`
+- Key files: `R/demography/lpr_immigration.R`, `R/demography/legal_emigration.R`, `R/data_acquisition/dhs_immigration.R`, `R/data_acquisition/cbo_migration.R`, `R/data_acquisition/tr_data.R`
 
 **V.A2 Integration (January 18, 2026):**
-- `get_tr2025_lpr_assumptions()` now loads from Table V.A2 instead of hardcoded values
+- `get_tr_lpr_assumptions()` now loads from Table V.A2 instead of hardcoded values
 - Provides actual emigration values from V.A2 (not estimated 25% rule)
 - NEW vs AOS breakdown available: Total LPR = NEW arrivals + Adjustments of Status
 - Historical LPR data available (1940-2024) for validation
@@ -241,8 +241,39 @@ The plan documents contain:
 2. **Update plans** - Mark task status in plan documents as work progresses.
 3. **Validation required** - All outputs must validate against official TR2025 tables.
 
+## Switching Trustees Report Years
+
+The project is designed to support multiple Trustees Report years. To switch from TR2025 to TR2026:
+
+### Steps to Switch
+1. **Download data files**: Place TR2026 files in `data/raw/SSA_TR2026/`
+2. **Create config file**: Copy `config/assumptions/tr2025.yaml` to `config/assumptions/tr2026.yaml` and update:
+   - `metadata.trustees_report_year: 2026`
+   - `metadata.alternative_number: 2` (or appropriate alternative)
+   - Update any changed assumptions (ultimate rates, base years, etc.)
+   - Update file paths from `SSA_TR2025` to `SSA_TR2026`
+3. **Run with new config**:
+   ```bash
+   export ARTEMIS_CONFIG=config/assumptions/tr2026.yaml
+   Rscript -e "targets::tar_make()"
+   ```
+
+### Environment Variable
+- `ARTEMIS_CONFIG`: Path to assumptions config file (default: `config/assumptions/tr2025.yaml`)
+
+### Baseline Verification
+To verify changes don't break output:
+1. Run `Rscript scripts/create_baseline_snapshot.R` before changes
+2. Make changes
+3. Run `Rscript scripts/verify_baseline.R` to compare outputs
+
+### Key Configuration Fields
+Every TR config file must specify:
+- `metadata.trustees_report_year` (e.g., 2025, 2026)
+- `metadata.alternative_number` (1=Low, 2=Intermediate, 3=High)
+
 ## API Keys
 Stored in `.Renviron`: Census, BEA, BLS, FRED, CDC (see file for full list).
 
 ## Raw Data
-Available in `data/raw/SSA_TR2025/` - includes death probabilities, life tables, population projections from TR2025.
+Available in `data/raw/SSA_TR{year}/` - includes death probabilities, life tables, population projections from the Trustees Report.

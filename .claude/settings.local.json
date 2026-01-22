@@ -80,7 +80,8 @@
       "WebFetch(domain:)",
       "Bash(tree:*)",
       "Bash(wc:*)",
-      "Bash(git -C /mnt/c/Users/skylo/git/artemis rev-list:*)"
+      "Bash(git -C /mnt/c/Users/skylo/git/artemis rev-list:*)",
+      "Bash(git mv:*)"
     ]
   }
 }

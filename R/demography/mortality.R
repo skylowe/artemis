@@ -373,7 +373,7 @@ apply_capped_starting_aax <- function(starting_aax,
 #' Note: TR2025 files have years in rows, ages in columns (0-119).
 #'
 #' @export
-load_tr2025_starting_values <- function(
+load_tr_starting_values <- function(
     male_qx_file = "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv",
     female_qx_file = "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv",
     base_year = 2024,
@@ -472,7 +472,7 @@ load_tr2025_starting_values <- function(
 #' This function loads all years to enable direct use of TR2025 values.
 #'
 #' @export
-load_tr2025_qx_all_years <- function(
+load_tr_qx_all_years <- function(
     male_qx_file = "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv",
     female_qx_file = "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv",
     start_year = 2024,
@@ -536,7 +536,7 @@ load_tr2025_qx_all_years <- function(
 #' Column names are: Year, x, q(x), l(x), d(x), L(x), T(x), e(x), ...
 #'
 #' @export
-load_tr2025_period_life_tables <- function(
+load_tr_period_life_tables <- function(
     male_file = "data/raw/SSA_TR2025/PerLifeTables_M_Alt2_TR2025.csv",
     female_file = "data/raw/SSA_TR2025/PerLifeTables_F_Alt2_TR2025.csv",
     start_year = 1900,
@@ -579,7 +579,7 @@ load_tr2025_period_life_tables <- function(
 #'   - For ages 0-99: qx = 1 - L_{x+1}/L_x
 #'   - For age 100+:  q100 = 1 - T_{101}/T_{100}
 #'
-#' @param period_life_table data.table: output from load_tr2025_period_life_tables()
+#' @param period_life_table data.table: output from load_tr_period_life_tables()
 #' @param min_age Integer: minimum age to convert (default: 85)
 #' @param max_age Integer: maximum single age before 100+ group (default: 99)
 #'
@@ -773,7 +773,7 @@ apply_starting_aax_method <- function(regression_aax,
     }
 
     # Load both starting mx and starting aax from TR2025
-    result <- load_tr2025_starting_values(
+    result <- load_tr_starting_values(
       male_qx_file = male_file,
       female_qx_file = female_file,
       base_year = base_year,
@@ -1697,7 +1697,7 @@ run_mortality_projection <- function(deaths,
     }
 
     # Load TR2025 qx for all years
-    tr_qx <- load_tr2025_qx_all_years(
+    tr_qx <- load_tr_qx_all_years(
       male_qx_file = male_file,
       female_qx_file = female_file,
       start_year = effective_base_year,

@@ -25,7 +25,7 @@ NULL
 #' @return data.table with year and expected total O immigration
 #'
 #' @keywords internal
-get_tr2025_o_validation_targets <- function() {
+get_tr_o_validation_targets <- function() {
   data.table::data.table(
     year = c(2022L, 2023L, 2024L, 2025L, 2026L:2099L),
     expected_total = c(
@@ -141,7 +141,7 @@ validate_oi_totals <- function(o_immigration, tolerance = 0.001) {
   ), by = year]
 
   # Get TR2025 targets
-  tr_targets <- get_tr2025_o_validation_targets()
+  tr_targets <- get_tr_o_validation_targets()
 
   # Merge and compare
   validation <- merge(model_totals, tr_targets, by = "year", all.x = TRUE)

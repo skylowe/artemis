@@ -39,7 +39,7 @@ create_immigration_targets <- function() {
     # TR2025 population in long format
     targets::tar_target(
       tr2025_population_long,
-      load_tr2025_population_long(
+      load_tr_population_long(
         file_path = here::here("data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv")
       )
     ),
@@ -47,7 +47,7 @@ create_immigration_targets <- function() {
     # TR2025 qx in long format
     targets::tar_target(
       tr2025_qx_long,
-      load_tr2025_qx_long(
+      load_tr_qx_long(
         male_file = here::here("data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"),
         female_file = here::here("data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv")
       )
@@ -97,7 +97,7 @@ create_immigration_targets <- function() {
     # Step 4: LPR assumptions
     targets::tar_target(
       lpr_assumptions,
-      get_tr2025_lpr_assumptions(
+      get_tr_lpr_assumptions(
         years = config_assumptions$metadata$projection_period$start_year:
                 config_assumptions$metadata$projection_period$end_year
       )
@@ -241,7 +241,7 @@ create_immigration_targets <- function() {
         va2_file <- get_config_with_default(config_assumptions, "immigration", "va2_file", default = "")
         data_dir <- if (va2_file == "") "data/raw/SSA_TR2025" else dirname(va2_file)
         if (data_dir == ".") data_dir <- "data/raw/SSA_TR2025"
-        get_tr2025_va2_net_immigration(
+        get_tr_va2_net_immigration(
           years = config_assumptions$metadata$projection_period$start_year:
                   config_assumptions$metadata$projection_period$end_year,
           alternative = alternative,

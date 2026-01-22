@@ -1242,11 +1242,11 @@ project_o_immigration <- function(total_o, odist) {
 #'     total_o = c(2200000, 2700000, 2600000, 2000000, rep(1350000, 5))
 #'   )
 #' )
-#' assumptions <- get_tr2025_o_immigration_assumptions(2022:2030, config)
+#' assumptions <- get_tr_o_immigration_assumptions(2022:2030, config)
 #' ```
 #'
 #' @export
-get_tr2025_o_immigration_assumptions <- function(years = 2022:2099, config = NULL) {
+get_tr_o_immigration_assumptions <- function(years = 2022:2099, config = NULL) {
   # Check for user-provided configuration
   if (!is.null(config) && !is.null(config$o_immigration_by_year)) {
     cli::cli_alert_info("Using user-provided O immigration assumptions")
@@ -1319,7 +1319,7 @@ run_o_immigration_projection <- function(acs_new_arrivals,
 
   # Step 4: Get TR assumptions
   cli::cli_alert("Step 4: Getting TR2025 assumptions...")
-  assumptions <- get_tr2025_o_immigration_assumptions(projection_years)
+  assumptions <- get_tr_o_immigration_assumptions(projection_years)
 
   # Step 5: Project O immigration
   cli::cli_alert("Step 5: Projecting O immigration...")

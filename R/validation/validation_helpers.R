@@ -104,7 +104,7 @@ validate_totals_match <- function(data1, data2, by, value_col,
 #' @return List with validation results
 #'
 #' @export
-validate_year_totals_vs_tr2025 <- function(population, tr2025_pop,
+validate_year_totals_vs_tr <- function(population, tr2025_pop,
                                             years = NULL, tolerance = 0.02) {
   if (is.null(tr2025_pop)) {
     cli::cli_warn("Skipping validation - TR2025 data not available")

@@ -23,7 +23,7 @@ NULL
 #'   - pass: logical indicating if validation passed
 #'
 #' @export
-validate_qx_against_tr2025 <- function(qx_calculated,
+validate_qx_against_tr <- function(qx_calculated,
                                         years = NULL,
                                         tolerance = 0.02,
                                         data_dir = "data/raw/SSA_TR2025") {
@@ -31,8 +31,8 @@ validate_qx_against_tr2025 <- function(qx_calculated,
   checkmate::assert_names(names(qx_calculated), must.include = c("year", "age", "sex", "qx"))
 
   # Load TR2025 historical qx
-  source("R/data_acquisition/tr2025_data.R")
-  qx_tr2025 <- load_tr2025_death_probs_hist(sex = "both", data_dir = data_dir)
+  source("R/data_acquisition/tr_data.R")
+  qx_tr2025 <- load_tr_death_probs_hist(sex = "both", data_dir = data_dir)
 
   # Filter to requested years
   if (!is.null(years)) {
@@ -136,7 +136,7 @@ validate_qx_against_tr2025 <- function(qx_calculated,
 #' @return List with comparison, summary, and pass flag
 #'
 #' @export
-validate_life_expectancy_against_tr2025 <- function(life_table,
+validate_life_expectancy_against_tr <- function(life_table,
                                                      at_ages = c(0, 65),
                                                      tolerance = 0.1,
                                                      data_dir = "data/raw/SSA_TR2025") {
@@ -144,8 +144,8 @@ validate_life_expectancy_against_tr2025 <- function(life_table,
   checkmate::assert_names(names(life_table), must.include = c("age", "sex", "ex"))
 
   # Load TR2025 life tables
-  source("R/data_acquisition/tr2025_data.R")
-  lt_tr2025 <- load_tr2025_life_tables_hist(sex = "both", data_dir = data_dir)
+  source("R/data_acquisition/tr_data.R")
+  lt_tr2025 <- load_tr_life_tables_hist(sex = "both", data_dir = data_dir)
 
   # Filter to requested ages
   life_table_sub <- life_table[age %in% at_ages]
@@ -265,7 +265,7 @@ run_mortality_validation <- function(qx_calculated,
 
   # Validate qx
   cli::cli_h2("1. Death Probability (qx) Validation")
-  results$qx <- validate_qx_against_tr2025(
+  results$qx <- validate_qx_against_tr(
     qx_calculated = qx_calculated,
     years = years,
     tolerance = qx_tolerance
@@ -274,7 +274,7 @@ run_mortality_validation <- function(qx_calculated,
   # Validate life expectancy if life table provided
   if (!is.null(life_table)) {
     cli::cli_h2("2. Life Expectancy (ex) Validation")
-    results$ex <- validate_life_expectancy_against_tr2025(
+    results$ex <- validate_life_expectancy_against_tr(
       life_table = life_table,
       at_ages = c(0, 65),
       tolerance = ex_tolerance

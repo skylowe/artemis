@@ -90,7 +90,7 @@ create_historical_population_targets <- function() {
     # Validate historical population against TR2025
     targets::tar_target(
       historical_population_validation,
-      validate_year_totals_vs_tr2025(
+      validate_year_totals_vs_tr(
         population = historical_population,
         tr2025_pop = tr2025_population_dec,
         tolerance = 0.02

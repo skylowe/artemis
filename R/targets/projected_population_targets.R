@@ -73,7 +73,7 @@ create_projected_population_targets <- function() {
             config_assumptions, "projected_population", "tr_historical_population_file",
             default = "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv"
           )
-          tr_start_status <- load_tr2025_starting_population(
+          tr_start_status <- load_tr_starting_population(
             tr_file = tr_file,
             starting_year = starting_year
           )
@@ -95,7 +95,7 @@ create_projected_population_targets <- function() {
     # Period life tables for age-last-birthday qx
     targets::tar_target(
       tr2025_period_life_tables,
-      load_tr2025_period_life_tables(
+      load_tr_period_life_tables(
         male_file = "data/raw/SSA_TR2025/PerLifeTables_M_Alt2_TR2025.csv",
         female_file = "data/raw/SSA_TR2025/PerLifeTables_F_Alt2_TR2025.csv",
         start_year = 1900, end_year = 2099
@@ -131,7 +131,7 @@ create_projected_population_targets <- function() {
           config_assumptions, "mortality", "starting_tr_qx", "female_qx_proj_file",
           default = "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
         )
-        load_tr2025_qx_all_years(
+        load_tr_qx_all_years(
           male_qx_file = male_proj_file,
           female_qx_file = female_proj_file,
           start_year = 2023, end_year = 2100, ages = 100:119

@@ -670,7 +670,7 @@ calculate_new_aos_ratio <- function(dhs_data,
 #' - LPR Net: Net LPR change
 #'
 #' @export
-get_tr2025_lpr_assumptions <- function(years = 2025:2099,
+get_tr_lpr_assumptions <- function(years = 2025:2099,
                                         alternative = c("intermediate", "low-cost", "high-cost"),
                                         data_dir = "data/raw/SSA_TR2025") {
   alternative <- match.arg(alternative)
@@ -678,18 +678,18 @@ get_tr2025_lpr_assumptions <- function(years = 2025:2099,
  # Try to load from V.A2
   va2_available <- tryCatch({
     # Check if the loader function exists
-    if (!exists("load_tr2025_immigration_assumptions", mode = "function")) {
-      source(here::here("R/data_acquisition/tr2025_data.R"))
+    if (!exists("load_tr_immigration_assumptions", mode = "function")) {
+      source(here::here("R/data_acquisition/tr_data.R"))
     }
     TRUE
   }, error = function(e) FALSE)
 
   if (va2_available) {
-    result <- get_tr2025_lpr_assumptions_va2(years, alternative, data_dir)
+    result <- get_tr_lpr_assumptions_va2(years, alternative, data_dir)
   } else {
     # Fallback to hardcoded values
     cli::cli_alert_warning("V.A2 data not available, using hardcoded assumptions")
-    result <- get_tr2025_lpr_assumptions_hardcoded(years)
+    result <- get_tr_lpr_assumptions_hardcoded(years)
   }
 
   result
@@ -698,11 +698,11 @@ get_tr2025_lpr_assumptions <- function(years = 2025:2099,
 #' Get LPR assumptions from V.A2 data
 #'
 #' @keywords internal
-get_tr2025_lpr_assumptions_va2 <- function(years,
+get_tr_lpr_assumptions_va2 <- function(years,
                                             alternative = "intermediate",
                                             data_dir = "data/raw/SSA_TR2025") {
   # Load V.A2 immigration assumptions
-  imm <- load_tr2025_immigration_assumptions(data_dir = data_dir, cache = TRUE)
+  imm <- load_tr_immigration_assumptions(data_dir = data_dir, cache = TRUE)
 
   # For projected years, V.A2 has duplicates for different alternatives
 
@@ -770,7 +770,7 @@ get_tr2025_lpr_assumptions_va2 <- function(years,
 #' Fallback hardcoded LPR assumptions
 #'
 #' @keywords internal
-get_tr2025_lpr_assumptions_hardcoded <- function(years) {
+get_tr_lpr_assumptions_hardcoded <- function(years) {
   result <- data.table::data.table(year = years)
 
   # Set LPR immigration levels per TR2025 intermediate assumptions
@@ -1094,7 +1094,7 @@ run_lpr_projection <- function(dhs_data = NULL,
 
   # Step 3: Get TR2025 assumptions
   cli::cli_h3("Step 3: Load TR2025 assumptions")
-  assumptions <- get_tr2025_lpr_assumptions(projection_years)
+  assumptions <- get_tr_lpr_assumptions(projection_years)
   cli::cli_alert_info("Projection years: {min(projection_years)}-{max(projection_years)}")
   cli::cli_alert_info("2025 LPR: {format(assumptions[year==2025, total_lpr], big.mark=',')}")
   cli::cli_alert_info("Ultimate LPR: {format(assumptions[year==max(projection_years), total_lpr], big.mark=',')}")
