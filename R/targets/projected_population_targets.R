@@ -25,11 +25,10 @@ create_projected_population_targets <- function() {
     # CPS children per couple data
     targets::tar_target(
       cps_children_per_couple,
-      {
-        cache_file <- here::here("data/cache/ipums_cps/cps_children_per_couple_1962_2022.rds")
-        if (file.exists(cache_file)) readRDS(cache_file)
-        else { cli::cli_alert_warning("CPS children data not cached"); NULL }
-      },
+      load_cached_rds(
+        cache_file = here::here("data/cache/ipums_cps/cps_children_per_couple_1962_2022.rds"),
+        on_missing = "warn"
+      ),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
@@ -68,29 +67,23 @@ create_projected_population_targets <- function() {
       {
         use_tr <- config_assumptions$projected_population$use_tr_historical_population
         starting_year <- config_assumptions$projected_population$starting_year
-        if (!is.null(use_tr) && use_tr) {
+        if (isTRUE(use_tr)) {
           cli::cli_alert_info("Using TR2025 historical population for starting population")
-          tr_file <- config_assumptions$projected_population$tr_historical_population_file
-          if (is.null(tr_file)) tr_file <- "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv"
-          tr_pop <- data.table::fread(tr_file)
-          tr_start <- tr_pop[Year == starting_year, .(year = Year, age = Age, male = `M Tot`, female = `F Tot`)]
-          tr_start <- data.table::melt(tr_start, id.vars = c("year", "age"),
-                                        measure.vars = c("male", "female"),
-                                        variable.name = "sex", value.name = "population")
-          tr_start[age > 100, age := 100L]
-          tr_start <- tr_start[, .(population = sum(population)), by = .(year, age, sex)]
-          tr_start_status <- data.table::rbindlist(list(
-            tr_start[sex == "male", .(year, age, sex, pop_status = "heterosexual", population = population * 0.975)],
-            tr_start[sex == "male", .(year, age, sex, pop_status = "gay", population = population * 0.025)],
-            tr_start[sex == "female", .(year, age, sex, pop_status = "heterosexual", population = population * 0.955)],
-            tr_start[sex == "female", .(year, age, sex, pop_status = "lesbian", population = population * 0.045)]
-          ))
-          cli::cli_alert_success("Loaded TR2025 population for Dec 31, {starting_year}")
+          tr_file <- get_config_with_default(
+            config_assumptions, "projected_population", "tr_historical_population_file",
+            default = "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv"
+          )
+          tr_start_status <- load_tr2025_starting_population(
+            tr_file = tr_file,
+            starting_year = starting_year
+          )
           list(valid = TRUE, population = tr_start_status, message = "TR2025 historical population loaded")
         } else {
-          extract_starting_population(historical_population = historical_population,
-                                       historical_marital = historical_population_marital,
-                                       starting_year = starting_year)
+          extract_starting_population(
+            historical_population = historical_population,
+            historical_marital = historical_population_marital,
+            starting_year = starting_year
+          )
         }
       }
     ),
@@ -130,12 +123,19 @@ create_projected_population_targets <- function() {
     targets::tar_target(
       qx_100_119,
       {
-        male_proj_file <- config_assumptions$mortality$starting_tr_qx$male_qx_proj_file
-        female_proj_file <- config_assumptions$mortality$starting_tr_qx$female_qx_proj_file
-        if (is.null(male_proj_file)) male_proj_file <- "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
-        if (is.null(female_proj_file)) female_proj_file <- "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
-        load_tr2025_qx_all_years(male_qx_file = male_proj_file, female_qx_file = female_proj_file,
-                                  start_year = 2023, end_year = 2100, ages = 100:119)
+        male_proj_file <- get_config_with_default(
+          config_assumptions, "mortality", "starting_tr_qx", "male_qx_proj_file",
+          default = "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
+        )
+        female_proj_file <- get_config_with_default(
+          config_assumptions, "mortality", "starting_tr_qx", "female_qx_proj_file",
+          default = "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
+        )
+        load_tr2025_qx_all_years(
+          male_qx_file = male_proj_file,
+          female_qx_file = female_proj_file,
+          start_year = 2023, end_year = 2100, ages = 100:119
+        )
       }
     ),
 
@@ -317,29 +317,15 @@ create_projected_population_targets <- function() {
 
     targets::tar_target(
       projected_population_summary,
-      {
-        pop <- population_projection$population
-        births <- population_projection$births
-        deaths <- population_projection$deaths
-        net_imm <- population_projection$net_immigration
-        start_year <- config_assumptions$projected_population$starting_year
-        end_year <- config_assumptions$projected_population$projection_end
-        data.table::data.table(
-          metric = c("Starting population (M)", "Ending population (M)", "Population growth rate (%/year)",
-                     "Total births 2023-2099 (M)", "Total deaths 2023-2099 (M)", "Total net immigration 2023-2099 (M)",
-                     "CNI/SS ratio (start)", "CNI/SS ratio (end)"),
-          value = c(
-            round(pop[year == start_year, sum(population)] / 1e6, 2),
-            round(pop[year == end_year, sum(population)] / 1e6, 2),
-            round(100 * ((pop[year == end_year, sum(population)] / pop[year == start_year, sum(population)])^(1/(end_year - start_year)) - 1), 3),
-            round(births[, sum(births)] / 1e6, 2),
-            round(deaths[, sum(deaths)] / 1e6, 2),
-            round(net_imm[, sum(net_immigration)] / 1e6, 2),
-            round(cni_projection$summary[year == start_year, cni_ss_ratio], 4),
-            round(cni_projection$summary[year == end_year, cni_ss_ratio], 4)
-          )
-        )
-      }
+      create_projection_summary(
+        population = population_projection$population,
+        births = population_projection$births,
+        deaths = population_projection$deaths,
+        net_immigration = population_projection$net_immigration,
+        cni_summary = cni_projection$summary,
+        start_year = config_assumptions$projected_population$starting_year,
+        end_year = config_assumptions$projected_population$projection_end
+      )
     )
   )
 }

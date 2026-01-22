@@ -24,15 +24,9 @@ create_fertility_targets <- function() {
     # Birth data from NCHS via NBER Stata files (1980-2024)
     targets::tar_target(
       nchs_births_raw,
-      {
-        years <- config_assumptions$data_sources$historical_birth_data$start_year:2024
-        all_births <- data.table::rbindlist(lapply(years, function(yr) {
-          dt <- fetch_nchs_births_by_age(yr)
-          dt[, year := yr]
-          dt
-        }))
-        all_births
-      },
+      fetch_nchs_births_by_age_multi(
+        years = config_assumptions$data_sources$historical_birth_data$start_year:2024
+      ),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
@@ -40,12 +34,7 @@ create_fertility_targets <- function() {
     targets::tar_target(
       census_female_pop,
       {
-        vintage <- config_assumptions$data_sources$census_vintage
-        if (is.null(vintage)) {
-          stop("census_vintage not set in config - please specify in config/assumptions/tr2025.yaml")
-        }
-        options(artemis.census_vintage = vintage)
-
+        set_census_vintage_option(config_assumptions)
         fetch_census_population_all(
           years = config_assumptions$data_sources$population_estimates$start_year:
                   config_assumptions$data_sources$population_estimates$end_year,
@@ -80,16 +69,11 @@ create_fertility_targets <- function() {
     # Female population for fertility - uses TR2025 or Census based on config
     targets::tar_target(
       female_pop_for_fertility,
-      {
-        use_tr <- config_assumptions$projected_population$use_tr_historical_population
-        if (isTRUE(use_tr)) {
-          cli::cli_alert_info("Using TR2025 population for fertility rate calculations")
-          tr2025_female_pop
-        } else {
-          cli::cli_alert_info("Using Census population for fertility rate calculations")
-          census_female_pop
-        }
-      }
+      select_population_source(
+        tr_pop = tr2025_female_pop,
+        census_pop = census_female_pop,
+        use_tr = config_assumptions$projected_population$use_tr_historical_population
+      )
     ),
 
     # ==========================================================================

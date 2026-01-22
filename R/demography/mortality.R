@@ -3914,3 +3914,101 @@ update_100plus_tracker <- function(tracker, target_year, new_100_male, new_100_f
 
   tracker
 }
+
+# =============================================================================
+# HELPER FUNCTIONS FOR TARGET FACTORIES
+# =============================================================================
+
+#' Calculate qx with proper infant mortality (q0)
+#'
+#' @description
+#' Calculates age-specific death probabilities (qx) from central death rates (mx),
+#' with proper infant mortality (q0) calculated from deaths/births ratio.
+#' TR2025 methodology requires q0 = infant deaths / births, not mx conversion.
+#'
+#' @param mx_total data.table with columns year, age, sex, mx
+#' @param deaths_raw data.table with columns year, age, sex, deaths
+#' @param births_by_sex data.table with columns year, sex, births
+#' @param population data.table for filtering years (needs column year)
+#' @param max_age Maximum age to include (default: 100)
+#'
+#' @return data.table with columns year, age, sex, qx
+#'
+#' @export
+calculate_qx_with_infant_mortality <- function(mx_total, deaths_raw, births_by_sex,
+                                                population, max_age = 100) {
+  # Get available years from population data
+  pop_years <- unique(population$year)
+
+  # Filter mx to available years and convert to qx for ages 1+
+  mx_filtered <- mx_total[year %in% pop_years]
+  qx_from_mx <- convert_mx_to_qx(mx_filtered, max_age = max_age)
+
+  # Calculate q0 directly from deaths/births
+  infant_deaths <- deaths_raw[age == 0 & year %in% pop_years,
+                              .(deaths = sum(deaths)), by = .(year, sex)]
+  q0 <- merge(infant_deaths, births_by_sex, by = c("year", "sex"), all.x = TRUE)
+  q0 <- q0[!is.na(births)]
+  q0[, qx := deaths / births]
+  q0 <- q0[, .(year, age = 0L, sex, qx)]
+
+  # Combine q0 with qx for ages 1+
+  qx_ages1plus <- qx_from_mx[age >= 1, .(year, age, sex, qx)]
+  result <- data.table::rbindlist(list(q0, qx_ages1plus), use.names = TRUE)
+  data.table::setorder(result, year, sex, age)
+
+  result
+}
+
+#' Combine life expectancy series
+#'
+#' @description
+#' Combines historical and projected life expectancy series into a single data.table.
+#'
+#' @param historical data.table with historical life expectancy
+#' @param projected data.table with projected life expectancy
+#'
+#' @return Combined and sorted data.table
+#'
+#' @export
+combine_life_expectancy_series <- function(historical, projected) {
+  combined <- data.table::rbindlist(
+    list(historical, projected),
+    use.names = TRUE
+  )
+  data.table::setorder(combined, year, sex, age)
+  combined
+}
+
+#' Load total births for q0 calculation
+#'
+#' @description
+#' Loads total births from cache files, trying monthly data first then
+#' falling back to age-specific data. Used for q0 calculation.
+#'
+#' @param years Integer vector of years to load
+#' @param monthly_pattern Cache file pattern for monthly data
+#' @param age_pattern Cache file pattern for age-specific data (fallback)
+#'
+#' @return data.table with columns year, births
+#'
+#' @export
+load_total_births_for_q0 <- function(years,
+                                      monthly_pattern = "data/raw/nchs/births_by_month_%d.rds",
+                                      age_pattern = "data/raw/nchs/births_by_age_%d.rds") {
+  data.table::rbindlist(lapply(years, function(yr) {
+    monthly_file <- sprintf(monthly_pattern, yr)
+    if (file.exists(monthly_file)) {
+      b <- readRDS(monthly_file)
+      data.table::data.table(year = yr, births = sum(b$births))
+    } else {
+      age_file <- sprintf(age_pattern, yr)
+      if (file.exists(age_file)) {
+        b <- readRDS(age_file)
+        data.table::data.table(year = yr, births = sum(b$births))
+      } else {
+        NULL
+      }
+    }
+  }))
+}

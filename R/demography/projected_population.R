@@ -5789,3 +5789,109 @@ extract_starting_marital_population <- function(historical_population_marital, c
 
   marital_data
 }
+
+# =============================================================================
+# HELPER FUNCTIONS FOR TARGET FACTORIES
+# =============================================================================
+
+#' Load starting population from TR2025 file
+#'
+#' @description
+#' Loads starting population from TR2025 population file and splits by
+#' sexual orientation status using default TR2025 assumptions.
+#'
+#' @param tr_file Path to TR2025 population file
+#' @param starting_year Year to extract (default: 2022)
+#' @param male_gay_pct Percentage of males who are gay (default: 2.5)
+#' @param female_lesbian_pct Percentage of females who are lesbian (default: 4.5)
+#'
+#' @return data.table with columns year, age, sex, pop_status, population
+#'
+#' @export
+load_tr2025_starting_population <- function(tr_file, starting_year = 2022,
+                                             male_gay_pct = 2.5,
+                                             female_lesbian_pct = 4.5) {
+  tr_pop <- data.table::fread(tr_file)
+  tr_start <- tr_pop[Year == starting_year,
+                     .(year = Year, age = Age, male = `M Tot`, female = `F Tot`)]
+  tr_start <- data.table::melt(
+    tr_start,
+    id.vars = c("year", "age"),
+    measure.vars = c("male", "female"),
+    variable.name = "sex",
+    value.name = "population"
+  )
+
+  # Cap age at 100 and aggregate
+  tr_start[age > 100, age := 100L]
+  tr_start <- tr_start[, .(population = sum(population)), by = .(year, age, sex)]
+
+  # Split by sexual orientation
+  tr_start_status <- data.table::rbindlist(list(
+    tr_start[sex == "male", .(year, age, sex, pop_status = "heterosexual",
+                              population = population * (1 - male_gay_pct / 100))],
+    tr_start[sex == "male", .(year, age, sex, pop_status = "gay",
+                              population = population * (male_gay_pct / 100))],
+    tr_start[sex == "female", .(year, age, sex, pop_status = "heterosexual",
+                                population = population * (1 - female_lesbian_pct / 100))],
+    tr_start[sex == "female", .(year, age, sex, pop_status = "lesbian",
+                                population = population * (female_lesbian_pct / 100))]
+  ))
+
+  cli::cli_alert_success("Loaded TR2025 population for Dec 31, {starting_year}")
+  tr_start_status
+}
+
+#' Create projection summary data.table
+#'
+#' @description
+#' Creates a summary data.table from population projection results.
+#'
+#' @param population Population data.table
+#' @param births Births data.table
+#' @param deaths Deaths data.table
+#' @param net_immigration Net immigration data.table
+#' @param cni_summary CNI summary data.table
+#' @param start_year Starting year of projection
+#' @param end_year Ending year of projection
+#'
+#' @return data.table with summary metrics
+#'
+#' @export
+create_projection_summary <- function(population, births, deaths, net_immigration,
+                                       cni_summary, start_year, end_year) {
+  start_pop <- population[year == start_year, sum(population)]
+  end_pop <- population[year == end_year, sum(population)]
+  growth_rate <- 100 * ((end_pop / start_pop)^(1 / (end_year - start_year)) - 1)
+
+  cni_start <- if (!is.null(cni_summary) && nrow(cni_summary[year == start_year]) > 0) {
+    cni_summary[year == start_year, cni_ss_ratio]
+  } else NA_real_
+
+  cni_end <- if (!is.null(cni_summary) && nrow(cni_summary[year == end_year]) > 0) {
+    cni_summary[year == end_year, cni_ss_ratio]
+  } else NA_real_
+
+  data.table::data.table(
+    metric = c(
+      "Starting population (M)",
+      "Ending population (M)",
+      "Population growth rate (%/year)",
+      "Total births 2023-2099 (M)",
+      "Total deaths 2023-2099 (M)",
+      "Total net immigration 2023-2099 (M)",
+      "CNI/SS ratio (start)",
+      "CNI/SS ratio (end)"
+    ),
+    value = c(
+      round(start_pop / 1e6, 2),
+      round(end_pop / 1e6, 2),
+      round(growth_rate, 3),
+      round(births[, sum(births)] / 1e6, 2),
+      round(deaths[, sum(deaths)] / 1e6, 2),
+      round(net_immigration[, sum(net_immigration)] / 1e6, 2),
+      round(cni_start, 4),
+      round(cni_end, 4)
+    )
+  )
+}

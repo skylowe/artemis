@@ -90,27 +90,11 @@ create_historical_population_targets <- function() {
     # Validate historical population against TR2025
     targets::tar_target(
       historical_population_validation,
-      {
-        if (is.null(tr2025_population_dec)) {
-          cli::cli_warn("Skipping validation - TR2025 data not available")
-          return(list(validated = FALSE, reason = "TR2025 data not available"))
-        }
-
-        calc_totals <- historical_population[, .(calculated = sum(population)), by = year]
-        tr_totals <- tr2025_population_dec[, .(tr2025 = sum(Total)), by = Year]
-        data.table::setnames(tr_totals, "Year", "year")
-
-        comparison <- merge(calc_totals, tr_totals, by = "year", all.x = TRUE)
-        comparison[, diff_pct := (calculated - tr2025) / tr2025 * 100]
-
-        valid_rows <- comparison[!is.na(tr2025)]
-        list(
-          validated = TRUE,
-          mean_abs_error = mean(abs(valid_rows$diff_pct)),
-          max_abs_error = max(abs(valid_rows$diff_pct)),
-          comparison = comparison
-        )
-      }
+      validate_year_totals_vs_tr2025(
+        population = historical_population,
+        tr2025_pop = tr2025_population_dec,
+        tolerance = 0.02
+      )
     )
   )
 }

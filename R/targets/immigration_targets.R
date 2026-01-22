@@ -24,14 +24,11 @@ create_immigration_targets <- function() {
     # DHS LPR immigration data (2006-2023)
     targets::tar_target(
       dhs_lpr_data,
-      {
-        cache_file <- "data/cache/dhs_immigration/dhs_lpr_all_years.rds"
-        if (file.exists(cache_file)) {
-          readRDS(cache_file)
-        } else {
-          cli::cli_abort("DHS data not cached - run fetch_dhs_lpr_data_multi() first")
-        }
-      },
+      load_cached_rds(
+        cache_file = "data/cache/dhs_immigration/dhs_lpr_all_years.rds",
+        on_missing = "abort",
+        abort_message = "DHS data not cached - run fetch_dhs_lpr_data_multi() first"
+      ),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
@@ -119,8 +116,10 @@ create_immigration_targets <- function() {
     targets::tar_target(
       lpr_new_aos_split,
       {
-        method <- config_assumptions$immigration$lpr$new_aos_split_method
-        if (is.null(method)) method <- "assumption"
+        method <- get_config_with_default(
+          config_assumptions, "immigration", "lpr", "new_aos_split_method",
+          default = "assumption"
+        )
         if (method == "assumption") {
           split_lpr_new_aos(
             lpr_immigration = lpr_immigration_projected,
@@ -174,49 +173,41 @@ create_immigration_targets <- function() {
     # DHS Nonimmigrant stock data
     targets::tar_target(
       dhs_nonimmigrant_stock,
-      {
-        cache_file <- "data/cache/dhs/nonimmigrant_stock_age_sex.rds"
-        if (file.exists(cache_file)) readRDS(cache_file) else fetch_dhs_nonimmigrant_stock()
-      },
+      load_or_fetch(
+        cache_file = "data/cache/dhs/nonimmigrant_stock_age_sex.rds",
+        fetch_fn = fetch_dhs_nonimmigrant_stock
+      ),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
     # DHS BOY nonimmigrants
     targets::tar_target(
       dhs_boy_nonimmigrants,
-      {
-        cache_file <- "data/cache/dhs/boy_nonimmigrants.rds"
-        if (file.exists(cache_file)) readRDS(cache_file) else fetch_dhs_boy_nonimmigrants()
-      },
+      load_or_fetch(
+        cache_file = "data/cache/dhs/boy_nonimmigrants.rds",
+        fetch_fn = fetch_dhs_boy_nonimmigrants
+      ),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
     # DHS DACA data
     targets::tar_target(
       dhs_daca_data,
-      {
-        grants_file <- "data/cache/dhs/daca_grants.rds"
-        stock_file <- "data/cache/dhs/daca_stock.rds"
-        if (file.exists(grants_file) && file.exists(stock_file)) {
-          list(grants = readRDS(grants_file), stock = readRDS(stock_file))
-        } else {
-          list(grants = fetch_dhs_daca_grants(), stock = fetch_dhs_daca_stock())
-        }
-      },
+      load_cached_dhs_daca_data(
+        fetch_grants_fn = fetch_dhs_daca_grants,
+        fetch_stock_fn = fetch_dhs_daca_stock
+      ),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
     # ACS foreign-born flows
     targets::tar_target(
       acs_foreign_born_flows,
-      {
-        cache_dir <- "data/cache/acs_pums"
-        years <- c(2006:2019, 2021:2023)
-        data.table::rbindlist(lapply(years, function(yr) {
-          cache_file <- file.path(cache_dir, sprintf("foreign_born_flows_%d.rds", yr))
-          if (file.exists(cache_file)) readRDS(cache_file) else NULL
-        }), fill = TRUE)
-      },
+      load_cached_multi_year(
+        years = c(2006:2019, 2021:2023),
+        cache_pattern = "data/cache/acs_pums/foreign_born_flows_%d.rds",
+        on_missing = "skip"
+      ),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
@@ -243,10 +234,12 @@ create_immigration_targets <- function() {
     targets::tar_target(
       va2_net_immigration,
       {
-        alternative <- config_assumptions$immigration$va2_alternative
-        if (is.null(alternative)) alternative <- "intermediate"
-        va2_file <- config_assumptions$immigration$va2_file
-        data_dir <- if (is.null(va2_file) || va2_file == "") "data/raw/SSA_TR2025" else dirname(va2_file)
+        alternative <- get_config_with_default(
+          config_assumptions, "immigration", "va2_alternative",
+          default = "intermediate"
+        )
+        va2_file <- get_config_with_default(config_assumptions, "immigration", "va2_file", default = "")
+        data_dir <- if (va2_file == "") "data/raw/SSA_TR2025" else dirname(va2_file)
         if (data_dir == ".") data_dir <- "data/raw/SSA_TR2025"
         get_tr2025_va2_net_immigration(
           years = config_assumptions$metadata$projection_period$start_year:

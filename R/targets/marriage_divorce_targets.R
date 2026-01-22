@@ -25,28 +25,29 @@ create_marriage_divorce_targets <- function() {
 
     targets::tar_target(
       nchs_mra_marriages_1978_1988,
-      {
-        cache_file <- here::here("data/cache/nber_marriage/nchs_mra_marriages_1978_1988.rds")
-        if (file.exists(cache_file)) readRDS(cache_file) else fetch_nchs_mra_marriages_1978_1988()
-      },
+      load_or_fetch(
+        cache_file = here::here("data/cache/nber_marriage/nchs_mra_marriages_1978_1988.rds"),
+        fetch_fn = fetch_nchs_mra_marriages_1978_1988
+      ),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
     targets::tar_target(
       cps_unmarried_population,
-      {
-        cache_file <- here::here("data/cache/ipums_cps/cps_unmarried_1957_1995.rds")
-        if (file.exists(cache_file)) readRDS(cache_file) else cli::cli_abort("CPS data not cached")
-      },
+      load_cached_rds(
+        cache_file = here::here("data/cache/ipums_cps/cps_unmarried_1957_1995.rds"),
+        on_missing = "abort",
+        abort_message = "CPS data not cached"
+      ),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
     targets::tar_target(
       nchs_mra_subset_1989_1995,
-      {
-        cache_file <- here::here("data/cache/nber_marriage/nchs_mra_marriages_1989_1995.rds")
-        if (file.exists(cache_file)) readRDS(cache_file) else fetch_nchs_mra_marriages_1989_1995()
-      },
+      load_or_fetch(
+        cache_file = here::here("data/cache/nber_marriage/nchs_mra_marriages_1989_1995.rds"),
+        fetch_fn = fetch_nchs_mra_marriages_1989_1995
+      ),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
@@ -72,10 +73,10 @@ create_marriage_divorce_targets <- function() {
 
     targets::tar_target(
       nchs_prior_status_1978_1988,
-      {
-        cache_file <- here::here("data/cache/nber_marriage/nchs_marriages_by_prior_status_1978_1988.rds")
-        if (file.exists(cache_file)) readRDS(cache_file) else fetch_nchs_marriages_by_prior_status_1978_1988()
-      },
+      load_or_fetch(
+        cache_file = here::here("data/cache/nber_marriage/nchs_marriages_by_prior_status_1978_1988.rds"),
+        fetch_fn = fetch_nchs_marriages_by_prior_status_1978_1988
+      ),
       cue = targets::tar_cue(mode = "thorough")
     ),
 

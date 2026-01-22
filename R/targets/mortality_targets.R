@@ -24,22 +24,7 @@ create_mortality_targets <- function() {
     # NCHS Deaths data (1968-2023)
     targets::tar_target(
       nchs_deaths_raw,
-      {
-        years <- 1968:2023
-        all_deaths <- data.table::rbindlist(lapply(years, function(yr) {
-          cache_file <- sprintf("data/cache/nchs_deaths/deaths_by_age_sex_cause_%d.rds", yr)
-          if (file.exists(cache_file)) {
-            dt <- readRDS(cache_file)
-            dt[, year := yr]
-            dt
-          } else {
-            dt <- fetch_nchs_deaths_by_age(yr)
-            dt[, year := yr]
-            dt
-          }
-        }))
-        all_deaths
-      },
+      fetch_nchs_deaths_multi(years = 1968:2023),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
@@ -47,25 +32,17 @@ create_mortality_targets <- function() {
     targets::tar_target(
       census_population_both,
       {
-        vintage <- config_assumptions$data_sources$census_vintage
-        if (is.null(vintage)) {
-          stop("census_vintage not set in config")
-        }
-        options(artemis.census_vintage = vintage)
-
+        vintage <- set_census_vintage_option(config_assumptions)
         cache_file <- sprintf("data/cache/census/population_by_age_sex_1980_2023_v%d_bysex.rds", vintage)
-        if (file.exists(cache_file)) {
-          cli::cli_alert_success("Loading cached Census Vintage {vintage} population data (by sex)")
-          readRDS(cache_file)
-        } else {
-          cli::cli_alert_info("Fetching Census Vintage {vintage} population data")
-          male_pop <- fetch_census_population_all(years = 1980:2023, ages = 0:100, sex = "male")
-          female_pop <- fetch_census_population_all(years = 1980:2023, ages = 0:100, sex = "female")
-          result <- data.table::rbindlist(list(male_pop, female_pop), use.names = TRUE)
-          dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-          saveRDS(result, cache_file)
-          result
-        }
+        load_or_fetch(
+          cache_file = cache_file,
+          fetch_fn = function() {
+            male_pop <- fetch_census_population_all(years = 1980:2023, ages = 0:100, sex = "male")
+            female_pop <- fetch_census_population_all(years = 1980:2023, ages = 0:100, sex = "female")
+            data.table::rbindlist(list(male_pop, female_pop), use.names = TRUE)
+          },
+          save_cache = TRUE
+        )
       },
       cue = targets::tar_cue(mode = "thorough")
     ),
@@ -73,22 +50,7 @@ create_mortality_targets <- function() {
     # Total births by year for q0 calculation
     targets::tar_target(
       nchs_births_total,
-      {
-        years <- 1968:2024
-        data.table::rbindlist(lapply(years, function(yr) {
-          births_file <- sprintf("data/raw/nchs/births_by_month_%d.rds", yr)
-          if (file.exists(births_file)) {
-            b <- readRDS(births_file)
-            data.table::data.table(year = yr, births = sum(b$births))
-          } else {
-            age_file <- sprintf("data/raw/nchs/births_by_age_%d.rds", yr)
-            if (file.exists(age_file)) {
-              b <- readRDS(age_file)
-              data.table::data.table(year = yr, births = sum(b$births))
-            } else NULL
-          }
-        }))
-      },
+      load_total_births_for_q0(years = 1968:2024),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
@@ -96,14 +58,12 @@ create_mortality_targets <- function() {
     targets::tar_target(
       nchs_births_by_sex,
       {
-        years <- 1968:2024
-        data.table::rbindlist(lapply(years, function(yr) {
-          births_file <- sprintf("data/raw/nchs/births_by_month_sex_%d.rds", yr)
-          if (file.exists(births_file)) {
-            b <- readRDS(births_file)
-            b[, .(births = sum(births)), by = .(year, sex)]
-          } else NULL
-        }))
+        raw_data <- load_cached_multi_year(
+          years = 1968:2024,
+          cache_pattern = "data/raw/nchs/births_by_month_sex_%d.rds",
+          on_missing = "skip"
+        )
+        raw_data[, .(births = sum(births)), by = .(year, sex)]
       },
       cue = targets::tar_cue(mode = "thorough")
     ),
@@ -165,23 +125,13 @@ create_mortality_targets <- function() {
     # Step 6: Calculate qx from mx
     targets::tar_target(
       mortality_qx_unadjusted,
-      {
-        pop_years <- unique(census_population_both$year)
-        mx_filtered <- mortality_mx_total[year %in% pop_years]
-        qx_from_mx <- convert_mx_to_qx(mx_filtered, max_age = 100)
-
-        infant_deaths <- nchs_deaths_raw[age == 0 & year %in% pop_years,
-                                         .(deaths = sum(deaths)), by = .(year, sex)]
-        q0 <- merge(infant_deaths, nchs_births_by_sex, by = c("year", "sex"), all.x = TRUE)
-        q0 <- q0[!is.na(births)]
-        q0[, qx := deaths / births]
-        q0 <- q0[, .(year, age = 0L, sex, qx)]
-
-        qx_ages1plus <- qx_from_mx[age >= 1, .(year, age, sex, qx)]
-        result <- data.table::rbindlist(list(q0, qx_ages1plus), use.names = TRUE)
-        data.table::setorder(result, year, sex, age)
-        result
-      }
+      calculate_qx_with_infant_mortality(
+        mx_total = mortality_mx_total,
+        deaths_raw = nchs_deaths_raw,
+        births_by_sex = nchs_births_by_sex,
+        population = census_population_both,
+        max_age = 100
+      )
     ),
 
     # Step 6b: Adjust qx for ages 85+ using HMD
@@ -222,8 +172,11 @@ create_mortality_targets <- function() {
       mortality_qx_projected,
       {
         qx_proj <- mortality_mx_projected$projected_qx
-        method <- config_assumptions$mortality$starting_aax_method
-        if (!is.null(method) && method == "tr_qx") {
+        method <- get_config_with_default(
+          config_assumptions, "mortality", "starting_aax_method",
+          default = "regression"
+        )
+        if (method == "tr_qx") {
           cli::cli_alert_info("Skipping HMD calibration for tr_qx method")
           qx_proj <- qx_proj[age <= 100]
           return(qx_proj)
@@ -254,14 +207,10 @@ create_mortality_targets <- function() {
     # Step 12: Combine life expectancy
     targets::tar_target(
       mortality_life_expectancy,
-      {
-        combined <- data.table::rbindlist(
-          list(mortality_life_expectancy_hist, mortality_life_expectancy_proj),
-          use.names = TRUE
-        )
-        data.table::setorder(combined, year, sex, age)
-        combined
-      }
+      combine_life_expectancy_series(
+        historical = mortality_life_expectancy_hist,
+        projected = mortality_life_expectancy_proj
+      )
     ),
 
     # ==========================================================================
