@@ -2088,10 +2088,82 @@ list(
   ),
 
   # ===========================================================================
+  # PHASE 8D: CHILDREN BY PARENT FATE (Equation 1.8.6)
+  # ===========================================================================
+  # Tracks children ages 0-18 by parent survival status:
+  #   - Both parents alive
+  #   - Only father alive
+  #   - Only mother alive
+  #   - Both parents deceased
+  #
+  # Per TR2025: Children are tracked by (child_age, father_age, mother_age)
+  # with survival probabilities calculated from mortality rates.
+  # ===========================================================================
+
+  # Run children by parent fate projection (Phase 8D main)
+  tar_target(
+    children_fate_projection,
+    {
+      # Get parent age groups from config
+      parent_age_groups <- list(
+        "14-24" = 14:24,
+        "25-34" = 25:34,
+        "35-44" = 35:44,
+        "45-54" = 45:54,
+        "55-64" = 55:64,
+        "65-100" = 65:100
+      )
+
+      project_children_fate(
+        phase8b_result = population_projection,
+        marital_result = marital_projection,
+        birth_rates = fertility_rates_for_projection,
+        mortality_qx = mortality_qx_for_projection,
+        parent_age_groups = parent_age_groups,
+        start_year = config_assumptions$projected_population$starting_year,
+        end_year = config_assumptions$projected_population$projection_end,
+        max_child_age = config_assumptions$projected_population$ages$children_max,
+        min_parent_age = config_assumptions$projected_population$ages$marriage_min,
+        max_parent_age = config_assumptions$projected_population$ages$max_age,
+        verbose = TRUE
+      )
+    }
+  ),
+
+  # Extract children fate data
+  tar_target(
+    projected_children_fate,
+    {
+      children_fate_projection$children_fate
+    }
+  ),
+
+  # Extract children fate summary
+  tar_target(
+    children_fate_summary,
+    {
+      children_fate_projection$summary
+    }
+  ),
+
+  # Phase 8D validation: Verify children totals match Phase 8B
+  tar_target(
+    children_fate_validation,
+    {
+      validate_children_fate(
+        children_fate_result = children_fate_projection,
+        phase8b_result = population_projection,
+        max_child_age = config_assumptions$projected_population$ages$children_max,
+        tolerance = 0.01
+      )
+    }
+  ),
+
+  # ===========================================================================
   # PLACEHOLDER: Future process targets will be added here
   # ===========================================================================
-  # - Projected population children targets (Phase 8D)
   # - Projected population CNI targets (Phase 8E)
+  # - Mean children per couple projection (Phase 8D.7 - requires CPS data)
   # - Economics process targets
   # - Beneficiaries process targets
   # - Trust fund operations targets

@@ -5,8 +5,8 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 
 ## Current Status
 **Phase:** 8 - Projected Population Subprocess (IN PROGRESS)
-**Most Recent Completion:** Phase 8A - Data Assembly & Input Verification (January 18, 2026)
-**Next Step:** Phase 8B - Core Population Projection (Equations 1.8.1-1.8.4)
+**Most Recent Completion:** Phase 8D - Children by Parent Fate (January 22, 2026)
+**Next Step:** Phase 8E - CNI Population (Equation 1.8.7)
 
 ### Fertility Subprocess Status (COMPLETE)
 - All 10 projection methodology steps implemented in `R/demography/fertility.R`
@@ -167,28 +167,37 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
    - TR2025 uses December 31 marriage grids from the 2015 TR
    - Minor differences expected but methodology is consistent
 
-### Projected Population Subprocess Status (IN PROGRESS - Phase 8A Complete)
+### Projected Population Subprocess Status (IN PROGRESS - Phase 8D Complete)
 - **Purpose:** Project SS area population from Dec 31, 2022 through 2099 using component method
-- **Key Outputs (Planned):**
-  - B^z_{s,p} - Births by sex and population status (Eq 1.8.1)
-  - D^z_{x,s,p} - Deaths by age, sex, and population status (Eq 1.8.2)
-  - NI^z_{x,s} - Total net immigration (Eq 1.8.3)
-  - P^z_{x,s,p} - Population by age, sex, population status (Eq 1.8.4)
-  - P^z_{x,s,p,m} - Population by marital status (Eq 1.8.5)
-  - C^z_{x,s,g,f} - Children by parent survival status (Eq 1.8.6)
-  - N^z_{x,s,m} - Civilian noninstitutionalized population (Eq 1.8.7)
+- **Key Outputs:**
+  - B^z_{s,p} - Births by sex and population status (Eq 1.8.1) ✓
+  - D^z_{x,s,p} - Deaths by age, sex, and population status (Eq 1.8.2) ✓
+  - NI^z_{x,s} - Total net immigration (Eq 1.8.3) ✓
+  - P^z_{x,s,p} - Population by age, sex, population status (Eq 1.8.4) ✓
+  - P^z_{x,s,p,m} - Population by marital status (Eq 1.8.5) ✓
+  - C^z_{x,s,g,f} - Children by parent survival status (Eq 1.8.6) ✓
+  - N^z_{x,s,m} - Civilian noninstitutionalized population (Eq 1.8.7) - Pending
 - **TR2025 Assumptions:**
   - Starting Year: December 31, 2022
   - Sex ratio at birth: 1,048 males per 1,000 females
   - Population status: 2.5% males gay, 4.5% females lesbian
-- **Phase 8A Status (Complete):**
-  - Input verification functions implemented in `R/demography/projected_population.R`
-  - CPS children per couple fetcher implemented in `R/data_acquisition/cps_children.R`
-  - Configuration added to `config/assumptions/tr2025.yaml`
-  - Starting population extraction from Phase 4 historical population
-  - All previous subprocess outputs verified available
+- **Phase 8B Status (Complete):** Core population projection using component method
+  - Population: 342.08M (2022) → 429.07M (2099)
+  - Births: 3.64M (2023) → 4.53M (2099)
+  - Deaths: 2.93M (2023) → 8.98M (2099)
+  - Net Immigration: 2.16M (2025) → 1.09M (2099)
+  - Pipeline targets: `population_projection`, `projected_births`, `projected_deaths`, `projected_net_immigration`
+- **Phase 8C Status (Complete):** Marital status disaggregation
+  - Implements Equation 1.8.5 - population by marital status
+  - Four categories: single, married, divorced, widowed
+  - Tracks married couples grid by husband age × wife age
+  - Pipeline targets: `marital_projection`, `projected_marital_population`, `marital_validation`
+- **Phase 8D Status (Complete):** Children by parent survival status
+  - Implements Equation 1.8.6 - children ages 0-18 by parent fate
+  - Four fates: both_alive, only_father_alive, only_mother_alive, both_deceased
+  - Tracks children by (child_age × father_age × mother_age × fate)
+  - Pipeline targets: `children_fate_projection`, `projected_children_fate`, `children_fate_validation`
 - **Key files:** `R/demography/projected_population.R`, `R/data_acquisition/cps_children.R`
-- **Pipeline targets:** `projection_inputs_verification`, `starting_population`, `cps_children_per_couple`
 - **Plan document:** `plans/08_demography_projected_population_implementation_plan.md`
 
 ### Pending Improvements

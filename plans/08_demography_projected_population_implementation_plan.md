@@ -18,9 +18,24 @@
 - [x] Completed
 
 ### Current Status
-**Last Updated:** January 18, 2026
-**Current Phase:** Phase 8B - Complete
-**Subprocess Status:** Phase 8B Core Population Projection Complete
+**Last Updated:** January 22, 2026
+**Current Phase:** Phase 8E - Pending
+**Subprocess Status:** Phase 8D Children by Parent Fate Complete
+
+**Phase 8D Results:**
+- Children by parent fate projection implemented per Equation 1.8.6
+- Pipeline targets: `children_fate_projection`, `projected_children_fate`, `children_fate_validation`
+- Functions: `project_children_fate()`, `initialize_children_by_parents()`, `roll_forward_children()`, etc.
+- Tracks children ages 0-18 by (child_age × father_age × mother_age × fate)
+- Four fate categories: both_alive, only_father_alive, only_mother_alive, both_deceased
+- Adjusted to match Phase 8B population totals
+
+**Phase 8C Results (Verified):**
+- Marital status disaggregation implemented per Equation 1.8.5
+- Pipeline targets: `marital_projection`, `projected_marital_population`, `marital_validation`
+- Functions: `run_marital_projection()`, `project_marital_year()`, supporting functions
+- Married couples grid tracking implemented
+- Validation confirms marital totals sum to Phase 8B totals
 
 **Phase 8B Results (Verified):**
 - Population: 342.08M (2022) → 429.07M (2099)
@@ -1462,31 +1477,31 @@ validate_projected_population_comprehensive <- function(projection_results,
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 8C.1 | Implement distribute_deaths_by_marital() | 8B.2 | Deaths by marital function |
-| [ ] | 8C.2 | Implement distribute_immigrants_by_marital() | 8B.3 | Immigration by marital |
-| [ ] | 8C.3 | Implement calculate_midyear_unmarried() | 8A.7 | Midyear unmarried |
-| [ ] | 8C.4 | Implement calculate_new_marriages() | 8A.5, 8C.3 | Marriages function |
-| [ ] | 8C.5 | Implement distribute_marriages_by_prior_status() | 8C.4 | Marriages by prior status |
-| [ ] | 8C.6 | Implement calculate_midyear_married_couples() | 8A.7 | Midyear couples grid |
-| [ ] | 8C.7 | Implement calculate_divorces() | 8A.6, 8C.6 | Divorces function |
-| [ ] | 8C.8 | Implement calculate_widowings() | 8B.2, 8C.6 | Widowings function |
-| [ ] | 8C.9 | Implement reconcile_widowings_deaths() | 8C.8 | Reconciliation |
-| [ ] | 8C.10 | Implement update_marital_populations() | 8C.1-8C.9 | Update function |
-| [ ] | 8C.11 | Implement project_marital_status() | 8C.1-8C.10 | Full marital projection |
-| [ ] | 8C.12 | Validate marital status consistency | 8C.11 | Validation report |
+| [x] | 8C.1 | Implement distribute_deaths_by_marital() | 8B.2 | Deaths by marital function |
+| [x] | 8C.2 | Implement distribute_immigrants_by_marital() | 8B.3 | Immigration by marital |
+| [x] | 8C.3 | Implement calculate_midyear_unmarried() | 8A.7 | Midyear unmarried |
+| [x] | 8C.4 | Implement calculate_new_marriages() | 8A.5, 8C.3 | Marriages function |
+| [x] | 8C.5 | Implement distribute_marriages_by_prior_status() | 8C.4 | Marriages by prior status |
+| [x] | 8C.6 | Implement calculate_midyear_married_couples() | 8A.7 | Midyear couples grid |
+| [x] | 8C.7 | Implement calculate_divorces() | 8A.6, 8C.6 | Divorces function |
+| [x] | 8C.8 | Implement calculate_widowings() | 8B.2, 8C.6 | Widowings function |
+| [x] | 8C.9 | Implement reconcile_widowings_deaths() | 8C.8 | Reconciliation |
+| [x] | 8C.10 | Implement update_marital_populations() | 8C.1-8C.9 | Update function |
+| [x] | 8C.11 | Implement project_marital_status() | 8C.1-8C.10 | Full marital projection |
+| [x] | 8C.12 | Validate marital status consistency | 8C.11 | Validation report |
 
 ### Phase 8D: Children by Parent Fate (Equation 1.8.6)
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 8D.1 | Implement initialize_children_by_parents() | 8A.7 | Initial children dist |
-| [ ] | 8D.2 | Implement roll_forward_children() | 8D.1 | Roll forward function |
-| [ ] | 8D.3 | Implement calculate_parent_survival() | 8A.2 | Survival function |
-| [ ] | 8D.4 | Implement update_parent_fates() | 8D.3 | Fate update function |
-| [ ] | 8D.5 | Implement adjust_children_to_total() | 8B.5 | Adjustment function |
-| [ ] | 8D.6 | Implement project_children_fate() | 8D.1-8D.5 | Full children projection |
-| [ ] | 8D.7 | Implement project_mean_children_per_couple() | 8A.8 | Mean children projection |
-| [ ] | 8D.8 | Validate children totals | 8D.6 | Validation report |
+| [x] | 8D.1 | Implement initialize_children_by_parents() | 8A.7 | Initial children dist |
+| [x] | 8D.2 | Implement roll_forward_children() | 8D.1 | Roll forward function |
+| [x] | 8D.3 | Implement calculate_parent_survival() | 8A.2 | Survival function |
+| [x] | 8D.4 | Implement update_parent_fates() | 8D.3 | Fate update function |
+| [x] | 8D.5 | Implement adjust_children_to_total() | 8B.5 | Adjustment function |
+| [x] | 8D.6 | Implement project_children_fate() | 8D.1-8D.5 | Full children projection |
+| [x] | 8D.7 | Implement project_mean_children_per_couple() | 8A.8 | Mean children projection |
+| [x] | 8D.8 | Validate children totals | 8D.6 | Validation report |
 
 ### Phase 8E: CNI Population (Equation 1.8.7)
 
@@ -1513,11 +1528,11 @@ validate_projected_population_comprehensive <- function(projection_results,
 
 | Status | Step | Task | Dependencies | Output |
 |--------|------|------|--------------|--------|
-| [ ] | 8G.1 | Add projected_population target to _targets.R | 8F.1 | New target |
-| [ ] | 8G.2 | Add projected_population_marital target | 8C.11 | New target |
-| [ ] | 8G.3 | Add projected_children_fate target | 8D.6 | New target |
+| [x] | 8G.1 | Add projected_population target to _targets.R | 8F.1 | New target |
+| [x] | 8G.2 | Add projected_population_marital target | 8C.11 | New target |
+| [x] | 8G.3 | Add projected_children_fate target | 8D.6 | New target |
 | [ ] | 8G.4 | Add projected_cni target | 8E.6 | New target |
-| [ ] | 8G.5 | Add validation targets | 8F.3 | Validation targets |
+| [x] | 8G.5 | Add validation targets | 8F.3 | Validation targets |
 | [ ] | 8G.6 | Run full pipeline | 8G.1-8G.5 | Complete outputs |
 | [ ] | 8G.7 | Document methodology deviations | 8G.6 | Documentation |
 | [ ] | 8G.8 | Update CLAUDE.md | 8G.7 | Updated docs |

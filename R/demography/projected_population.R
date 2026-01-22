@@ -2952,3 +2952,1148 @@ get_rate_grid_for_year <- function(rates_list, year, min_age = 14, max_age = 100
   matrix(0, nrow = n_ages, ncol = n_ages,
          dimnames = list(min_age:max_age, min_age:max_age))
 }
+
+# =============================================================================
+# PHASE 8D: CHILDREN BY PARENT FATE (Equation 1.8.6)
+# =============================================================================
+# Tracks children ages 0-18 by parent survival status:
+#   - Both parents alive
+#   - Only father alive
+#   - Only mother alive
+#   - Both parents deceased
+#
+# Per TR2025 documentation: Children are tracked by (child_age, father_age,
+# mother_age) with survival probabilities calculated from mortality rates.
+# The calculated totals are adjusted to match population totals from Phase 8B.
+# =============================================================================
+
+#' Initialize children by parent ages (Phase 8D.1)
+#'
+#' @description
+#' Creates the initial distribution of children (ages 0-18) by father age
+#' and mother age for the starting year. This uses the married couples grid
+#' and birth rates to establish the baseline distribution.
+#'
+#' Per TR2025: "The HISTORICAL POPULATION subprocess provides the historical
+#' number of children (ages 0-18), number of women (ages 14-49), and the number
+#' of married couples by single year of age of husband crossed with single year
+#' of age of wife."
+#'
+#' @param population_start data.table: Starting population by age and sex
+#' @param couples_grid Matrix: Married couples by husband_age x wife_age (87x87)
+#' @param birth_rates data.table: Birth rates by mother age (14-49)
+#' @param qx_male Numeric vector: Male death probabilities by age (0-100)
+#' @param qx_female Numeric vector: Female death probabilities by age (0-100)
+#' @param min_parent_age Integer: Minimum parent age (default: 14)
+#' @param max_parent_age Integer: Maximum parent age (default: 100)
+#' @param max_child_age Integer: Maximum child age (default: 18)
+#'
+#' @return list with:
+#'   - children_array: 4D array [child_age, father_age, mother_age, fate]
+#'   - total_children: Total children ages 0-18
+#'   - fate_totals: Totals by fate category
+#'
+#' @export
+initialize_children_by_parents <- function(population_start,
+                                            couples_grid,
+                                            birth_rates,
+                                            qx_male,
+                                            qx_female,
+                                            min_parent_age = 14,
+                                            max_parent_age = 100,
+                                            max_child_age = 18) {
+
+  n_child_ages <- max_child_age + 1  # 0-18 = 19 ages
+  n_parent_ages <- max_parent_age - min_parent_age + 1  # 87 ages
+  n_fates <- 4
+
+  # Fate indices: 1=both_alive, 2=only_father, 3=only_mother, 4=both_deceased
+  fate_names <- c("both_alive", "only_father_alive", "only_mother_alive", "both_deceased")
+
+  # Initialize 4D array: [child_age, father_age, mother_age, fate]
+  children_array <- array(
+    0,
+    dim = c(n_child_ages, n_parent_ages, n_parent_ages, n_fates),
+    dimnames = list(
+      child_age = as.character(0:max_child_age),
+      father_age = as.character(min_parent_age:max_parent_age),
+      mother_age = as.character(min_parent_age:max_parent_age),
+      fate = fate_names
+    )
+  )
+
+  # Get total children ages 0-18 from population
+  pop_dt <- data.table::as.data.table(population_start)
+  total_children_by_age <- pop_dt[age <= max_child_age,
+                                   .(total = sum(population, na.rm = TRUE)),
+                                   by = age]
+  data.table::setorder(total_children_by_age, age)
+
+  # Distribute children to parent age combinations using couples grid
+  # The couples grid shows the age distribution of married couples
+  # Assume children are distributed proportionally to couples
+
+  # For each child age, distribute based on couples at appropriate parent ages
+  # Child age c implies parents were age (father_age - c, mother_age - c) at birth
+  # Constrain mother age to 14-49 (childbearing range)
+
+  couples_total <- sum(couples_grid, na.rm = TRUE)
+  if (couples_total == 0) {
+    cli::cli_warn("Couples grid is empty, using uniform distribution")
+    couples_total <- 1
+  }
+
+  for (c_age in 0:max_child_age) {
+    # Get total children at this age
+    if (c_age + 1 <= nrow(total_children_by_age)) {
+      total_at_age <- total_children_by_age[age == c_age, total]
+      if (length(total_at_age) == 0) total_at_age <- 0
+    } else {
+      total_at_age <- 0
+    }
+
+    if (total_at_age == 0) next
+
+    # Distribute to parent ages
+    # Current parent ages range from (min_parent_age) to (max_parent_age)
+    # At birth, parents were c_age years younger
+    # Mother must have been 14-49 at birth
+
+    temp_dist <- matrix(0, nrow = n_parent_ages, ncol = n_parent_ages)
+
+    for (f_idx in 1:n_parent_ages) {
+      father_age_now <- min_parent_age + f_idx - 1
+      father_age_at_birth <- father_age_now - c_age
+
+      for (m_idx in 1:n_parent_ages) {
+        mother_age_now <- min_parent_age + m_idx - 1
+        mother_age_at_birth <- mother_age_now - c_age
+
+        # Mother must have been 14-49 at birth
+        if (mother_age_at_birth < 14 || mother_age_at_birth > 49) next
+        # Father must have been at least 14 at birth
+        if (father_age_at_birth < 14) next
+
+        # Use couples grid proportion (at current ages as proxy)
+        if (f_idx <= nrow(couples_grid) && m_idx <= ncol(couples_grid)) {
+          temp_dist[f_idx, m_idx] <- couples_grid[f_idx, m_idx]
+        }
+      }
+    }
+
+    # Normalize and assign
+    temp_total <- sum(temp_dist, na.rm = TRUE)
+    if (temp_total > 0) {
+      temp_dist <- temp_dist * total_at_age / temp_total
+    }
+
+    # Initially all children have both parents alive (historical baseline)
+    children_array[c_age + 1, , , 1] <- temp_dist
+  }
+
+  # Calculate survival probabilities going back in time to estimate fate distribution
+  # For the starting year, we need to estimate how many children have lost parents
+  # This is approximate - ideally would come from historical data
+
+  # For each child age, apply cumulative mortality to estimate orphanhood
+  for (c_age in 1:max_child_age) {
+    for (f_idx in 1:n_parent_ages) {
+      father_age_now <- min_parent_age + f_idx - 1
+
+      for (m_idx in 1:n_parent_ages) {
+        mother_age_now <- min_parent_age + m_idx - 1
+        children_both_alive <- children_array[c_age + 1, f_idx, m_idx, 1]
+
+        if (children_both_alive == 0) next
+
+        # Estimate cumulative mortality over child's lifetime
+        # P(father survived c years) ≈ product of (1-qx) for each year
+        father_survival <- 1
+        mother_survival <- 1
+
+        for (yr_back in 1:c_age) {
+          father_age_then <- father_age_now - yr_back + 1
+          mother_age_then <- mother_age_now - yr_back + 1
+
+          if (father_age_then >= 0 && father_age_then <= length(qx_male)) {
+            father_survival <- father_survival * (1 - qx_male[father_age_then + 1])
+          }
+          if (mother_age_then >= 0 && mother_age_then <= length(qx_female)) {
+            mother_survival <- mother_survival * (1 - qx_female[mother_age_then + 1])
+          }
+        }
+
+        # Clamp survival to [0, 1]
+        father_survival <- max(0, min(1, father_survival))
+        mother_survival <- max(0, min(1, mother_survival))
+
+        # Distribute children by fate
+        p_both <- father_survival * mother_survival
+        p_only_father <- father_survival * (1 - mother_survival)
+        p_only_mother <- (1 - father_survival) * mother_survival
+        p_neither <- (1 - father_survival) * (1 - mother_survival)
+
+        # Redistribute from "both alive" to appropriate fates
+        children_array[c_age + 1, f_idx, m_idx, 1] <- children_both_alive * p_both
+        children_array[c_age + 1, f_idx, m_idx, 2] <- children_both_alive * p_only_father
+        children_array[c_age + 1, f_idx, m_idx, 3] <- children_both_alive * p_only_mother
+        children_array[c_age + 1, f_idx, m_idx, 4] <- children_both_alive * p_neither
+      }
+    }
+  }
+
+  # Calculate totals
+  total_children <- sum(children_array, na.rm = TRUE)
+  fate_totals <- apply(children_array, 4, sum, na.rm = TRUE)
+  names(fate_totals) <- fate_names
+
+  list(
+    children_array = children_array,
+    total_children = total_children,
+    fate_totals = fate_totals,
+    metadata = list(
+      n_child_ages = n_child_ages,
+      n_parent_ages = n_parent_ages,
+      min_parent_age = min_parent_age,
+      max_parent_age = max_parent_age,
+      max_child_age = max_child_age
+    )
+  )
+}
+
+#' Calculate parent survival probabilities (Phase 8D.3)
+#'
+#' @description
+#' Calculates the probability of each parent surviving one year based on
+#' their age and the mortality rates from the MORTALITY subprocess.
+#'
+#' @param father_age Integer: Father's current age
+#' @param mother_age Integer: Mother's current age
+#' @param qx_male Numeric vector: Male death probabilities by age (0-100)
+#' @param qx_female Numeric vector: Female death probabilities by age (0-100)
+#'
+#' @return list with:
+#'   - father_alive_prob: P(father survives)
+#'   - mother_alive_prob: P(mother survives)
+#'   - p_both_alive: P(both survive)
+#'   - p_only_father: P(only father survives)
+#'   - p_only_mother: P(only mother survives)
+#'   - p_neither: P(neither survives)
+#'
+#' @export
+calculate_parent_survival <- function(father_age, mother_age, qx_male, qx_female) {
+
+  # Get death probabilities (handle out-of-range ages)
+  if (father_age >= 0 && father_age < length(qx_male)) {
+    qx_f <- qx_male[father_age + 1]
+  } else if (father_age >= length(qx_male)) {
+    qx_f <- qx_male[length(qx_male)]  # Use last value for very old ages
+  } else {
+    qx_f <- 0  # Invalid age
+  }
+
+  if (mother_age >= 0 && mother_age < length(qx_female)) {
+    qx_m <- qx_female[mother_age + 1]
+  } else if (mother_age >= length(qx_female)) {
+    qx_m <- qx_female[length(qx_female)]
+  } else {
+    qx_m <- 0
+  }
+
+  # Survival probabilities
+  father_alive_prob <- 1 - qx_f
+  mother_alive_prob <- 1 - qx_m
+
+  list(
+    father_alive_prob = father_alive_prob,
+    mother_alive_prob = mother_alive_prob,
+    p_both_alive = father_alive_prob * mother_alive_prob,
+    p_only_father = father_alive_prob * (1 - mother_alive_prob),
+    p_only_mother = (1 - father_alive_prob) * mother_alive_prob,
+    p_neither = (1 - father_alive_prob) * (1 - mother_alive_prob)
+  )
+}
+
+#' Update parent fate distribution (Phase 8D.4)
+#'
+#' @description
+#' Updates the four fate categories (both alive, only father, only mother,
+#' both deceased) based on parent survival probabilities for one year.
+#'
+#' @param fate_prev Numeric vector of length 4: previous fate distribution
+#'   [both_alive, only_father, only_mother, both_deceased]
+#' @param survival_probs list: output from calculate_parent_survival()
+#'
+#' @return Numeric vector of length 4: updated fate distribution
+#'
+#' @export
+update_parent_fates <- function(fate_prev, survival_probs) {
+
+  p_f <- survival_probs$father_alive_prob
+  p_m <- survival_probs$mother_alive_prob
+
+  # Unpack previous fates
+  prev_both <- fate_prev[1]
+  prev_only_f <- fate_prev[2]
+  prev_only_m <- fate_prev[3]
+  prev_neither <- fate_prev[4]
+
+  # Update each fate category
+  # Children with both alive: some stay both, some become only_father, only_mother, or neither
+  new_both <- prev_both * p_f * p_m
+
+  # Children with only father: some stay, some become neither
+  new_only_f <- prev_both * p_f * (1 - p_m) +
+                prev_only_f * p_f
+
+  # Children with only mother: some stay, some become neither
+  new_only_m <- prev_both * (1 - p_f) * p_m +
+                prev_only_m * p_m
+
+  # Children with neither: accumulate from all transitions
+  new_neither <- prev_both * (1 - p_f) * (1 - p_m) +
+                 prev_only_f * (1 - p_f) +
+                 prev_only_m * (1 - p_m) +
+                 prev_neither
+
+  c(new_both, new_only_f, new_only_m, new_neither)
+}
+
+#' Roll forward children one year (Phase 8D.2)
+#'
+#' @description
+#' Ages children forward one year and updates parent ages and survival status.
+#' Per TR2025: "Each year the number of children is then rolled forward a year
+#' to the next age of husband, age of wife, and child age."
+#'
+#' @param children_array 4D array: [child_age, father_age, mother_age, fate]
+#' @param new_births_grid Matrix: births distributed to father_age x mother_age
+#' @param qx_male Numeric vector: Male death probabilities
+#' @param qx_female Numeric vector: Female death probabilities
+#' @param min_parent_age Integer: Minimum parent age (default: 14)
+#' @param max_parent_age Integer: Maximum parent age (default: 100)
+#' @param max_child_age Integer: Maximum child age (default: 18)
+#'
+#' @return Updated 4D array
+#'
+#' @export
+roll_forward_children <- function(children_array,
+                                   new_births_grid,
+                                   qx_male,
+                                   qx_female,
+                                   min_parent_age = 14,
+                                   max_parent_age = 100,
+                                   max_child_age = 18) {
+
+  n_child_ages <- max_child_age + 1
+  n_parent_ages <- max_parent_age - min_parent_age + 1
+  n_fates <- 4
+
+  # Create new array for next year
+  new_array <- array(
+    0,
+    dim = dim(children_array),
+    dimnames = dimnames(children_array)
+  )
+
+  # Add new births at child_age = 0, all with both parents alive
+  if (!is.null(new_births_grid) && any(new_births_grid > 0, na.rm = TRUE)) {
+    for (f_idx in 1:n_parent_ages) {
+      for (m_idx in 1:n_parent_ages) {
+        if (f_idx <= nrow(new_births_grid) && m_idx <= ncol(new_births_grid)) {
+          new_array[1, f_idx, m_idx, 1] <- new_births_grid[f_idx, m_idx]
+        }
+      }
+    }
+  }
+
+  # Age existing children forward
+  for (c_age in 0:(max_child_age - 1)) {  # Ages 0-17 become 1-18
+    new_c_age <- c_age + 1
+
+    for (f_idx in 1:(n_parent_ages - 1)) {  # Father ages forward by 1
+      father_age_now <- min_parent_age + f_idx - 1
+      new_f_idx <- f_idx + 1
+
+      for (m_idx in 1:(n_parent_ages - 1)) {  # Mother ages forward by 1
+        mother_age_now <- min_parent_age + m_idx - 1
+        new_m_idx <- m_idx + 1
+
+        # Get current fate distribution
+        fate_prev <- c(
+          children_array[c_age + 1, f_idx, m_idx, 1],
+          children_array[c_age + 1, f_idx, m_idx, 2],
+          children_array[c_age + 1, f_idx, m_idx, 3],
+          children_array[c_age + 1, f_idx, m_idx, 4]
+        )
+
+        if (sum(fate_prev) == 0) next
+
+        # Calculate survival probabilities for this year
+        survival <- calculate_parent_survival(
+          father_age_now, mother_age_now,
+          qx_male, qx_female
+        )
+
+        # Update fates
+        new_fates <- update_parent_fates(fate_prev, survival)
+
+        # Store in new array at aged position
+        new_array[new_c_age + 1, new_f_idx, new_m_idx, 1] <-
+          new_array[new_c_age + 1, new_f_idx, new_m_idx, 1] + new_fates[1]
+        new_array[new_c_age + 1, new_f_idx, new_m_idx, 2] <-
+          new_array[new_c_age + 1, new_f_idx, new_m_idx, 2] + new_fates[2]
+        new_array[new_c_age + 1, new_f_idx, new_m_idx, 3] <-
+          new_array[new_c_age + 1, new_f_idx, new_m_idx, 3] + new_fates[3]
+        new_array[new_c_age + 1, new_f_idx, new_m_idx, 4] <-
+          new_array[new_c_age + 1, new_f_idx, new_m_idx, 4] + new_fates[4]
+      }
+
+      # Handle mother at max age (stays at max)
+      fate_prev <- c(
+        children_array[c_age + 1, f_idx, n_parent_ages, 1],
+        children_array[c_age + 1, f_idx, n_parent_ages, 2],
+        children_array[c_age + 1, f_idx, n_parent_ages, 3],
+        children_array[c_age + 1, f_idx, n_parent_ages, 4]
+      )
+
+      if (sum(fate_prev) > 0) {
+        survival <- calculate_parent_survival(
+          father_age_now, max_parent_age,
+          qx_male, qx_female
+        )
+        new_fates <- update_parent_fates(fate_prev, survival)
+
+        new_array[new_c_age + 1, new_f_idx, n_parent_ages, 1] <-
+          new_array[new_c_age + 1, new_f_idx, n_parent_ages, 1] + new_fates[1]
+        new_array[new_c_age + 1, new_f_idx, n_parent_ages, 2] <-
+          new_array[new_c_age + 1, new_f_idx, n_parent_ages, 2] + new_fates[2]
+        new_array[new_c_age + 1, new_f_idx, n_parent_ages, 3] <-
+          new_array[new_c_age + 1, new_f_idx, n_parent_ages, 3] + new_fates[3]
+        new_array[new_c_age + 1, new_f_idx, n_parent_ages, 4] <-
+          new_array[new_c_age + 1, new_f_idx, n_parent_ages, 4] + new_fates[4]
+      }
+    }
+
+    # Handle father at max age (stays at max)
+    for (m_idx in 1:n_parent_ages) {
+      mother_age_now <- min_parent_age + m_idx - 1
+      new_m_idx <- min(m_idx + 1, n_parent_ages)
+
+      fate_prev <- c(
+        children_array[c_age + 1, n_parent_ages, m_idx, 1],
+        children_array[c_age + 1, n_parent_ages, m_idx, 2],
+        children_array[c_age + 1, n_parent_ages, m_idx, 3],
+        children_array[c_age + 1, n_parent_ages, m_idx, 4]
+      )
+
+      if (sum(fate_prev) > 0) {
+        survival <- calculate_parent_survival(
+          max_parent_age, mother_age_now,
+          qx_male, qx_female
+        )
+        new_fates <- update_parent_fates(fate_prev, survival)
+
+        new_array[new_c_age + 1, n_parent_ages, new_m_idx, 1] <-
+          new_array[new_c_age + 1, n_parent_ages, new_m_idx, 1] + new_fates[1]
+        new_array[new_c_age + 1, n_parent_ages, new_m_idx, 2] <-
+          new_array[new_c_age + 1, n_parent_ages, new_m_idx, 2] + new_fates[2]
+        new_array[new_c_age + 1, n_parent_ages, new_m_idx, 3] <-
+          new_array[new_c_age + 1, n_parent_ages, new_m_idx, 3] + new_fates[3]
+        new_array[new_c_age + 1, n_parent_ages, new_m_idx, 4] <-
+          new_array[new_c_age + 1, n_parent_ages, new_m_idx, 4] + new_fates[4]
+      }
+    }
+  }
+
+  # Children who turn 19 exit the tracking (ages out)
+
+  new_array
+}
+
+#' Adjust children to population total (Phase 8D.5)
+#'
+#' @description
+#' Scales calculated children by parent ages to match the total children
+#' in the population projection. Per TR2025: "The calculated number of
+#' children by age of father and age of mother must match the number of
+#' children in the historical or projected population."
+#'
+#' @param children_array 4D array: calculated children by parent ages and fate
+#' @param target_children Numeric vector: target children by age (0-18) from population
+#' @param max_child_age Integer: maximum child age (default: 18)
+#'
+#' @return Adjusted 4D array
+#'
+#' @export
+adjust_children_to_total <- function(children_array,
+                                      target_children,
+                                      max_child_age = 18) {
+
+  adjusted <- children_array
+
+  for (c_age in 0:max_child_age) {
+    # Get calculated total for this age
+    calc_total <- sum(children_array[c_age + 1, , , ], na.rm = TRUE)
+
+    # Get target total
+    target <- if (c_age + 1 <= length(target_children)) {
+      target_children[c_age + 1]
+    } else {
+      0
+    }
+
+    # Calculate scaling factor
+    if (calc_total > 0 && target > 0) {
+      scale_factor <- target / calc_total
+
+      # Apply scaling to all dimensions for this child age
+      adjusted[c_age + 1, , , ] <- children_array[c_age + 1, , , ] * scale_factor
+    }
+  }
+
+  adjusted
+}
+
+#' Distribute births to parent ages (helper for Phase 8D)
+#'
+#' @description
+#' Distributes total births to father_age x mother_age cells using the
+#' married couples grid and birth rates. Per TR2025: "The births are then
+#' distributed to the age of husband in the same proportions as the age of
+#' husband crossed with age of wife married couples grid."
+#'
+#' @param total_births Total births for the year
+#' @param birth_rates_by_age Birth rates by mother age (14-49)
+#' @param female_pop_by_age Female population by age
+#' @param couples_grid Married couples grid
+#' @param min_parent_age Minimum parent age (default: 14)
+#' @param max_parent_age Maximum parent age (default: 100)
+#'
+#' @return Matrix of births by father_age x mother_age
+#'
+#' @keywords internal
+distribute_births_to_parents <- function(total_births,
+                                          birth_rates_by_age,
+                                          female_pop_by_age,
+                                          couples_grid,
+                                          min_parent_age = 14,
+                                          max_parent_age = 100) {
+
+  n_parent_ages <- max_parent_age - min_parent_age + 1
+
+  # Create births grid
+  births_grid <- matrix(0, nrow = n_parent_ages, ncol = n_parent_ages)
+
+  # Calculate births by mother age using rates
+  mother_ages <- 14:49
+  births_by_mother <- numeric(length(mother_ages))
+
+  for (i in seq_along(mother_ages)) {
+    m_age <- mother_ages[i]
+    rate <- if (i <= length(birth_rates_by_age)) birth_rates_by_age[i] else 0
+    pop <- if (m_age + 1 <= length(female_pop_by_age)) female_pop_by_age[m_age + 1] else 0
+    births_by_mother[i] <- rate * pop
+  }
+
+  total_calc_births <- sum(births_by_mother, na.rm = TRUE)
+
+  # Scale to match total births
+  if (total_calc_births > 0) {
+    births_by_mother <- births_by_mother * total_births / total_calc_births
+  }
+
+  # Distribute each mother's births to father ages using couples grid proportions
+  for (i in seq_along(mother_ages)) {
+    m_age <- mother_ages[i]
+    m_idx <- m_age - min_parent_age + 1
+
+    if (m_idx < 1 || m_idx > n_parent_ages) next
+    if (births_by_mother[i] <= 0) next
+
+    # Get husband age distribution for wives at this age from couples grid
+    husband_dist <- couples_grid[, m_idx]
+    husband_total <- sum(husband_dist, na.rm = TRUE)
+
+    if (husband_total > 0) {
+      # Distribute births proportionally to husband ages
+      births_grid[, m_idx] <- husband_dist * births_by_mother[i] / husband_total
+    }
+  }
+
+  births_grid
+}
+
+#' Aggregate children array to output format (helper for Phase 8D)
+#'
+#' @description
+#' Aggregates the detailed children array into the output format specified
+#' by TR2025: C^z_{x,s,g,f} - children by child age (x), parent sex (s),
+#' parent age group (g), and fate (f).
+#'
+#' @param children_array 4D array: [child_age, father_age, mother_age, fate]
+#' @param parent_age_groups list: age group definitions (e.g., list("14-24" = 14:24, ...))
+#' @param year Integer: projection year
+#' @param min_parent_age Integer: minimum parent age
+#' @param max_child_age Integer: maximum child age (default: 18)
+#'
+#' @return data.table with columns: year, child_age, parent_sex, parent_age_group, fate, count
+#'
+#' @keywords internal
+aggregate_children_to_output <- function(children_array,
+                                          parent_age_groups,
+                                          year,
+                                          min_parent_age = 14,
+                                          max_child_age = 18) {
+
+  fate_names <- c("both_alive", "only_father_alive", "only_mother_alive", "both_deceased")
+
+  result_list <- list()
+
+  for (c_age in 0:max_child_age) {
+    for (parent_sex in c("father", "mother")) {
+      for (grp_name in names(parent_age_groups)) {
+        ages <- parent_age_groups[[grp_name]]
+
+        for (f_idx in 1:4) {
+          # Sum across the appropriate dimension
+          count <- 0
+
+          for (p_age in ages) {
+            p_idx <- p_age - min_parent_age + 1
+            if (p_idx < 1 || p_idx > dim(children_array)[2]) next
+
+            if (parent_sex == "father") {
+              # Sum across mother ages for this father age
+              count <- count + sum(children_array[c_age + 1, p_idx, , f_idx], na.rm = TRUE)
+            } else {
+              # Sum across father ages for this mother age
+              count <- count + sum(children_array[c_age + 1, , p_idx, f_idx], na.rm = TRUE)
+            }
+          }
+
+          result_list[[length(result_list) + 1]] <- data.table::data.table(
+            year = year,
+            child_age = c_age,
+            parent_sex = parent_sex,
+            parent_age_group = grp_name,
+            fate = fate_names[f_idx],
+            count = count
+          )
+        }
+      }
+    }
+  }
+
+  data.table::rbindlist(result_list)
+}
+
+#' Project children by parent fate (Phase 8D.6 - Main Function)
+#'
+#' @description
+#' Main function for projecting children ages 0-18 by parent survival status
+#' (Equation 1.8.6). Tracks children by father age × mother age with four
+#' fate categories: both alive, only father, only mother, both deceased.
+#'
+#' Per TR2025: "The children (ages 0-18) population is further disaggregated
+#' into the following four parent statuses (i.e., fates): both parents are
+#' alive, only father is alive, only mother is alive, and both parents deceased."
+#'
+#' @param phase8b_result list: Output from run_population_projection (Phase 8B)
+#' @param marital_result list: Output from run_marital_projection (Phase 8C)
+#' @param birth_rates data.table: Birth rates by year and mother age
+#' @param mortality_qx data.table: Death probabilities by year, age, sex
+#' @param parent_age_groups list: Parent age group definitions
+#' @param start_year Integer: Starting year (default: 2022)
+#' @param end_year Integer: End year (default: 2099)
+#' @param max_child_age Integer: Maximum child age (default: 18)
+#' @param min_parent_age Integer: Minimum parent age (default: 14)
+#' @param max_parent_age Integer: Maximum parent age (default: 100)
+#' @param verbose Logical: Print progress messages (default: TRUE)
+#'
+#' @return list with:
+#'   - children_fate: data.table C^z_{x,s,g,f} by year
+#'   - children_arrays: list of detailed arrays by year (optional)
+#'   - summary: Summary statistics by year
+#'
+#' @export
+project_children_fate <- function(phase8b_result,
+                                   marital_result,
+                                   birth_rates,
+                                   mortality_qx,
+                                   parent_age_groups = NULL,
+                                   start_year = 2022,
+                                   end_year = 2099,
+                                   max_child_age = 18,
+                                   min_parent_age = 14,
+                                   max_parent_age = 100,
+                                   verbose = TRUE) {
+
+  if (verbose) {
+    cli::cli_h1("Phase 8D: Children by Parent Fate")
+    cli::cli_alert_info("Projection period: {start_year}-{end_year}")
+    cli::cli_alert_info("Child ages: 0-{max_child_age}")
+  }
+
+  # Default parent age groups per TR2025
+  if (is.null(parent_age_groups)) {
+    parent_age_groups <- list(
+      "14-24" = 14:24,
+      "25-34" = 25:34,
+      "35-44" = 35:44,
+      "45-54" = 45:54,
+      "55-64" = 55:64,
+      "65-100" = 65:100
+    )
+  }
+
+  # Extract required data
+  phase8b_pop <- phase8b_result$population
+  phase8b_births <- phase8b_result$births
+
+  # Get married couples grids from marital result
+  couples_grids <- marital_result$couples_grids
+
+  # Prepare mortality qx
+  mortality_qx <- data.table::as.data.table(mortality_qx)
+
+  # Prepare birth rates
+  birth_rates <- data.table::as.data.table(birth_rates)
+
+  # Get starting year population for initialization
+  start_pop <- phase8b_pop[year == start_year]
+
+  # Get starting couples grid
+  start_couples <- if (!is.null(couples_grids[[as.character(start_year)]])) {
+    couples_grids[[as.character(start_year)]]
+  } else {
+    # Build from marital population if grid not available
+    marital_pop <- marital_result$marital_population[year == start_year]
+    build_married_couples_grid(marital_pop, min_parent_age, max_parent_age)
+  }
+
+  # Get qx for starting year
+  qx_start <- mortality_qx[year == start_year]
+  data.table::setorder(qx_start, sex, age)
+  qx_male <- qx_start[sex == "male", qx]
+  qx_female <- qx_start[sex == "female", qx]
+
+  # Handle missing qx by using nearest year
+  if (length(qx_male) == 0) {
+    nearest_year <- mortality_qx[, min(year)]
+    qx_start <- mortality_qx[year == nearest_year]
+    data.table::setorder(qx_start, sex, age)
+    qx_male <- qx_start[sex == "male", qx]
+    qx_female <- qx_start[sex == "female", qx]
+    cli::cli_warn("Using qx from year {nearest_year} for initialization")
+  }
+
+  # Get birth rates for starting year
+  br_start <- birth_rates[year == start_year]
+  if (nrow(br_start) == 0) {
+    br_start <- birth_rates[year == min(birth_rates$year)]
+  }
+  br_by_age <- br_start[order(age), birth_rate]
+
+  # Initialize children array
+  if (verbose) {
+    cli::cli_alert("Initializing children by parent ages for {start_year}...")
+  }
+
+  init_result <- initialize_children_by_parents(
+    population_start = start_pop,
+    couples_grid = start_couples,
+    birth_rates = br_by_age,
+    qx_male = qx_male,
+    qx_female = qx_female,
+    min_parent_age = min_parent_age,
+    max_parent_age = max_parent_age,
+    max_child_age = max_child_age
+  )
+
+  current_array <- init_result$children_array
+
+  if (verbose) {
+    cli::cli_alert_success("Initial children: {format(round(init_result$total_children/1e6, 2), nsmall=2)}M")
+    cli::cli_alert_info("Fate distribution: Both={round(100*init_result$fate_totals[1]/init_result$total_children, 1)}%, Orphan={round(100*(1-init_result$fate_totals[1]/init_result$total_children), 1)}%")
+  }
+
+  # Storage for results
+  all_children_fate <- list()
+  all_arrays <- list()
+  summary_list <- list()
+
+  # Store starting year
+  start_fate <- aggregate_children_to_output(
+    current_array, parent_age_groups, start_year, min_parent_age, max_child_age
+  )
+  all_children_fate[[as.character(start_year)]] <- start_fate
+  all_arrays[[as.character(start_year)]] <- current_array
+
+  # Calculate starting year summary
+  fate_totals_start <- apply(current_array, 4, sum, na.rm = TRUE)
+  summary_list[[as.character(start_year)]] <- data.table::data.table(
+    year = start_year,
+    total_children = sum(current_array, na.rm = TRUE),
+    both_alive = fate_totals_start[1],
+    only_father = fate_totals_start[2],
+    only_mother = fate_totals_start[3],
+    both_deceased = fate_totals_start[4],
+    orphan_rate = 1 - fate_totals_start[1] / sum(current_array, na.rm = TRUE)
+  )
+
+  if (verbose) {
+    cli::cli_progress_bar("Projecting children fate", total = end_year - start_year)
+  }
+
+  # Project each year
+  projection_years <- (start_year + 1):end_year
+
+  for (yr in projection_years) {
+    if (verbose) {
+      cli::cli_progress_update()
+    }
+
+    # Get qx for this year
+    qx_yr <- mortality_qx[year == yr]
+    if (nrow(qx_yr) == 0) {
+      # Use nearest available year
+      available_years <- unique(mortality_qx$year)
+      nearest <- available_years[which.min(abs(available_years - yr))]
+      qx_yr <- mortality_qx[year == nearest]
+    }
+    data.table::setorder(qx_yr, sex, age)
+    qx_male <- qx_yr[sex == "male", qx]
+    qx_female <- qx_yr[sex == "female", qx]
+
+    # Get birth rates for this year
+    br_yr <- birth_rates[year == yr]
+    if (nrow(br_yr) == 0) {
+      available_years <- unique(birth_rates$year)
+      nearest <- available_years[which.min(abs(available_years - yr))]
+      br_yr <- birth_rates[year == nearest]
+    }
+    br_by_age <- br_yr[order(age), birth_rate]
+
+    # Get total births for this year from Phase 8B
+    total_births_yr <- phase8b_births[year == yr, sum(births, na.rm = TRUE)]
+
+    # Get female population by age for this year
+    female_pop <- phase8b_pop[year == yr & sex == "female"]
+    data.table::setorder(female_pop, age)
+    female_pop_by_age <- female_pop$population
+
+    # Get couples grid for this year
+    couples_yr <- if (!is.null(couples_grids[[as.character(yr)]])) {
+      couples_grids[[as.character(yr)]]
+    } else if (!is.null(couples_grids[[as.character(yr - 1)]])) {
+      couples_grids[[as.character(yr - 1)]]
+    } else {
+      start_couples  # Fallback to start
+    }
+
+    # Calculate births distribution to parent ages
+    births_grid <- distribute_births_to_parents(
+      total_births = total_births_yr,
+      birth_rates_by_age = br_by_age,
+      female_pop_by_age = female_pop_by_age,
+      couples_grid = couples_yr,
+      min_parent_age = min_parent_age,
+      max_parent_age = max_parent_age
+    )
+
+    # Roll forward children
+    current_array <- roll_forward_children(
+      children_array = current_array,
+      new_births_grid = births_grid,
+      qx_male = qx_male,
+      qx_female = qx_female,
+      min_parent_age = min_parent_age,
+      max_parent_age = max_parent_age,
+      max_child_age = max_child_age
+    )
+
+    # Get target children totals from Phase 8B population
+    children_pop <- phase8b_pop[year == yr & age <= max_child_age]
+    target_by_age <- children_pop[, .(total = sum(population)), by = age]
+    data.table::setorder(target_by_age, age)
+    target_children <- target_by_age$total
+
+    # Adjust to match population totals
+    current_array <- adjust_children_to_total(
+      children_array = current_array,
+      target_children = target_children,
+      max_child_age = max_child_age
+    )
+
+    # Aggregate to output format
+    yr_fate <- aggregate_children_to_output(
+      current_array, parent_age_groups, yr, min_parent_age, max_child_age
+    )
+
+    # Store results
+    all_children_fate[[as.character(yr)]] <- yr_fate
+    all_arrays[[as.character(yr)]] <- current_array
+
+    # Calculate summary
+    fate_totals <- apply(current_array, 4, sum, na.rm = TRUE)
+    total_yr <- sum(current_array, na.rm = TRUE)
+
+    summary_list[[as.character(yr)]] <- data.table::data.table(
+      year = yr,
+      total_children = total_yr,
+      both_alive = fate_totals[1],
+      only_father = fate_totals[2],
+      only_mother = fate_totals[3],
+      both_deceased = fate_totals[4],
+      orphan_rate = 1 - fate_totals[1] / total_yr
+    )
+
+    # Progress message every 10 years
+    if (verbose && (yr %% 10 == 0 || yr == end_year)) {
+      orphan_pct <- round(100 * (1 - fate_totals[1] / total_yr), 2)
+      cli::cli_alert("{yr}: Children = {format(round(total_yr/1e6, 2), nsmall=2)}M, Orphan rate = {orphan_pct}%")
+    }
+  }
+
+  if (verbose) {
+    cli::cli_progress_done()
+  }
+
+  # Combine results
+  children_fate <- data.table::rbindlist(all_children_fate)
+  summary_stats <- data.table::rbindlist(summary_list)
+
+  if (verbose) {
+    cli::cli_h2("Children Fate Projection Summary")
+    cli::cli_alert_success("Projected {length(projection_years)} years")
+
+    start_orphan <- summary_stats[year == start_year, orphan_rate]
+    end_orphan <- summary_stats[year == end_year, orphan_rate]
+    cli::cli_alert_info(
+      "Orphan rate: {round(100*start_orphan, 2)}% ({start_year}) -> {round(100*end_orphan, 2)}% ({end_year})"
+    )
+  }
+
+  list(
+    children_fate = children_fate,
+    children_arrays = all_arrays,
+    summary = summary_stats,
+    metadata = list(
+      start_year = start_year,
+      end_year = end_year,
+      max_child_age = max_child_age,
+      min_parent_age = min_parent_age,
+      max_parent_age = max_parent_age,
+      parent_age_groups = parent_age_groups,
+      n_years = length(projection_years) + 1
+    )
+  )
+}
+
+#' Project mean children per married couple (Phase 8D.7)
+#'
+#' @description
+#' Uses linear regression on CPS historical data to project the mean number
+#' of children per married couple by age of householder.
+#'
+#' Per TR2025: "Linear regression is used to model the relationship between
+#' the mean number of children in the population program to the mean number
+#' of children from the U.S. Census Bureau."
+#'
+#' @param cps_children data.table: CPS children per couple data (from fetch_cps_children_per_couple)
+#' @param children_fate_result list: Output from project_children_fate
+#' @param marital_result list: Output from run_marital_projection (for married couples)
+#' @param start_year Integer: First projection year
+#' @param end_year Integer: Last projection year
+#' @param trend_years Integer: Number of recent years for trend (default: 20)
+#' @param verbose Logical: Print progress messages (default: TRUE)
+#'
+#' @return data.table with columns: year, age_group, mean_children, source
+#'
+#' @export
+project_mean_children_per_couple <- function(cps_children,
+                                              children_fate_result = NULL,
+                                              marital_result = NULL,
+                                              start_year = 2023,
+                                              end_year = 2099,
+                                              trend_years = 20,
+                                              verbose = TRUE) {
+
+  if (verbose) {
+    cli::cli_h3("Projecting Mean Children per Married Couple")
+  }
+
+  cps_dt <- data.table::as.data.table(cps_children)
+
+  # Get age groups from CPS data
+  age_groups <- unique(cps_dt$age_group)
+
+  result_list <- list()
+
+  # Add historical data
+  for (grp in age_groups) {
+    grp_data <- cps_dt[age_group == grp]
+
+    result_list[[length(result_list) + 1]] <- data.table::data.table(
+      year = grp_data$year,
+      age_group = grp,
+      mean_children = grp_data$mean_children,
+      source = "historical"
+    )
+  }
+
+  # Project forward using linear trend from recent years
+  projection_years <- start_year:end_year
+
+  for (grp in age_groups) {
+    grp_data <- cps_dt[age_group == grp]
+
+    # Use last N years for trend
+    recent_data <- tail(grp_data[order(year)], trend_years)
+
+    if (nrow(recent_data) < 2) {
+      # Not enough data, use constant
+      mean_val <- mean(grp_data$mean_children, na.rm = TRUE)
+      proj_values <- rep(mean_val, length(projection_years))
+    } else {
+      # Fit linear model
+      model <- lm(mean_children ~ year, data = recent_data)
+
+      # Project forward
+      new_data <- data.frame(year = projection_years)
+      proj_values <- predict(model, newdata = new_data)
+
+      # Constrain to reasonable bounds (0.5 to 5 children)
+      proj_values <- pmax(0.5, pmin(5, proj_values))
+    }
+
+    result_list[[length(result_list) + 1]] <- data.table::data.table(
+      year = projection_years,
+      age_group = grp,
+      mean_children = proj_values,
+      source = "projected"
+    )
+  }
+
+  result <- data.table::rbindlist(result_list)
+  data.table::setorder(result, year, age_group)
+
+  if (verbose) {
+    # Show trend summary
+    for (grp in age_groups[1:min(3, length(age_groups))]) {
+      start_val <- result[age_group == grp & year == start_year, mean_children]
+      end_val <- result[age_group == grp & year == end_year, mean_children]
+      if (length(start_val) > 0 && length(end_val) > 0) {
+        cli::cli_alert_info(
+          "Age {grp}: {round(start_val, 2)} ({start_year}) -> {round(end_val, 2)} ({end_year})"
+        )
+      }
+    }
+  }
+
+  result
+}
+
+#' Validate children fate totals (Phase 8D.8)
+#'
+#' @description
+#' Validates that children by fate sum to total children in population.
+#'
+#' @param children_fate_result list: Output from project_children_fate
+#' @param phase8b_result list: Output from run_population_projection (Phase 8B)
+#' @param max_child_age Integer: Maximum child age (default: 18)
+#' @param tolerance Numeric: Relative tolerance for validation (default: 0.01)
+#'
+#' @return Validation report list
+#'
+#' @export
+validate_children_fate <- function(children_fate_result,
+                                    phase8b_result,
+                                    max_child_age = 18,
+                                    tolerance = 0.01) {
+
+  cli::cli_h2("Phase 8D Validation: Children by Parent Fate")
+
+  summary <- children_fate_result$summary
+  phase8b_pop <- phase8b_result$population
+
+  validation_results <- list()
+
+  # Test 1: Children totals match Phase 8B
+  cli::cli_h3("Test 1: Children totals match Phase 8B population")
+
+  years_to_check <- unique(summary$year)
+  mismatches <- 0
+  max_error <- 0
+
+  for (yr in years_to_check) {
+    # Get children total from fate projection
+    fate_total <- summary[year == yr, total_children]
+
+    # Get children total from Phase 8B
+    phase8b_total <- phase8b_pop[year == yr & age <= max_child_age, sum(population, na.rm = TRUE)]
+
+    error <- abs(fate_total - phase8b_total) / phase8b_total
+
+    if (error > tolerance) {
+      mismatches <- mismatches + 1
+    }
+    max_error <- max(max_error, error)
+  }
+
+  if (mismatches == 0) {
+    cli::cli_alert_success("All {length(years_to_check)} years within {tolerance*100}% tolerance")
+  } else {
+    cli::cli_alert_warning("{mismatches}/{length(years_to_check)} years exceed tolerance")
+  }
+  cli::cli_alert_info("Maximum error: {round(max_error*100, 3)}%")
+
+  validation_results$totals_match <- (mismatches == 0)
+  validation_results$max_total_error <- max_error
+
+  # Test 2: Fates sum to total
+  cli::cli_h3("Test 2: Fate categories sum to total")
+
+  fate_sum_errors <- summary[, abs(both_alive + only_father + only_mother + both_deceased - total_children) / total_children]
+  max_fate_error <- max(fate_sum_errors, na.rm = TRUE)
+
+  if (max_fate_error < 1e-10) {
+    cli::cli_alert_success("Fate categories sum to total (max error: {format(max_fate_error, scientific=TRUE)})")
+    validation_results$fates_sum <- TRUE
+  } else {
+    cli::cli_alert_warning("Fate sum error: {format(max_fate_error, scientific=TRUE)}")
+    validation_results$fates_sum <- (max_fate_error < 1e-6)
+  }
+
+  # Test 3: Orphan rate reasonable
+  cli::cli_h3("Test 3: Orphan rate reasonable")
+
+  orphan_rates <- summary$orphan_rate
+  min_orphan <- min(orphan_rates, na.rm = TRUE)
+  max_orphan <- max(orphan_rates, na.rm = TRUE)
+
+  cli::cli_alert_info("Orphan rate range: {round(100*min_orphan, 2)}% - {round(100*max_orphan, 2)}%")
+
+  # Expect orphan rate between 0.1% and 10%
+  if (min_orphan >= 0 && max_orphan <= 0.15) {
+    cli::cli_alert_success("Orphan rates within expected range")
+    validation_results$orphan_rate_valid <- TRUE
+  } else {
+    cli::cli_alert_warning("Orphan rates outside expected range (0-15%)")
+    validation_results$orphan_rate_valid <- FALSE
+  }
+
+  # Overall validation
+  validation_results$all_passed <- validation_results$totals_match &&
+                                   validation_results$fates_sum &&
+                                   validation_results$orphan_rate_valid
+
+  if (validation_results$all_passed) {
+    cli::cli_alert_success("Phase 8D validation: All checks passed")
+  } else {
+    cli::cli_alert_warning("Phase 8D validation: Some checks failed")
+  }
+
+  validation_results
+}
