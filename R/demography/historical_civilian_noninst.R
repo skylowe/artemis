@@ -17,7 +17,7 @@
 #' - separated: Currently married but separated from spouse (split from "married")
 #' - widowed: Widowed from a previous marriage
 #' - divorced: Divorced from a previous marriage
-#' - never_married: Never been married
+#' - single: Never been married
 #'
 #' **Same-Sex Marriage (2013+):**
 #' - 2.5% of male population assumed gay
@@ -27,7 +27,7 @@
 #' **Coverage:**
 #' - Available for 2010-2022 (full implementation per TR2025)
 #' - Ages 15-99 for marital status detail
-#' - Ages 0-14 assumed never_married
+#' - Ages 0-14 assumed single
 #'
 #' **Reference Date Conversion:**
 #' - Census data is July 1; converted to December 31 basis
@@ -246,12 +246,12 @@ calculate_c_population <- function(civ_noninst, marital_props, ages) {
     allow.cartesian = TRUE
   )
 
-  # For ages under 15, assign all to never_married
+  # For ages under 15, assign all to single
   under_15 <- result[age < 15]
   if (nrow(under_15) > 0) {
-    # Create never_married rows for under 15
+    # Create single rows for under 15
     under_15_pop <- civ_noninst[age < 15]
-    under_15_pop[, marital_status := "never_married"]
+    under_15_pop[, marital_status := "single"]
     under_15_pop[, proportion := 1]
     under_15_pop[, c_population := population]
     under_15_pop[, source := "acs_pums"]
@@ -264,7 +264,7 @@ calculate_c_population <- function(civ_noninst, marital_props, ages) {
 
   # Handle missing marital proportions (use uniform if missing)
   result[is.na(proportion), proportion := 0]
-  result[is.na(marital_status), marital_status := "never_married"]
+  result[is.na(marital_status), marital_status := "single"]
 
   # Calculate C population
   result[, c_population := population * proportion]

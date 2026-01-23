@@ -1152,7 +1152,7 @@ process_mortality_data_by_marital <- function(dt, year) {
   if (year >= 2003) {
     # 2003+: letter codes
     dt[, marital_status_mapped := data.table::fcase(
-      marital_status == "S", "never_married",
+      marital_status == "S", "single",
       marital_status == "M", "married",
       marital_status == "W", "widowed",
       marital_status == "D", "divorced",
@@ -1161,7 +1161,7 @@ process_mortality_data_by_marital <- function(dt, year) {
   } else {
     # 1979-2002: numeric codes
     dt[, marital_status_mapped := data.table::fcase(
-      marital_status == "1", "never_married",
+      marital_status == "1", "single",
       marital_status == "2", "married",
       marital_status == "3", "widowed",
       marital_status == "4", "divorced",

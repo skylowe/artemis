@@ -2704,7 +2704,7 @@ get_standard_population_2010 <- function(cache_dir = here::here("data/raw/census
 #' - married: lowest mortality
 #' - widowed: elevated mortality
 #' - divorced: elevated mortality
-#' - never_married: elevated mortality
+#' - single: elevated mortality
 #'
 #' Relative factors from empirical studies (approximate):
 #' - Married: 1.0 (reference)
@@ -2729,7 +2729,7 @@ calculate_qx_by_marital_status <- function(qx_total, marital_factors = NULL) {
   has_year <- "year" %in% names(dt)
 
   # Expand to all marital statuses
-  marital_statuses <- c("married", "widowed", "divorced", "never_married")
+  marital_statuses <- c("married", "widowed", "divorced", "single")
   result_list <- list()
 
   for (ms in marital_statuses) {
@@ -2993,17 +2993,17 @@ calculate_marital_mortality_factors <- function(
   }
 
   # Step 6: Adjust ages 15-20 non-single marital statuses
-  # Use ratio relative to never_married at age 21
+  # Use ratio relative to single at age 21
   for (sx in c("male", "female")) {
-    never_married_21 <- rates[age == 21 & sex == sx & marital_status == "never_married", death_rate]
-    if (is.na(never_married_21) || length(never_married_21) == 0) next
+    single_21 <- rates[age == 21 & sex == sx & marital_status == "single", death_rate]
+    if (is.na(single_21) || length(single_21) == 0) next
 
     for (ms in c("married", "widowed", "divorced")) {
-      ratio_21 <- rates[age == 21 & sex == sx & marital_status == ms, death_rate] / never_married_21
+      ratio_21 <- rates[age == 21 & sex == sx & marital_status == ms, death_rate] / single_21
       if (is.na(ratio_21) || length(ratio_21) == 0) next
 
       for (a in 15:20) {
-        nm_rate <- rates[age == a & sex == sx & marital_status == "never_married", death_rate]
+        nm_rate <- rates[age == a & sex == sx & marital_status == "single", death_rate]
         if (!is.na(nm_rate)) {
           rates[age == a & sex == sx & marital_status == ms, death_rate := nm_rate * ratio_21]
         }
@@ -3147,12 +3147,12 @@ get_default_marital_factors <- function() {
       )
 
       # Never married
-      never_married_base <- 1.25 + 0.20 * sex_mult
+      single_base <- 1.25 + 0.20 * sex_mult
       results[[length(results) + 1]] <- data.table::data.table(
         age = age_val,
         sex = sex_val,
-        marital_status = "never_married",
-        relative_factor = never_married_base * age_factor
+        marital_status = "single",
+        relative_factor = single_base * age_factor
       )
     }
   }

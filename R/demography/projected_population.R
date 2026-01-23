@@ -271,18 +271,18 @@ verify_mortality_marital_differentials <- function(mortality_differentials) {
   }
 
   # Check marital status coverage
-  # Note: Some data sources use "single" while others use "never_married"
+  # Note: Some data sources use "single" while others use "single"
   expected_statuses <- c("married", "widowed", "divorced")  # Required statuses
-  single_alternatives <- c("single", "never_married")  # At least one needed
+  single_alternatives <- c("single", "single")  # At least one needed
   available_statuses <- unique(mortality_differentials$marital_status)
 
   # Check required statuses
   missing_statuses <- setdiff(expected_statuses, available_statuses)
 
-  # Check for single/never_married (at least one must be present)
-  has_single_or_never_married <- any(single_alternatives %in% available_statuses)
-  if (!has_single_or_never_married) {
-    missing_statuses <- c(missing_statuses, "single or never_married")
+  # Check for single/single (at least one must be present)
+  has_single_or_single <- any(single_alternatives %in% available_statuses)
+  if (!has_single_or_single) {
+    missing_statuses <- c(missing_statuses, "single or single")
   }
 
   is_valid <- length(missing_statuses) == 0
@@ -1850,12 +1850,12 @@ distribute_deaths_by_marital <- function(total_deaths,
   marital_pop_boy <- data.table::as.data.table(marital_pop_boy)
   mortality_differentials <- data.table::as.data.table(mortality_differentials)
 
-  # Standardize marital status names (never_married -> single)
-  if ("never_married" %in% marital_pop_boy$marital_status) {
-    marital_pop_boy[marital_status == "never_married", marital_status := "single"]
+  # Standardize marital status names (single -> single)
+  if ("single" %in% marital_pop_boy$marital_status) {
+    marital_pop_boy[marital_status == "single", marital_status := "single"]
   }
-  if ("never_married" %in% mortality_differentials$marital_status) {
-    mortality_differentials[marital_status == "never_married", marital_status := "single"]
+  if ("single" %in% mortality_differentials$marital_status) {
+    mortality_differentials[marital_status == "single", marital_status := "single"]
   }
 
   # Get the factor column name
@@ -1946,8 +1946,8 @@ distribute_immigrants_by_marital <- function(total_net_immigration, marital_dist
   marital_dist_boy <- data.table::as.data.table(marital_dist_boy)
 
   # Standardize marital status names
-  if ("never_married" %in% marital_dist_boy$marital_status) {
-    marital_dist_boy[marital_status == "never_married", marital_status := "single"]
+  if ("single" %in% marital_dist_boy$marital_status) {
+    marital_dist_boy[marital_status == "single", marital_status := "single"]
   }
 
   # Get immigration column name
@@ -2022,8 +2022,8 @@ calculate_midyear_unmarried <- function(marital_pop_boy, marital_pop_prior_boy =
   marital_pop_boy <- data.table::as.data.table(marital_pop_boy)
 
   # Standardize marital status names
-  if ("never_married" %in% marital_pop_boy$marital_status) {
-    marital_pop_boy[marital_status == "never_married", marital_status := "single"]
+  if ("single" %in% marital_pop_boy$marital_status) {
+    marital_pop_boy[marital_status == "single", marital_status := "single"]
   }
 
   # Unmarried = single + divorced + widowed
@@ -2042,8 +2042,8 @@ calculate_midyear_unmarried <- function(marital_pop_boy, marital_pop_prior_boy =
 
   # With prior year data, estimate midyear using ratio method
   marital_pop_prior_boy <- data.table::as.data.table(marital_pop_prior_boy)
-  if ("never_married" %in% marital_pop_prior_boy$marital_status) {
-    marital_pop_prior_boy[marital_status == "never_married", marital_status := "single"]
+  if ("single" %in% marital_pop_prior_boy$marital_status) {
+    marital_pop_prior_boy[marital_status == "single", marital_status := "single"]
   }
 
   unmarried_prior <- marital_pop_prior_boy[marital_status %in% unmarried_statuses,
@@ -2313,8 +2313,8 @@ build_married_couples_grid <- function(marital_pop, min_age = 14, max_age = 100)
 
   # Standardize marital status
   marital_pop <- data.table::as.data.table(marital_pop)
-  if ("never_married" %in% marital_pop$marital_status) {
-    marital_pop[marital_status == "never_married", marital_status := "single"]
+  if ("single" %in% marital_pop$marital_status) {
+    marital_pop[marital_status == "single", marital_status := "single"]
   }
 
   # Get married population by age and sex
@@ -2555,8 +2555,8 @@ project_marital_year <- function(marital_pop_boy,
 
   # Standardize marital status
   marital_pop_boy <- data.table::as.data.table(marital_pop_boy)
-  if ("never_married" %in% marital_pop_boy$marital_status) {
-    marital_pop_boy[marital_status == "never_married", marital_status := "single"]
+  if ("single" %in% marital_pop_boy$marital_status) {
+    marital_pop_boy[marital_status == "single", marital_status := "single"]
   }
 
   # Step 1: Distribute deaths by marital status
@@ -2895,8 +2895,8 @@ run_marital_projection <- function(phase8b_result,
 
   # Initialize with starting year marital population
   current_marital <- data.table::as.data.table(starting_marital)
-  if ("never_married" %in% current_marital$marital_status) {
-    current_marital[marital_status == "never_married", marital_status := "single"]
+  if ("single" %in% current_marital$marital_status) {
+    current_marital[marital_status == "single", marital_status := "single"]
   }
 
   # Build initial couples grid from starting marital population
@@ -5917,8 +5917,8 @@ extract_starting_marital_population <- function(historical_population_marital, c
   }
 
   # Standardize marital status names
-  if ("never_married" %in% marital_data$marital_status) {
-    marital_data[marital_status == "never_married", marital_status := "single"]
+  if ("single" %in% marital_data$marital_status) {
+    marital_data[marital_status == "single", marital_status := "single"]
   }
 
   total_pop <- sum(marital_data$population, na.rm = TRUE)

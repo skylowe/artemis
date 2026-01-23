@@ -24,7 +24,7 @@ NULL
 #'
 #' @return data.table with columns: year, age, sex, marital_status, population
 #'   where marital_status is: "married", "widowed", "divorced", "separated",
-#'   "never_married"
+#'   "single"
 #'
 #' @details
 #' IPUMS samples used:
@@ -185,7 +185,7 @@ process_ipums_marital_data <- function(data) {
   dt[MARST == 3, marital_status := "separated"]
   dt[MARST == 4, marital_status := "divorced"]
   dt[MARST == 5, marital_status := "widowed"]
-  dt[MARST == 6, marital_status := "never_married"]
+  dt[MARST == 6, marital_status := "single"]
 
   # Map SEX codes
   dt[SEX == 1, sex := "male"]

@@ -447,7 +447,7 @@ calculate_marriages_by_age_group <- function(grids) {
 #'
 #' @description
 #' Uses existing Phase 4 marital status cache to derive unmarried population.
-#' Unmarried = divorced + never_married + widowed (everything except married).
+#' Unmarried = divorced + single + widowed (everything except married).
 #' This is much faster than re-fetching from the API.
 #'
 #' @param years Integer vector of years (2006-2023 available)
@@ -477,7 +477,7 @@ get_unmarried_population_from_cache <- function(
   # Skip 2020 if present (ACS 1-year not released)
   dt <- dt[year != 2020]
 
-  # Sum all unmarried statuses (divorced, never_married, widowed)
+  # Sum all unmarried statuses (divorced, single, widowed)
   unmarried <- dt[marital_status != "married",
                   .(unmarried_population = sum(population)),
                   by = .(year, age, sex)]

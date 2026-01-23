@@ -19,7 +19,7 @@ NULL
 #' @param cache_dir Character: directory for caching downloaded files
 #'
 #' @return data.table with columns: year, age, sex, marital_status, population
-#'   where marital_status is one of: "married", "widowed", "divorced", "separated", "never_married"
+#'   where marital_status is one of: "married", "widowed", "divorced", "separated", "single"
 #'
 #' @details
 #' Uses the Census Microdata API endpoint:
@@ -147,7 +147,7 @@ fetch_acs_pums_year <- function(year, ages, api_key) {
   dt[mar_code == 2, marital_status := "widowed"]
   dt[mar_code == 3, marital_status := "divorced"]
   dt[mar_code == 4, marital_status := "separated"]
-  dt[mar_code == 5, marital_status := "never_married"]
+  dt[mar_code == 5, marital_status := "single"]
 
   # Filter to requested ages and valid data
   dt <- dt[age %in% ages & !is.na(sex) & !is.na(marital_status) & !is.na(weight)]
@@ -202,14 +202,14 @@ calculate_marital_status_shares <- function(pums_data) {
 #'
 #' @export
 get_marital_status_categories <- function() {
-  c("married", "widowed", "divorced", "separated", "never_married")
+  c("married", "widowed", "divorced", "separated", "single")
 }
 
 #' Aggregate marital status to SSA categories
 #'
 #' @description
 #' Aggregates detailed marital status to the 4 categories used in SSA mortality
-#' calculations: married, widowed, divorced, and never_married (separated is
+#' calculations: married, widowed, divorced, and single (separated is
 #' combined with divorced).
 #'
 #' @param pums_data data.table from fetch_acs_pums_marital_status
@@ -568,7 +568,7 @@ fetch_acs_pums_civilian_noninst_year <- function(year, ages, api_key) {
 #'
 #' @return data.table with columns: year, age, sex, marital_status, population
 #'   where marital_status is: "married_spouse_present", "separated",
-#'   "widowed", "divorced", "never_married"
+#'   "widowed", "divorced", "single"
 #'
 #' @details
 #' Uses multiple filter variables:
@@ -697,7 +697,7 @@ fetch_acs_pums_civnoninst_marital_year <- function(year, ages, api_key) {
   dt[mar_code == 2, marital_status := "widowed"]
   dt[mar_code == 3, marital_status := "divorced"]
   dt[mar_code == 4, marital_status := "separated"]
-  dt[mar_code == 5, marital_status := "never_married"]
+  dt[mar_code == 5, marital_status := "single"]
 
   # Filter to civilian noninstitutionalized:
   # 1. Civilian: MIL != 1 (not on active duty) or NA (age < 17)
@@ -1330,8 +1330,8 @@ fetch_ipums_census2000_marital <- function(ages, cache_dir) {
     }
 
     # Map IPUMS marital_status to our standard codes
-    # IPUMS uses: "married", "widowed", "divorced", "separated", "never_married"
-    # We use: "married_spouse_present", "widowed", "divorced", "separated", "never_married"
+    # IPUMS uses: "married", "widowed", "divorced", "separated", "single"
+    # We use: "married_spouse_present", "widowed", "divorced", "separated", "single"
     census2000[marital_status == "married", marital_status := "married_spouse_present"]
 
     # Remove year column (will be added back in build_census2000_marital_series)
@@ -1389,7 +1389,7 @@ build_census2000_marital_series <- function(years, ages, census2000_data) {
         # Apply demographic trend adjustments
         yr_data[marital_status == "married_spouse_present",
                 population := as.integer(population * (1 - 0.003 * (yr - 2000)))]
-        yr_data[marital_status == "never_married",
+        yr_data[marital_status == "single",
                 population := as.integer(population * (1 + 0.005 * (yr - 2000)))]
       }
 

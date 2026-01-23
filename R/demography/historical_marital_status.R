@@ -341,7 +341,7 @@ get_marital_status_proportions <- function(years = 1940:2022,
   result <- data.table::rbindlist(results, use.names = TRUE, fill = TRUE)
 
   # Complete the data: ensure all age-sex-year combinations have all 4 marital statuses
-  marital_statuses <- c("divorced", "married", "never_married", "widowed")
+  marital_statuses <- c("divorced", "married", "single", "widowed")
 
   # Create complete grid
   complete_grid <- data.table::CJ(
@@ -362,7 +362,7 @@ get_marital_status_proportions <- function(years = 1940:2022,
   # Ensure proportions sum to 1 within each age-sex-year
   result[, total := sum(proportion), by = .(year, age, sex)]
   # Handle case where total is 0 (no data for this age-sex-year)
-  result[total == 0, proportion := ifelse(marital_status == "never_married", 1, 0)]
+  result[total == 0, proportion := ifelse(marital_status == "single", 1, 0)]
   result[total > 0, proportion := proportion / total]
   result[, total := NULL]
 
