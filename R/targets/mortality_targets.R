@@ -136,16 +136,30 @@ create_mortality_targets <- function() {
       )
     ),
 
-    # Step 6: Calculate qx from mx
+    # Step 6: Calculate qx from mx using full TR methodology
+    # - q0: separation factor method
+    # - q1: 4m1 ratio method for projected years (TR2025 Section 1.2.c)
+    # - q2-99: standard qx = mx/(1+0.5*mx)
+    # - q100+: TR extrapolation method
     targets::tar_target(
       mortality_qx_unadjusted,
-      calculate_qx_with_infant_mortality(
-        mx_total = mortality_mx_total,
-        infant_deaths_detailed = nchs_infant_deaths_detailed,
-        monthly_births = nchs_births_monthly,
-        population = census_population_both,
-        max_age = 100
-      )
+      {
+        # Aggregate deaths by year/age/sex (removing cause) for 4m1 calculation
+        deaths_agg <- nchs_deaths_raw[, .(deaths = sum(deaths, na.rm = TRUE)),
+                                      by = .(year, age, sex)]
+        # Get last historical year from data (max year in deaths data)
+        last_hist_year <- max(deaths_agg$year)
+
+        calculate_qx_with_infant_mortality(
+          mx_total = mortality_mx_total,
+          infant_deaths_detailed = nchs_infant_deaths_detailed,
+          monthly_births = nchs_births_monthly,
+          population = census_population_both,
+          deaths_raw = deaths_agg,
+          last_historical_year = last_hist_year,
+          max_age = 100
+        )
+      }
     ),
 
     # Step 6b: Adjust qx for ages 85+ using HMD

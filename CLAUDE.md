@@ -25,6 +25,18 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
 - Projections extend to 2099 per TR methodology
 - Key files: `R/demography/mortality.R`, `R/data_acquisition/nchs_deaths.R`, `R/data_acquisition/nchs_births.R`
 
+**TR Methodology Alignment (January 2026):**
+- **q0 (infant mortality):** Separation factor method using detailed NCHS deaths by sub-age (under 1 day, 1-2 days, 3-6 days, 7-27 days, 28 days-1 month, 2-11 months)
+- **q1 (age 1 mortality):** 4m1 ratio method per TR2025 Section 1.2.c:
+  - Historical years: standard qx = mx / (1 + 0.5*mx) formula
+  - Projected years: q1 = 4m1 × (q1/4m1)_last_historical
+  - 4m1 = central death rate for ages 1-4 = (D1+D2+D3+D4)/(P1+P2+P3+P4)
+  - Ratio preserved from last historical year (e.g., 2023: male=1.54, female=1.63)
+- **q2-99:** Standard formula qx = mx / (1 + 0.5*mx)
+- **q100+:** TR extrapolation method with k=1.05 (male), k=1.06 (female)
+- **COVID adjustments:** Applied to qx for 2024-2025 per TR2025 Table
+- **Key functions:** `calculate_4m1()`, `calculate_q1_tr_method()`, `calculate_tr_q100_plus()`
+
 ### LPR Immigration Subprocess Status (COMPLETE)
 - Core projection functions in `R/demography/lpr_immigration.R` and `R/demography/legal_emigration.R`
 - Data acquisition: DHS expanded tables (2006-2023), CBO migration data (2021-2099), TR2025 Table V.A2

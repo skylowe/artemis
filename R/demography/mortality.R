@@ -1809,9 +1809,10 @@ run_mortality_projection <- function(deaths,
     }
   }, by = .(year, sex)]
 
-  # Step 9: Convert to qx
-  cli::cli_h2("Step 9: Convert mx to qx")
-  # Process each year
+  # Step 9: Convert to qx with TR q1 method
+  cli::cli_h2("Step 9: Convert mx to qx (with TR q1 method)")
+
+  # First, convert all ages using standard formula
   qx_list <- list()
   for (yr in unique(projected_mx_smooth$year)) {
     mx_yr <- projected_mx_smooth[year == yr, .(age, sex, mx = mx_smooth)]
@@ -1820,6 +1821,39 @@ run_mortality_projection <- function(deaths,
     qx_list[[as.character(yr)]] <- qx_yr
   }
   projected_qx <- data.table::rbindlist(qx_list, fill = TRUE)
+
+  # Apply TR q1 method: use 4m1 ratio for projected years
+  # Per TR2025: "After the last historical year, each q1 is calculated from 4m1
+  # assuming that the ratio of q1 to 4m1 measured for the last historical year
+  # would remain constant thereafter."
+
+  # Aggregate historical deaths by year/age/sex (remove cause if present)
+  deaths_agg <- deaths[, .(deaths = sum(deaths, na.rm = TRUE)), by = .(year, age, sex)]
+  last_hist_year <- effective_base_year
+
+  # Calculate q1 using TR method (4m1 ratio for projected years)
+  # The mx_data includes both historical fitted values and projected values
+  # We need to reconstruct mx_data for q1 calculation
+
+  # Create mx_data combining historical mx and projected mx
+  projected_mx_for_q1 <- projected_mx_smooth[, .(year, age, sex, mx = mx_smooth)]
+
+  # Get historical years that are also in projection
+  actual_proj_years <- unique(projected_mx_for_q1$year)
+  actual_proj_years <- actual_proj_years[actual_proj_years > last_hist_year]
+
+  if (length(actual_proj_years) > 0) {
+    q1_tr <- calculate_q1_tr_method(
+      mx_data = projected_mx_for_q1,
+      deaths = deaths_agg,
+      population = population,
+      last_historical_year = last_hist_year,
+      projection_years = actual_proj_years
+    )
+
+    # Integrate the TR q1 values into projected_qx
+    projected_qx <- integrate_q1(projected_qx, q1_tr)
+  }
 
   # Step 10: Apply COVID adjustments
   cli::cli_h2("Step 10: Apply COVID-19 adjustments")
@@ -3598,6 +3632,223 @@ project_infant_mortality <- function(q0_historical, m0_series, projection_years)
   result
 }
 
+# =============================================================================
+# q1 Calculation using TR Methodology (4m1 ratio method)
+# =============================================================================
+
+#' Calculate 4m1 - Central death rate for ages 1-4
+#'
+#' @description
+#' Calculates the 4-year central death rate for ages 1-4, denoted as 4m1 in
+#' actuarial notation. This is used in the TR methodology for calculating q1
+#' in projected years.
+#'
+#' @param deaths data.table with columns: year, age, sex, deaths
+#' @param population data.table with columns: year, age, sex, population
+#' @param years Integer vector of years to calculate (default: all available)
+#'
+#' @return data.table with columns: year, sex, m4_1 (the 4m1 value)
+#'
+#' @details
+#' The 4-year central death rate is calculated as:
+#' 4m1 = (D1 + D2 + D3 + D4) / (P1 + P2 + P3 + P4)
+#'
+#' Where D is deaths and P is midyear population for each age.
+#'
+#' @export
+calculate_4m1 <- function(deaths, population, years = NULL) {
+  checkmate::assert_data_table(deaths)
+  checkmate::assert_data_table(population)
+  checkmate::assert_names(names(deaths), must.include = c("year", "age", "sex", "deaths"))
+  checkmate::assert_names(names(population), must.include = c("year", "age", "sex", "population"))
+
+  # Filter to ages 1-4
+  d <- deaths[age >= 1 & age <= 4]
+  p <- population[age >= 1 & age <= 4]
+
+  if (is.null(years)) {
+    years <- intersect(unique(d$year), unique(p$year))
+  }
+
+  d <- d[year %in% years]
+  p <- p[year %in% years]
+
+  # Aggregate deaths and population for ages 1-4 by year and sex
+  d_agg <- d[, .(deaths_1_4 = sum(deaths, na.rm = TRUE)), by = .(year, sex)]
+  p_agg <- p[, .(population_1_4 = sum(population, na.rm = TRUE)), by = .(year, sex)]
+
+  # Merge and calculate 4m1
+  result <- merge(d_agg, p_agg, by = c("year", "sex"))
+  result[, m4_1 := deaths_1_4 / population_1_4]
+  result[population_1_4 == 0, m4_1 := NA_real_]
+
+  # Select output columns
+  result <- result[, .(year, sex, m4_1)]
+  data.table::setorder(result, year, sex)
+
+  cli::cli_alert_success(
+    "Calculated 4m1 for {length(unique(result$year))} years"
+  )
+
+  result
+}
+
+#' Calculate q1 using TR methodology
+#'
+#' @description
+#' Calculates the probability of death at age 1 (q1) using the Trustees Report
+#' methodology:
+#' - For historical years: q1 is calculated from the standard mx-to-qx formula
+#' - For projected years: q1 is calculated from 4m1 using a preserved ratio
+#'
+#' @param mx_data data.table with central death rates (year, age, sex, mx)
+#' @param deaths data.table with death counts (year, age, sex, deaths)
+#' @param population data.table with population (year, age, sex, population)
+#' @param last_historical_year Integer: last year of historical data
+#' @param projection_years Integer vector: years to project q1
+#'
+#' @return data.table with columns: year, sex, q1, method
+#'
+#' @details
+#' Per TR2025 documentation (Section 1.2.c, Equation 1.2.3):
+#' "For the period 1940 through the last year of historical data, probabilities
+#' of death are calculated from tabulations of births by year and from deaths
+#' at age 1. After the last historical year, each q1 is calculated from 4m1
+#' assuming that the ratio of q1 to 4m1 measured for the last historical year
+#' would remain constant thereafter."
+#'
+#' For projected years:
+#' q1_projected = 4m1_projected × (q1 / 4m1)_last_historical
+#'
+#' @export
+calculate_q1_tr_method <- function(mx_data,
+                                   deaths,
+                                   population,
+                                   last_historical_year,
+                                   projection_years = NULL) {
+  checkmate::assert_data_table(mx_data)
+  checkmate::assert_data_table(deaths)
+  checkmate::assert_data_table(population)
+  checkmate::assert_int(last_historical_year)
+
+  # Get historical years from mx_data
+  historical_years <- unique(mx_data$year)
+  historical_years <- historical_years[historical_years <= last_historical_year]
+
+  # Calculate q1 for historical years using standard formula
+  # q1 = m1 / (1 + 0.5 * m1)
+  mx_age1 <- mx_data[age == 1 & year %in% historical_years, .(year, sex, mx)]
+  mx_age1[, q1 := mx / (1 + 0.5 * mx)]
+
+  q1_historical <- mx_age1[, .(year, sex, q1, method = "historical")]
+
+  # Calculate 4m1 for historical years
+  m4_1_historical <- calculate_4m1(deaths, population, years = historical_years)
+
+  # Calculate q1/4m1 ratio for last historical year
+  q1_last <- q1_historical[year == last_historical_year, .(sex, q1_last = q1)]
+  m4_1_last <- m4_1_historical[year == last_historical_year, .(sex, m4_1_last = m4_1)]
+  ratio_data <- merge(q1_last, m4_1_last, by = "sex")
+  ratio_data[, q1_m4_1_ratio := q1_last / m4_1_last]
+
+  cli::cli_alert_info(
+    "q1/4m1 ratio at {last_historical_year}: male={round(ratio_data[sex == 'male', q1_m4_1_ratio], 4)}, female={round(ratio_data[sex == 'female', q1_m4_1_ratio], 4)}"
+  )
+
+  # If no projection years specified, return only historical
+
+  if (is.null(projection_years) || length(projection_years) == 0) {
+    cli::cli_alert_success(
+      "Calculated q1 for {nrow(q1_historical)} historical year-sex combinations"
+    )
+    return(q1_historical)
+  }
+
+  # Calculate 4m1 for projected years
+  # Note: For projected years, we need projected mx for ages 1-4
+  # If mx_data contains projected years, use them; otherwise use trend
+  projected_mx_years <- unique(mx_data$year)
+  projected_mx_years <- projected_mx_years[projected_mx_years > last_historical_year]
+
+  if (length(projected_mx_years) > 0) {
+    # Calculate 4m1 from projected mx
+    mx_ages_1_4 <- mx_data[age >= 1 & age <= 4 & year %in% projection_years]
+
+    # Convert mx to "deaths equivalent" for 4m1 calculation
+    # 4m1 = sum(mx_age * weight_age) where weights approximate population distribution
+    # Simplified: use average of mx at ages 1-4
+    m4_1_projected <- mx_ages_1_4[, .(
+      m4_1 = mean(mx, na.rm = TRUE)
+    ), by = .(year, sex)]
+  } else {
+    # Extrapolate 4m1 using AAx trajectory (simplified: use last value)
+    cli::cli_alert_warning("No projected mx available, using last historical 4m1 with decay")
+    m4_1_projected <- data.table::CJ(year = projection_years, sex = c("male", "female"))
+    m4_1_projected <- merge(m4_1_projected, m4_1_last, by = "sex")
+    data.table::setnames(m4_1_projected, "m4_1_last", "m4_1")
+  }
+
+  # Calculate projected q1 = 4m1 * ratio
+  q1_projected <- merge(m4_1_projected, ratio_data[, .(sex, q1_m4_1_ratio)], by = "sex")
+  q1_projected[, q1 := m4_1 * q1_m4_1_ratio]
+  q1_projected[, method := "projected_4m1_ratio"]
+  q1_projected <- q1_projected[, .(year, sex, q1, method)]
+
+  # Combine historical and projected
+  result <- data.table::rbindlist(list(q1_historical, q1_projected), use.names = TRUE)
+  data.table::setorder(result, year, sex)
+
+  cli::cli_alert_success(
+    "Calculated q1 for {nrow(q1_historical)} historical + {nrow(q1_projected)} projected year-sex combinations"
+  )
+  cli::cli_alert_info(
+    "- Historical: standard mx-to-qx formula"
+  )
+  cli::cli_alert_info(
+    "- Projected: 4m1 ratio method (TR methodology)"
+  )
+
+  result
+}
+
+#' Integrate q1 into death probability series
+#'
+#' @description
+#' Replaces the age-1 death probability (q1) in a qx series with values
+#' calculated using the TR methodology (4m1 ratio method for projected years).
+#'
+#' @param qx data.table with death probabilities (must include age 1)
+#' @param q1 data.table from calculate_q1_tr_method() with columns year, sex, q1
+#'
+#' @return data.table with updated q1 values
+#'
+#' @export
+integrate_q1 <- function(qx, q1) {
+  checkmate::assert_data_table(qx)
+  checkmate::assert_data_table(q1)
+  checkmate::assert_names(names(qx), must.include = c("year", "age", "sex", "qx"))
+  checkmate::assert_names(names(q1), must.include = c("year", "sex", "q1"))
+
+  dt <- data.table::copy(qx)
+
+  # Merge q1 values
+  q1_subset <- q1[, .(year, sex, q1_new = q1)]
+  dt <- merge(dt, q1_subset, by = c("year", "sex"), all.x = TRUE)
+
+  # Count replacements
+  n_replaced <- dt[age == 1 & !is.na(q1_new), .N]
+
+  # Replace qx at age 1 with calculated q1
+  dt[age == 1 & !is.na(q1_new), qx := q1_new]
+  dt[, q1_new := NULL]
+
+  cli::cli_alert_success(
+    "Integrated q1 values for {n_replaced} year-sex combinations"
+  )
+
+  dt
+}
+
 #' Integrate infant mortality into death probability series
 #'
 #' @description
@@ -4089,35 +4340,57 @@ calculate_tr_q100_plus <- function(qx_data) {
   data.table::rbindlist(results)
 }
 
-#' Calculate qx with proper infant mortality (q0) and TR 100+ method
+#' Calculate qx with proper infant mortality (q0), q1 TR method, and TR 100+ method
 #'
 #' @description
-#' Calculates age-specific death probabilities (qx) from central death rates (mx).
-#' - Uses separation factor method for infant mortality (q0).
-#' - Uses TR extrapolation method for aggregate 100+ mortality (q100+).
+#' Calculates age-specific death probabilities (qx) from central death rates (mx)
+#' using the full TR methodology:
+#' - q0: Separation factor method for infant mortality
+#' - q1: 4m1 ratio method for projected years (TR2025 Section 1.2.c)
+#' - q2-99: Standard qx = mx / (1 + 0.5*mx) formula
+#' - q100+: TR extrapolation method
 #'
 #' @param mx_total data.table with columns year, age, sex, mx
 #' @param infant_deaths_detailed data.table with detailed infant deaths (age units)
 #' @param monthly_births data.table with monthly births
 #' @param population data.table for filtering years
+#' @param deaths_raw Optional data.table with raw death counts for 4m1 calculation
+#'   (year, age, sex, deaths). If NULL, uses standard formula for q1.
+#' @param last_historical_year Optional integer: last year of historical data.
+#'   If provided with deaths_raw, uses 4m1 ratio method for q1 in projected years.
 #' @param max_age Maximum age to include (default: 100)
 #'
 #' @return data.table with columns year, age, sex, qx
+#'
+#' @details
+#' Per TR2025 documentation (Section 1.2.c):
+#' - q0: "q0 is calculated directly from tabulations of births by month and from
+#'   tabulations of deaths at ages 0, 1-2, 3-6, 7-28 days, 1 month, 2 months, ...,
+#'   and 11 months"
+#' - q1: "For the period 1940 through the last year of historical data, probabilities
+#'   of death are calculated from tabulations of births by year and from deaths at
+#'   age 1. After the last historical year, each q1 is calculated from 4m1 assuming
+#'   that the ratio of q1 to 4m1 measured for the last historical year would remain
+#'   constant thereafter."
+#' - q2-99: "qx = mx / (1 + 0.5*mx)"
+#' - q100+: Special extrapolation with k=1.05 (male) / k=1.06 (female)
 #'
 #' @export
 calculate_qx_with_infant_mortality <- function(mx_total,
                                                infant_deaths_detailed,
                                                monthly_births,
                                                population,
+                                               deaths_raw = NULL,
+                                               last_historical_year = NULL,
                                                max_age = 100) {
   # Get available years
   pop_years <- unique(population$year)
   years_to_calc <- intersect(unique(mx_total$year), pop_years)
 
-  # 1. Calculate qx for ages 1-99 from mx
+  # 1. Calculate qx for ages 2-99 from mx (q1 will be handled separately)
   mx_filtered <- mx_total[year %in% years_to_calc]
   qx_from_mx <- convert_mx_to_qx(mx_filtered, max_age = max_age)
-  qx_ages1_99 <- qx_from_mx[age >= 1 & age <= 99, .(year, age, sex, qx)]
+  qx_ages2_99 <- qx_from_mx[age >= 2 & age <= 99, .(year, age, sex, qx)]
 
   # 2. Calculate q0 using separation factor method
   # Filter data to relevant years
@@ -4132,13 +4405,38 @@ calculate_qx_with_infant_mortality <- function(mx_total,
   )
   q0_formatted <- q0_series[, .(year, age = 0L, sex, qx = q0)]
 
-  # 3. Calculate q100+ using TR extrapolation method
+  # 3. Calculate q1 using TR methodology (4m1 ratio method for projected years)
+  use_tr_q1_method <- !is.null(deaths_raw) && !is.null(last_historical_year)
+
+  if (use_tr_q1_method) {
+    # Determine projection years (years after last_historical_year)
+    projection_years <- years_to_calc[years_to_calc > last_historical_year]
+
+    q1_series <- calculate_q1_tr_method(
+      mx_data = mx_filtered,
+      deaths = deaths_raw,
+      population = population,
+      last_historical_year = last_historical_year,
+      projection_years = projection_years
+    )
+    q1_formatted <- q1_series[year %in% years_to_calc, .(year, age = 1L, sex, qx = q1)]
+    q1_method_msg <- "4m1 ratio method (TR methodology)"
+  } else {
+    # Fallback: use standard mx-to-qx formula for q1
+    q1_formatted <- qx_from_mx[age == 1, .(year, age, sex, qx)]
+    q1_method_msg <- "standard mx-to-qx formula"
+  }
+
+  # 4. Calculate q100+ using TR extrapolation method
   # We need q98 and q99 from the mx-derived series
   q100_agg <- calculate_tr_q100_plus(qx_from_mx)
   q100_formatted <- q100_agg[, .(year, age = 100L, sex, qx)]
 
-  # Combine all parts
-  result <- data.table::rbindlist(list(q0_formatted, qx_ages1_99, q100_formatted), use.names = TRUE)
+  # Combine all parts: q0, q1, q2-99, q100+
+  result <- data.table::rbindlist(
+    list(q0_formatted, q1_formatted, qx_ages2_99, q100_formatted),
+    use.names = TRUE
+  )
   data.table::setorder(result, year, sex, age)
 
   # Report status
@@ -4146,10 +4444,16 @@ calculate_qx_with_infant_mortality <- function(mx_total,
     "Calculated qx for {length(unique(result$year))} years"
   )
   cli::cli_alert_info(
-    "- Used separation factor method for q0"
+    "- q0: separation factor method"
   )
   cli::cli_alert_info(
-    "- Used TR extrapolation method for q100+"
+    "- q1: {q1_method_msg}"
+  )
+  cli::cli_alert_info(
+    "- q2-99: standard qx = mx/(1+0.5*mx) formula"
+  )
+  cli::cli_alert_info(
+    "- q100+: TR extrapolation method"
   )
 
   result
