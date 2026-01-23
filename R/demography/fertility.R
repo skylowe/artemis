@@ -144,52 +144,29 @@ calculate_trend_factors <- function(ratios, exclude_years = 1997) {
 #'
 #' @description
 #' Determines when each age reaches its ultimate (constant) birth rate.
-#' Uses a piecewise linear formula with the reference age as the breakpoint.
+#' Uses the linear formula specified in the TR methodology.
 #'
 #' @param min_age Integer: minimum fertility age (default: 14)
 #' @param max_age Integer: maximum fertility age (default: 49)
 #' @param base_year Integer: projection start year (default: 2025)
-#' @param age30_ultimate_year Integer: year when reference age reaches ultimate (default: 2036)
-#' @param end_year Integer: year when max_age reaches ultimate (default: 2045)
-#' @param reference_age Integer: reference age for ratio calculations (default: 30).
-#'   TR2025 methodology uses age 30 as the reference age. Changing this value
-#'   would deviate from the standard methodology.
+#' @param end_year Integer: year when max_age reaches ultimate (default: 2050)
 #'
 #' @return data.table with columns: age, ultimate_year
 #'
 #' @details
-#' TR2025 uses a piecewise linear formula with the reference age as the breakpoint:
-#' - Ages min_age to reference_age: linear from base_year to age30_ultimate_year
-#' - Ages reference_age+1 to max_age: linear from age30_ultimate_year to end_year
+#' TR2025 Step 6 uses a single linear formula:
+#' u_x = 2025 + (x - 14) * (2050 - 2025) / (49 - 14)
 #'
-#' This ensures:
-#' - min_age reaches ultimate in base_year (2025)
-#' - reference_age reaches ultimate in age30_ultimate_year (2036)
-#' - max_age reaches ultimate in end_year (2045)
+#' The result is rounded to the nearest year.
 #'
 #' @export
 calculate_ultimate_years <- function(min_age = 14, max_age = 49,
                                       base_year = 2025,
-                                      age30_ultimate_year = 2036,
-                                      end_year = 2045,
-                                      reference_age = 30) {
+                                      end_year = 2050) {
   ages <- min_age:max_age
 
-  ultimate_years <- numeric(length(ages))
-
-  for (i in seq_along(ages)) {
-    age <- ages[i]
-    if (age <= reference_age) {
-      # Ages 14-30: linear from base_year to age30_ultimate_year
-      ultimate_years[i] <- base_year + (age - min_age) *
-        (age30_ultimate_year - base_year) / (reference_age - min_age)
-    } else {
-      # Ages 31-49: linear from age30_ultimate_year to end_year
-      ultimate_years[i] <- age30_ultimate_year + (age - reference_age) *
-        (end_year - age30_ultimate_year) / (max_age - reference_age)
-    }
-  }
-
+  # TR2025 Step 6 Formula: u_x = 2025 + (x - 14) * (2050 - 2025) / (49 - 14)
+  ultimate_years <- base_year + (ages - min_age) * (end_year - base_year) / (max_age - min_age)
   ultimate_years <- round(ultimate_years)
 
   data.table::data.table(age = ages, ultimate_year = ultimate_years)
@@ -367,9 +344,11 @@ project_age30_rates <- function(years, base_rate, ultimate_rate, weights) {
 #'
 #' @details
 #' Method:
-#' 1. Project r_x^z forward using trend factors until ultimate year
-#' 2. After ultimate year, r_x^z stays constant
-#' 3. Calculate: b_x^z = b_30^z * r_x^z
+#' 1. For years z <= u_x (ultimate year for age x):
+#'    b_x^z = b_30^z * r_x^z
+#'    where r_x^z = r_x^{base} * (a_x)^(z - base)
+#' 2. For years z > u_x:
+#'    b_x^z = b_x^{u_x} (constant)
 #'
 #' IMPORTANT: The base_year parameter must match the base_year used in
 #' solve_ultimate_age30_rate(), otherwise the solved ultimate age-30 rate
@@ -391,20 +370,48 @@ project_birth_rates <- function(years,
   # Merge in age30 rates
   grid <- merge(grid, age30_rates, by = "year")
 
-  # Merge in base ratios and trend factors
+  # Merge in base ratios, trend factors, and ultimate years
   grid <- merge(grid, base_ratios[, .(age, base_ratio = ratio_to_30)], by = "age")
   grid <- merge(grid, trend_factors, by = "age")
   grid <- merge(grid, ultimate_years, by = "age")
 
-  # Calculate projected ratio for each year-age
-  # Years from base to current year (capped at ultimate)
-  grid[, years_from_base := pmin(year - base_year, ultimate_year - base_year)]
+  # Calculate birth rate up to each age's ultimate year
+  # Formula: b_x^z = b_30^z * (r_x^{base} * a_x^(z - base_year))
+  grid[, years_from_base := year - base_year]
+  grid[, current_ratio := base_ratio * (avg_trend_factor^years_from_base)]
+  grid[, birth_rate := age30_rate * current_ratio]
 
-  # Apply trend factor for those years
-  grid[, ratio_to_30 := base_ratio * (avg_trend_factor^years_from_base)]
+  # Handle post-ultimate years: rate stays constant at the value from ultimate year
+  # Identify rows where year > ultimate_year
+  grid[, is_post_ultimate := year > ultimate_year]
 
-  # Calculate birth rate
-  grid[, birth_rate := age30_rate * ratio_to_30]
+  # For post-ultimate rows, we need the rate from the ultimate year
+  # We'll calculate the ultimate rate for each age and merge it back
+  
+  # Calculate rate at exactly the ultimate year for each age
+  # Note: The ultimate year might not be in 'years' vector if 'years' starts later,
+  # but the formula allows us to calculate it for any year.
+  # However, we need the age30_rate at the ultimate year.
+  
+  # Get unique ultimate years required
+  req_ultimate_years <- unique(grid[is_post_ultimate == TRUE, ultimate_year])
+  
+  if (length(req_ultimate_years) > 0) {
+    # We need b_30 at these ultimate years. 
+    # Check if they are in our age30_rates input
+    # If not, we might need to interpolate/calculate them, but usually 
+    # ultimate years (2025-2050) will be within the projection range (2025-2099)
+    
+    # Let's subset the grid to just the ultimate years to get the correct rates
+    # We want: for each age, the birth_rate at year == ultimate_year
+    ultimate_rates <- grid[year == ultimate_year, .(age, ultimate_rate = birth_rate)]
+    
+    # Merge back
+    grid <- merge(grid, ultimate_rates, by = "age", all.x = TRUE)
+    
+    # Apply constant rate for post-ultimate years
+    grid[is_post_ultimate == TRUE, birth_rate := ultimate_rate]
+  }
 
   # Order and select columns
   data.table::setorder(grid, year, age)
