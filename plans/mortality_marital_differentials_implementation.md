@@ -343,6 +343,8 @@ tar_target(
 
 **Bug Fix (January 18, 2026):** Fixed data.table chained subset assignment bug in step 5 that prevented smoothed values from being stored back to the rates table.
 
+**Step 7 qx Conversion (January 23, 2026):** Updated to convert death rates to qx before calculating relative factors, per TR2025 methodology. Previously we calculated factors directly from death rates (mx ratios). The fix converts mx to qx using `qx = mx/(1+0.5*mx)` then calculates factors from qx ratios. Impact analysis showed ~1% population-weighted difference at ages 40-80.
+
 ---
 
 ## References

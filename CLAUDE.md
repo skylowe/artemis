@@ -40,6 +40,17 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - Applied to all ages (not just 85+) per TR methodology
   - Key functions: `calculate_age_last_birthday_qx()`, `apply_age_last_birthday_qx()`
 - **COVID adjustments:** Applied to qx for 2024-2025 per TR2025 Table
+- **Marital status mortality differentials:** Per TR2025 Section 1.2.c, 7-step process:
+  1. Calculate preliminary death rates (NCHS deaths / ACS population) by marital status
+  2. Adjust older age populations and rates for consistency
+  3. Converge all marital statuses to same rate at age 95
+  4. Ages under 15 use total death rates (no differential)
+  5. Whittaker-Henderson smoothing (degree=2, smoothing=0.5) for ages 15-94
+  6. Ages 15-20 non-single use age 21 ratio relative to single
+  7. Convert death rates to qx, then calculate relative factors (married=1.0 reference)
+  - Smoothing parameter 0.5 (vs TR's 0.01) due to sparse data at young widowed ages
+  - Impact analysis: <2% mean difference at ages 40-80 (most actuarially relevant)
+  - Key function: `calculate_marital_mortality_factors()`
 - **Key functions:** `calculate_4m1()`, `calculate_q1_tr_method()`, `calculate_tr_q100_plus()`
 
 ### LPR Immigration Subprocess Status (COMPLETE)

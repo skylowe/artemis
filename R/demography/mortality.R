@@ -2847,7 +2847,8 @@ wh_smooth_marital <- function(values, degree = 2, smoothing = 0.5) {
 #' 4. Ages under 15 use total death rates (no differential)
 #' 5. Apply Whittaker-Henderson smoothing (degree=2, smoothing=0.5) for ages 15-94
 #' 6. Adjust ages 15-20 non-single to match age 21 ratio
-#' 7. Convert to relative factors (married = 1.0 reference)
+#' 7. Convert death rates to qx using qx = mx/(1+0.5*mx), then calculate
+#'    relative factors from qx values (married = 1.0 reference)
 #'
 #' @export
 calculate_marital_mortality_factors <- function(
@@ -3010,13 +3011,18 @@ calculate_marital_mortality_factors <- function(
     }
   }
 
-  # Step 7: Convert to relative factors (married = 1.0 reference)
-  # Calculate factors relative to married for each age/sex
-  married_rates <- rates[marital_status == "married", .(age, sex, married_rate = death_rate)]
-  rates <- merge(rates, married_rates, by = c("age", "sex"), all.x = TRUE)
+  # Step 7: Convert death rates to qx, then calculate relative factors
+ # Per TR2025 methodology: "Converting these death rates to probabilities of death"
+  # Formula: qx = mx / (1 + 0.5*mx) for ages 2-99
+  # Then calculate factors relative to married qx for each age/sex
+  rates[, qx := death_rate / (1 + 0.5 * death_rate)]
 
-  # Calculate relative factor
-  rates[, relative_factor := death_rate / married_rate]
+  # Get married qx as reference
+  married_qx <- rates[marital_status == "married", .(age, sex, married_qx = qx)]
+  rates <- merge(rates, married_qx, by = c("age", "sex"), all.x = TRUE)
+
+  # Calculate relative factor from qx (not mx)
+  rates[, relative_factor := qx / married_qx]
 
   # Handle edge cases (NA/Inf from division issues)
   rates[is.na(relative_factor) | is.infinite(relative_factor), relative_factor := 1.0]
