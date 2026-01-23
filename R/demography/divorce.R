@@ -13,7 +13,7 @@
 NULL
 
 # =============================================================================
-# CONSTANTS
+# CONSTANTS (defaults when config not provided)
 # =============================================================================
 
 #' Age range for DivGrid (TR2025: ages 14-100+)
@@ -28,6 +28,78 @@ DIVORCE_ULTIMATE_ADR <- 1700
 #' Years to reach ultimate ADR (TR2025: 25th year of projection)
 #' @keywords internal
 DIVORCE_ULTIMATE_YEAR_OFFSET <- 25
+
+#' Standard population years for ADR calculation (TR2025: 2009-2010)
+#' @keywords internal
+DIVORCE_STANDARD_POP_YEARS <- c(2009L, 2010L)
+
+# =============================================================================
+# CONFIG HELPER FUNCTIONS
+# =============================================================================
+
+#' Get divorce configuration parameters
+#'
+#' @description
+#' Retrieves divorce parameters from config object or falls back to defaults.
+#'
+#' @param config Optional config list (from yaml::read_yaml)
+#'
+#' @return List with min_age, max_age, standard_population_years
+#'
+#' @keywords internal
+get_divorce_config <- function(config = NULL) {
+  # Helper for null coalescing (avoids rlang dependency in standalone use)
+  null_default <- function(x, default) if (is.null(x)) default else x
+
+  if (!is.null(config) && !is.null(config$divorce)) {
+    # Get standard_population_years and ensure it's an integer vector (YAML reads as list)
+    std_pop_years <- config$divorce$standard_population_years
+    if (!is.null(std_pop_years)) {
+      std_pop_years <- as.integer(unlist(std_pop_years))
+    } else {
+      std_pop_years <- DIVORCE_STANDARD_POP_YEARS
+    }
+
+    list(
+      min_age = as.integer(null_default(config$divorce$min_age, DIVORCE_MIN_AGE)),
+      max_age = as.integer(null_default(config$divorce$max_age, DIVORCE_MAX_AGE)),
+      standard_population_years = std_pop_years,
+      ultimate_adr = null_default(config$divorce$ultimate_adr, DIVORCE_ULTIMATE_ADR),
+      ultimate_year = as.integer(null_default(config$divorce$ultimate_year, 2047L))
+    )
+  } else {
+    list(
+      min_age = DIVORCE_MIN_AGE,
+      max_age = DIVORCE_MAX_AGE,
+      standard_population_years = DIVORCE_STANDARD_POP_YEARS,
+      ultimate_adr = DIVORCE_ULTIMATE_ADR,
+      ultimate_year = 2047L
+    )
+  }
+}
+
+#' Load divorce config from file if needed
+#'
+#' @description
+#' Helper to load config from default path if not provided.
+#'
+#' @param config Optional config list
+#'
+#' @return Config list (loaded or provided)
+#'
+#' @keywords internal
+load_divorce_config_if_needed <- function(config = NULL) {
+  if (!is.null(config)) {
+    return(config)
+  }
+
+  config_path <- here::here("config/assumptions/tr2025.yaml")
+  if (file.exists(config_path)) {
+    yaml::read_yaml(config_path)
+  } else {
+    NULL
+  }
+}
 
 # =============================================================================
 # MARRIED COUPLES GRID FUNCTIONS
@@ -54,7 +126,7 @@ DIVORCE_ULTIMATE_YEAR_OFFSET <- 25
 #' This assumes independence in age distribution, which is a simplification.
 #'
 #' @export
-build_married_couples_grid <- function(marital_pop,
+build_divorce_married_couples_grid <- function(marital_pop,
                                         target_year,
                                         min_age = DIVORCE_MIN_AGE,
                                         max_age = DIVORCE_MAX_AGE) {
@@ -132,20 +204,27 @@ build_married_couples_grid <- function(marital_pop,
 #' We implement this as the average of 2009 and 2010 December 31 grids.
 #'
 #' @param marital_pop data.table with marital status population
-#' @param years Integer vector of years to average (default: c(2009, 2010))
-#' @param min_age Minimum age (default: 14)
-#' @param max_age Maximum age (default: 100)
+#' @param years Integer vector of years to average (default from config or c(2009, 2010))
+#' @param min_age Minimum age (default from config or 14)
+#' @param max_age Maximum age (default from config or 100)
+#' @param config Optional config list to derive years, min_age, max_age
 #'
 #' @return Matrix (87×87) with standard population of married couples
 #'
 #' @export
 build_standard_married_population <- function(marital_pop,
-                                               years = c(2009, 2010),
-                                               min_age = DIVORCE_MIN_AGE,
-                                               max_age = DIVORCE_MAX_AGE) {
+                                               years = NULL,
+                                               min_age = NULL,
+                                               max_age = NULL,
+                                               config = NULL) {
+  # Get parameters from config or use defaults
+  divorce_config <- get_divorce_config(config)
+  if (is.null(years)) years <- divorce_config$standard_population_years
+  if (is.null(min_age)) min_age <- divorce_config$min_age
+  if (is.null(max_age)) max_age <- divorce_config$max_age
   # Build grid for each year and average
   grids <- lapply(years, function(yr) {
-    build_married_couples_grid(marital_pop, yr, min_age, max_age)
+    build_divorce_married_couples_grid(marital_pop, yr, min_age, max_age)
   })
 
   # Average the grids
@@ -867,7 +946,7 @@ build_base_divgrid <- function(detailed_divorces,
     )
 
     # Get married couples for this year
-    married_grid <- build_married_couples_grid(marital_pop, yr)
+    married_grid <- build_divorce_married_couples_grid(marital_pop, yr)
 
     # Calculate rates
     rates <- calculate_year_divorce_rates(ss_div_matrix, married_grid)
@@ -1160,12 +1239,14 @@ validate_divgrid <- function(divgrid, standard_pop = NULL) {
 #'
 #' @param cache_dir Character path to cache directory
 #' @param force Logical: force rebuild even if cached (default: FALSE)
+#' @param config Optional config list for parameters (standard_population_years, min_age, max_age)
 #'
 #' @return List with divgrid matrix and metadata
 #'
 #' @export
 fetch_base_divgrid <- function(cache_dir = here::here("data/cache"),
-                                force = FALSE) {
+                                force = FALSE,
+                                config = NULL) {
   cache_file <- file.path(cache_dir, "divorce", "base_divgrid_1979_1988.rds")
 
   # Return cached if available
@@ -1173,6 +1254,9 @@ fetch_base_divgrid <- function(cache_dir = here::here("data/cache"),
     cli::cli_alert_success("Loading cached base DivGrid (1979-1988)")
     return(readRDS(cache_file))
   }
+
+  # Load config if not provided
+  config <- load_divorce_config_if_needed(config)
 
   # Build from source data
   cli::cli_alert_info("Building base DivGrid from source data...")
@@ -1194,8 +1278,8 @@ fetch_base_divgrid <- function(cache_dir = here::here("data/cache"),
     smooth = TRUE
   )
 
-  # Add standard population ADR
-  std_pop <- build_standard_married_population(marital_pop)
+  # Add standard population ADR (using config for standard_population_years, min_age, max_age)
+  std_pop <- build_standard_married_population(marital_pop, config = config)
   result$base_adr <- calculate_adr(result$divgrid, std_pop)
   result$standard_pop <- std_pop
 
@@ -1542,6 +1626,7 @@ get_divgrid_for_year <- function(year,
 #' @param cache_dir Character path to cache directory
 #' @param acs_years Integer vector of ACS years to use for adjustment
 #' @param force Logical: force rebuild (default: FALSE)
+#' @param config Optional config list for parameters
 #'
 #' @return List with:
 #'   - base_divgrid: Original 1979-1988 DivGrid
@@ -1554,7 +1639,8 @@ get_divgrid_for_year <- function(year,
 #' @export
 fetch_adjusted_divgrid <- function(cache_dir = here::here("data/cache"),
                                     acs_years = 2018:2022,
-                                    force = FALSE) {
+                                    force = FALSE,
+                                    config = NULL) {
 
   cache_file <- file.path(cache_dir, "divorce", "adjusted_divgrid.rds")
 
@@ -1566,8 +1652,8 @@ fetch_adjusted_divgrid <- function(cache_dir = here::here("data/cache"),
 
   cli::cli_h2("Building ACS-Adjusted DivGrid")
 
-  # Get base DivGrid
-  base_result <- fetch_base_divgrid(cache_dir = cache_dir, force = FALSE)
+  # Get base DivGrid (pass config for standard_population_years, min_age, max_age)
+  base_result <- fetch_base_divgrid(cache_dir = cache_dir, force = FALSE, config = config)
   base_divgrid <- base_result$divgrid
   standard_pop <- base_result$standard_pop
 
@@ -1957,7 +2043,7 @@ calculate_historical_year_rates <- function(year,
   )
 
   # Get married couples population for this year
-  married_grid <- build_married_couples_grid(marital_pop, year)
+  married_grid <- build_divorce_married_couples_grid(marital_pop, year)
 
   # Get SS area factor if not provided
   if (is.null(ss_area_factor)) {
@@ -2314,6 +2400,7 @@ validate_historical_adr <- function(historical_adr) {
 #'
 #' @param cache_dir Cache directory path
 #' @param force Logical: force recalculation (default: FALSE)
+#' @param config Optional config list for parameters
 #'
 #' @return List with:
 #'   - adr_series: Complete ADR series 1979-2022
@@ -2324,7 +2411,8 @@ validate_historical_adr <- function(historical_adr) {
 #'
 #' @export
 get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
-                                         force = FALSE) {
+                                         force = FALSE,
+                                         config = NULL) {
 
   cache_file <- file.path(cache_dir, "divorce", "historical_complete.rds")
 
@@ -2337,7 +2425,7 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
   cli::cli_h1("Building Complete Historical Divorce Data (1979-2022)")
 
   # Get base period ADR from the base DivGrid (1979-1988)
-  base_result <- fetch_base_divgrid(cache_dir = cache_dir, force = FALSE)
+  base_result <- fetch_base_divgrid(cache_dir = cache_dir, force = FALSE, config = config)
 
   # Build base period ADR series
   cli::cli_alert("Building base period ADR series (1979-1988)...")
@@ -2352,7 +2440,7 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
   )
 
   # Get adjusted DivGrid
-  adjusted_result <- fetch_adjusted_divgrid(cache_dir = cache_dir, force = FALSE)
+  adjusted_result <- fetch_adjusted_divgrid(cache_dir = cache_dir, force = FALSE, config = config)
 
   # Calculate historical period (1989-2022)
   historical_period <- calculate_historical_adr_series(
@@ -3155,12 +3243,17 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
 
   cli::cli_alert_info("Ultimate ADR: {ultimate_adr}, Ultimate year: {ultimate_year}")
 
+  # Load config if not yet loaded (for passing to historical data functions)
+  if (is.null(config)) {
+    config <- load_divorce_config_if_needed(NULL)
+  }
+
   # =========================================================================
   # STEP 1: Get historical divorce data (includes base and adjusted DivGrid)
   # =========================================================================
   cli::cli_h2("Step 1: Loading Historical Divorce Data (1979-2022)")
 
-  historical <- get_historical_divorce_data(cache_dir, force = force)
+  historical <- get_historical_divorce_data(cache_dir, force = force, config = config)
 
   base_divgrid <- historical$base_result$divgrid
   adjusted_divgrid <- historical$adjusted_result$adjusted_divgrid

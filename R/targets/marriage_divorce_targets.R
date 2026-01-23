@@ -156,7 +156,8 @@ create_marriage_divorce_targets <- function() {
         ultimate_adr = config_assumptions$divorce$ultimate_adr,
         ultimate_year = config_assumptions$divorce$ultimate_year,
         end_year = config_assumptions$metadata$projection_period$end_year,
-        force = FALSE
+        force = FALSE,
+        config = config_assumptions
       )
     ),
 
