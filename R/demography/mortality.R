@@ -1255,7 +1255,7 @@ map_age_to_ultimate_group <- function(ages, config = NULL) {
 #' @param ultimate_aax data.table from get_ultimate_aax_assumptions()
 #' @param base_year Integer: last year of historical data (default: 2019)
 #' @param projection_years Integer vector of years to project
-#' @param transition_years Integer: years to reach ultimate (default: 24)
+#' @param ultimate_year Integer: year when ultimate values are reached (default: 2043)
 #' @param transition_rate Numeric: convergence rate per year (default: 0.80)
 #'
 #' @return data.table with AAx by year, age, sex, [cause]
@@ -1269,8 +1269,8 @@ map_age_to_ultimate_group <- function(ages, config = NULL) {
 calculate_aax_trajectory <- function(starting_aax,
                                       ultimate_aax = NULL,
                                       base_year = 2019,
+                                      ultimate_year = 2043,
                                       projection_years = 2020:2100,
-                                      transition_years = 24,
                                       transition_rate = 0.80) {
   checkmate::assert_data_table(starting_aax)
   checkmate::assert_int(base_year)
@@ -1339,10 +1339,6 @@ calculate_aax_trajectory <- function(starting_aax,
 
   # Build trajectory for each year
   result_list <- list()
-
-  # Year 1 of projection (base_year + 1) uses starting_aax
-  projection_start <- min(projection_years)
-  ultimate_year <- base_year + transition_years + 1  # Year when ultimate is reached
 
   for (proj_year in projection_years) {
     year_dt <- data.table::copy(dt)
@@ -1764,9 +1760,18 @@ run_mortality_projection <- function(deaths,
   # Step 6: Calculate AAx trajectory
   cli::cli_h2("Step 6: Calculate AAx trajectory to ultimate")
   projection_years <- (effective_base_year + 1):projection_end
+
+  # Get ultimate_year from config, default to 2043
+  config_ultimate_year <- if (!is.null(mortality_config$ultimate_year)) {
+    mortality_config$ultimate_year
+  } else {
+    2043L
+  }
+
   aax_trajectory <- calculate_aax_trajectory(
     starting_aax = starting_aax,
     base_year = effective_base_year,
+    ultimate_year = config_ultimate_year,
     projection_years = projection_years
   )
 

@@ -55,29 +55,11 @@ fertility:
 mortality:
   # Projection parameters
   base_year: 2019  # Last pre-COVID year used for starting values
-  projection_start_year: 2020
+  ultimate_year: 2043    # Year when ultimate AAx values are reached
 
   # Regression parameters (for calculating historical AAx)
   regression_start_year: 2008
   regression_end_year: 2019
-  regression_weights:
-    # Weights for 12-year regression period
-    # Years 1-4: 0.2, 0.4, 0.6, 0.8
-    # Years 5-10: 1.0 each
-    # Years 11-12: 2.0, 3.0
-    year_1: 0.2
-    year_2: 0.4
-    year_3: 0.6
-    year_4: 0.8
-    year_5_10: 1.0
-    year_11: 2.0
-    year_12: 3.0
-  negative_aax_factor: 0.75  # Multiply negative AAx by this factor for starting values
-
-  # Transition parameters
-  transition_rate: 0.80  # 80% of remaining difference each year
-  transition_years: 24   # Years until ultimate values reached
-  ultimate_year: 2043    # base_year + transition_years = 2019 + 24
 
   # =========================================================================
   # Starting AAx Method Configuration
@@ -113,20 +95,6 @@ mortality:
     base_year: 2023
     # Years to use for calculating implied AAx (2024-2025 gives first year improvement)
     aax_reference_years: [2024, 2025]
-
-  # Whittaker-Henderson smoothing parameters (per SSA documentation)
-  whittaker_henderson:
-    degree: 2           # d parameter (difference order)
-    smoothing_param: 0.01  # lambda parameter
-    age_range_min: 2
-    age_range_max: 99
-
-  # Age-specific parameters for ages 100+
-  very_old_age:
-    start_age: 100
-    male_growth_rate: 1.05    # 5% annual increase in qx
-    female_growth_rate: 1.06  # 6% annual increase in qx
-    transition_ages: [100, 101, 102, 103, 104]  # Transition from q99/q98 ratio to growth rate
 
   # COVID-19 adjustment factors (applied to qx in 2024-2025)
   covid_adjustments:
@@ -217,27 +185,6 @@ mortality:
     age_85_plus:
       min_age: 85
       max_age: 119
-
-  # Cause of death categories (ICD-10 mapping)
-  causes:
-    CVD:
-      name: "Cardiovascular Disease"
-      description: "Heart disease and cerebrovascular disease"
-    CAN:
-      name: "Cancer"
-      description: "Malignant neoplasms"
-    ACV:
-      name: "Accidents and Violence"
-      description: "Unintentional injuries and intentional self-harm/assault"
-    RES:
-      name: "Respiratory Disease"
-      description: "Chronic lower respiratory diseases, influenza, pneumonia"
-    DEM:
-      name: "Dementia"
-      description: "Alzheimer's disease and other dementias"
-    OTH:
-      name: "All Other Causes"
-      description: "All causes not included above"
 
 immigration:
   # =========================================================================
