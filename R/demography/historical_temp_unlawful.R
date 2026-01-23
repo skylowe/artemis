@@ -541,8 +541,12 @@ generate_historical_lpr_estimates <- function(years, ages) {
 
 #' Load Emigration for O Calculation
 #'
+#' @param years Integer vector: years to load
+#' @param ages Integer vector: ages to load
+#' @param emigration_ratio Numeric: ratio of emigration to LPR immigration (default: 0.25)
+#'
 #' @keywords internal
-load_emigration_for_o <- function(years, ages) {
+load_emigration_for_o <- function(years, ages, emigration_ratio = 0.25) {
   # Try to load from emigration subprocess
   emig_file <- here::here("data/cache/emigration/legal_emigration.rds")
 
@@ -552,11 +556,11 @@ load_emigration_for_o <- function(years, ages) {
     return(emig_data[year %in% years & age %in% ages])
   }
 
-  # Generate estimates (25% of LPR per TR methodology)
-  cli::cli_alert_info("Emigration cache not found, generating estimates (25% of LPR)")
+  # Generate estimates using configured ratio (default 25% of LPR per TR methodology)
+  cli::cli_alert_info("Emigration cache not found, generating estimates ({emigration_ratio*100}% of LPR)")
   lpr <- load_lpr_immigration_for_o(years, ages)
   emig <- data.table::copy(lpr)
-  emig[, emigration := immigration * 0.25]
+  emig[, emigration := immigration * emigration_ratio]
   emig[, immigration := NULL]
 
   emig

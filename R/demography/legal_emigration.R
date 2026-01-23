@@ -104,6 +104,9 @@ project_legal_emigration <- function(lpr_immigration,
 #'
 #' @param config list: configuration with immigration assumptions (optional)
 #' @param years Integer vector: years to get assumptions for
+#' @param emigration_ratio Numeric: ratio of emigration to LPR immigration.
+#'   If NULL and config provided, reads from config$immigration$emigration$ratio.
+#'   Default: 0.25.
 #'
 #' @return data.table with columns: year, total_emigration
 #'
@@ -115,7 +118,18 @@ project_legal_emigration <- function(lpr_immigration,
 #' - 2027+: 262,500 (25% of 1,050,000)
 #'
 #' @export
-get_tr_emigration_assumptions <- function(config = NULL, years = 2024:2099) {
+get_tr_emigration_assumptions <- function(config = NULL,
+                                          years = 2024:2099,
+                                          emigration_ratio = NULL) {
+  # Get emigration ratio from config or use default
+ if (is.null(emigration_ratio)) {
+    if (!is.null(config) && !is.null(config$immigration$emigration$ratio)) {
+      emigration_ratio <- config$immigration$emigration$ratio
+    } else {
+      emigration_ratio <- 0.25
+    }
+  }
+
   # TR2025 LPR immigration assumptions
   lpr_assumptions <- data.table::data.table(
     year = years
@@ -129,8 +143,8 @@ get_tr_emigration_assumptions <- function(config = NULL, years = 2024:2099) {
     default = 1050000
   )]
 
-  # Calculate emigration (25% ratio)
-  lpr_assumptions[, total_emigration := total_lpr * 0.25]
+  # Calculate emigration using configured ratio
+  lpr_assumptions[, total_emigration := total_lpr * emigration_ratio]
 
   lpr_assumptions[, .(year, total_lpr, total_emigration)]
 }

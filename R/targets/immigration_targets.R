@@ -56,11 +56,18 @@ create_immigration_targets <- function() {
     # TR2025-derived immigration distribution
     targets::tar_target(
       tr_derived_immigration_dist,
-      calculate_tr_derived_distribution(
-        tr_population = tr2025_population_long,
-        tr_qx = tr2025_qx_long,
-        years = 2023:2030
-      )
+      {
+        # Get years from config, with default fallback
+        tr_derived_years <- get_config_with_default(
+          config_assumptions, "immigration", "lpr", "tr_derived_years",
+          default = 2023:2030
+        )
+        calculate_tr_derived_distribution(
+          tr_population = tr2025_population_long,
+          tr_qx = tr2025_qx_long,
+          years = tr_derived_years
+        )
+      }
     ),
 
     # ==========================================================================
@@ -97,10 +104,18 @@ create_immigration_targets <- function() {
     # Step 4: LPR assumptions
     targets::tar_target(
       lpr_assumptions,
-      get_tr_lpr_assumptions(
-        years = config_assumptions$metadata$projection_period$start_year:
-                config_assumptions$metadata$projection_period$end_year
-      )
+      {
+        # Get emigration ratio from config (used for hardcoded fallback)
+        emigration_ratio <- get_config_with_default(
+          config_assumptions, "immigration", "emigration", "ratio",
+          default = 0.25
+        )
+        get_tr_lpr_assumptions(
+          years = config_assumptions$metadata$projection_period$start_year:
+                  config_assumptions$metadata$projection_period$end_year,
+          emigration_ratio = emigration_ratio
+        )
+      }
     ),
 
     # Step 5: Project LPR immigration

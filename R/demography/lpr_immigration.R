@@ -655,6 +655,8 @@ calculate_new_aos_ratio <- function(dhs_data,
 #' @param alternative Character: which alternative to use for projections
 #'   ("intermediate", "low-cost", or "high-cost"). Default: "intermediate"
 #' @param data_dir Character: directory containing TR2025 files
+#' @param emigration_ratio Numeric: ratio of emigration to LPR immigration,
+#'   used only for hardcoded fallback (default: 0.25)
 #'
 #' @return data.table with columns: year, total_lpr, total_emigration, net_lpr_total,
 #'   lpr_aos (if available), data_type
@@ -672,7 +674,8 @@ calculate_new_aos_ratio <- function(dhs_data,
 #' @export
 get_tr_lpr_assumptions <- function(years = 2025:2099,
                                         alternative = c("intermediate", "low-cost", "high-cost"),
-                                        data_dir = "data/raw/SSA_TR2025") {
+                                        data_dir = "data/raw/SSA_TR2025",
+                                        emigration_ratio = 0.25) {
   alternative <- match.arg(alternative)
 
  # Try to load from V.A2
@@ -689,7 +692,7 @@ get_tr_lpr_assumptions <- function(years = 2025:2099,
   } else {
     # Fallback to hardcoded values
     cli::cli_alert_warning("V.A2 data not available, using hardcoded assumptions")
-    result <- get_tr_lpr_assumptions_hardcoded(years)
+    result <- get_tr_lpr_assumptions_hardcoded(years, emigration_ratio)
   }
 
   result
@@ -769,8 +772,11 @@ get_tr_lpr_assumptions_va2 <- function(years,
 
 #' Fallback hardcoded LPR assumptions
 #'
+#' @param years Integer vector: years to get assumptions for
+#' @param emigration_ratio Numeric: ratio of emigration to LPR immigration (default: 0.25)
+#'
 #' @keywords internal
-get_tr_lpr_assumptions_hardcoded <- function(years) {
+get_tr_lpr_assumptions_hardcoded <- function(years, emigration_ratio = 0.25) {
   result <- data.table::data.table(year = years)
 
   # Set LPR immigration levels per TR2025 intermediate assumptions
@@ -786,8 +792,8 @@ get_tr_lpr_assumptions_hardcoded <- function(years) {
   result[, lpr_new := round(total_lpr * 0.60)]
   result[, lpr_aos := total_lpr - lpr_new]
 
-  # Emigration = 25% of LPR
-  result[, total_emigration := round(total_lpr * 0.25)]
+  # Emigration = configured ratio of LPR (default 25%)
+  result[, total_emigration := round(total_lpr * emigration_ratio)]
 
   # Net LPR
   result[, net_lpr_total := total_lpr - total_emigration]
