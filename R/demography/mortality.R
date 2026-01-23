@@ -2130,7 +2130,9 @@ adjust_qx_with_hmd <- function(qx,
     }
   }
 
-  # Combine young ages with adjusted elderly and preserved 100+ data
+  # Combine young ages with adjusted elderly
+  # Note: dt_100plus (original 100+) is NOT used if we are recalculating it
+  
   dt_elderly <- data.table::rbindlist(results_list, fill = TRUE)
 
   # Add any missing columns to elderly data
@@ -2138,20 +2140,26 @@ adjust_qx_with_hmd <- function(qx,
     dt_elderly[, (col) := NA]
   }
 
-  # Combine all parts: young (0-84), calibrated elderly (85-99), and 100+ (if present)
+  # If max_age != 100, we might need to handle ages > 99 differently, 
+  # but per TR methodology we are focused on the max_age=100 case where 100 is aggregate.
+  
   parts_to_combine <- list(dt_young, dt_elderly)
-  if (nrow(dt_100plus) > 0) {
-    # Ensure dt_100plus has same columns
-    for (col in setdiff(names(dt_young), names(dt_100plus))) {
-      dt_100plus[, (col) := NA]
+  
+  # If we are NOT recalcing 100+ (e.g. max_age > 100), we append the rest of the original data
+  if (max_age > 100) {
+    dt_rest <- dt[age > calibrate_max_age]
+     # Ensure dt_rest has same columns
+    for (col in setdiff(names(dt_young), names(dt_rest))) {
+      dt_rest[, (col) := NA]
     }
-    parts_to_combine <- c(parts_to_combine, list(dt_100plus))
+    parts_to_combine <- c(parts_to_combine, list(dt_rest))
   }
+  
   result <- data.table::rbindlist(parts_to_combine, fill = TRUE)
 
   # Ensure female qx doesn't exceed male qx at younger ages (< 85)
   # At ages 85+, small populations can cause random crossovers that are
-  # handled by HMD calibration for 85-99 and should be left as-is for 100+
+  # handled by HMD calibration for 85-99.
   if (has_year) {
     male_lookup <- result[sex == "male", .(year, age, male_qx = qx)]
     result <- merge(result, male_lookup, by = c("year", "age"), all.x = TRUE)
@@ -2163,6 +2171,27 @@ adjust_qx_with_hmd <- function(qx,
   result[sex == "female" & age < 85 & !is.na(male_qx), qx := pmin(qx, male_qx)]
   result[, male_qx := NULL]
 
+  # Recalculate q100+ if max_age == 100
+  # This ensures q100+ is consistent with the HMD-adjusted q98 and q99
+  if (max_age == 100) {
+    # Check if we have data to calculate 100+ (needs 98, 99)
+    # We use the 'result' dt which now has adjusted 98/99
+    q100_new <- calculate_tr_q100_plus(result)
+    
+    if (nrow(q100_new) > 0) {
+      q100_new[, age := 100L]
+      
+      # Add missing columns from result to q100_new
+      for (col in setdiff(names(result), names(q100_new))) {
+        q100_new[, (col) := NA]
+      }
+      
+      # Remove any existing age 100 from result (shouldn't be there given logic above, but safety)
+      result <- result[age != 100]
+      result <- data.table::rbindlist(list(result, q100_new), fill = TRUE)
+    }
+  }
+
   # Sort
   if (has_year) {
     data.table::setorder(result, year, sex, age)
@@ -2170,10 +2199,13 @@ adjust_qx_with_hmd <- function(qx,
     data.table::setorder(result, sex, age)
   }
 
-  n_adjusted <- nrow(result[age >= transition_age])
+  n_adjusted <- nrow(result[age >= transition_age & age <= 99])
   cli::cli_alert_success(
-    "Adjusted {n_adjusted} qx values for ages {transition_age}+ using HMD calibration"
+    "Adjusted {n_adjusted} qx values for ages {transition_age}-99 using HMD calibration"
   )
+  if (max_age == 100) {
+    cli::cli_alert_success("Recalculated q100+ based on adjusted q98/q99")
+  }
 
   result
 }
@@ -4049,7 +4081,7 @@ calculate_tr_q100_plus <- function(qx_data) {
       results[[length(results) + 1]] <- data.table::data.table(
         year = yr,
         sex = sx,
-        q100_plus = q100_plus
+        qx = q100_plus
       )
     }
   }
@@ -4103,7 +4135,7 @@ calculate_qx_with_infant_mortality <- function(mx_total,
   # 3. Calculate q100+ using TR extrapolation method
   # We need q98 and q99 from the mx-derived series
   q100_agg <- calculate_tr_q100_plus(qx_from_mx)
-  q100_formatted <- q100_agg[, .(year, age = 100L, sex, qx = q100_plus)]
+  q100_formatted <- q100_agg[, .(year, age = 100L, sex, qx)]
 
   # Combine all parts
   result <- data.table::rbindlist(list(q0_formatted, qx_ages1_99, q100_formatted), use.names = TRUE)
