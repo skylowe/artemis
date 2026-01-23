@@ -3949,43 +3949,176 @@ update_100plus_tracker <- function(tracker, target_year, new_100_male, new_100_f
 # HELPER FUNCTIONS FOR TARGET FACTORIES
 # =============================================================================
 
-#' Calculate qx with proper infant mortality (q0)
+#' Calculate TR-method aggregate q100+
 #'
 #' @description
-#' Calculates age-specific death probabilities (qx) from central death rates (mx),
-#' with proper infant mortality (q0) calculated from deaths/births ratio.
-#' TR2025 methodology requires q0 = infant deaths / births, not mx conversion.
+#' Calculates the aggregate probability of death for the open-ended 100+ age group
+#' using the Trustees Report extrapolation methodology.
+#'
+#' @param qx_data data.table with columns year, age, sex, qx (must include ages 98, 99)
+#'
+#' @return data.table with columns year, sex, q100_plus
+#'
+#' @details
+#' Per TR2025 methodology:
+#' 1. Extrapolate qx for single ages 100-119 using growth formulas based on q98 and q99.
+#' 2. Calculate life table functions (lx, Tx) for this extrapolated range.
+#' 3. Calculate aggregate q100+ = 1 - T(101) / T(100).
+#'
+#' Extrapolation formulas:
+#' For x = 100..104:
+#' qx = q(x-1) * ( (q99/q98) * (104-x)/5 + k * (x-99)/5 )
+#' Where k = 1.05 for males, 1.06 for females.
+#'
+#' For x = 105+:
+#' qx = k * q(x-1) (capped at 1.0)
+#'
+#' @export
+calculate_tr_q100_plus <- function(qx_data) {
+  checkmate::assert_data_table(qx_data)
+  checkmate::assert_names(names(qx_data), must.include = c("year", "age", "sex", "qx"))
+
+  dt <- data.table::copy(qx_data)
+  years <- unique(dt$year)
+
+  results <- list()
+
+  for (yr in years) {
+    for (sx in c("male", "female")) {
+      # Get q98 and q99
+      q98 <- dt[year == yr & sex == sx & age == 98, qx]
+      q99 <- dt[year == yr & sex == sx & age == 99, qx]
+
+      if (length(q98) == 0 || length(q99) == 0) next
+
+      # Set growth factor k
+      k <- if (sx == "male") 1.05 else 1.06
+
+      # Extrapolate ages 100-120
+      q_extrap <- numeric(21) # 100 to 120
+      prev_q <- q99
+
+      for (i in 1:21) {
+        age <- 99 + i
+
+        if (age <= 104) {
+          # Blended growth rate
+          rate <- (q99/q98) * ((104 - age)/5) + k * ((age - 99)/5)
+          q_val <- prev_q * rate
+        } else {
+          # Constant growth rate
+          q_val <- prev_q * k
+        }
+
+        # Cap at 1.0
+        q_val <- min(q_val, 1.0)
+        q_extrap[i] <- q_val
+        prev_q <- q_val
+      }
+
+      # Calculate life table functions for extrapolated ages
+      # We only need relative lx, so start with l100 = 100000
+      lx <- numeric(22) # 100 to 121
+      lx[1] <- 100000
+
+      # Calculate lx
+      for (i in 1:21) {
+        lx[i+1] <- lx[i] * (1 - q_extrap[i])
+      }
+
+      # Calculate Lx
+      Lx <- numeric(21)
+      for (i in 1:21) {
+        # Standard approximation Lx = (lx + lx+1)/2
+        Lx[i] <- (lx[i] + lx[i+1]) / 2
+      }
+
+      # Calculate Tx
+      # T100 = sum(Lx[1:end])
+      # T101 = sum(Lx[2:end])
+      T100 <- sum(Lx)
+      T101 <- sum(Lx[2:21])
+
+      # Calculate q100+ = 1 - T101/T100
+      if (T100 > 0) {
+        q100_plus <- 1 - T101/T100
+      } else {
+        q100_plus <- 1.0
+      }
+
+      results[[length(results) + 1]] <- data.table::data.table(
+        year = yr,
+        sex = sx,
+        q100_plus = q100_plus
+      )
+    }
+  }
+
+  data.table::rbindlist(results)
+}
+
+#' Calculate qx with proper infant mortality (q0) and TR 100+ method
+#'
+#' @description
+#' Calculates age-specific death probabilities (qx) from central death rates (mx).
+#' - Uses separation factor method for infant mortality (q0).
+#' - Uses TR extrapolation method for aggregate 100+ mortality (q100+).
 #'
 #' @param mx_total data.table with columns year, age, sex, mx
-#' @param deaths_raw data.table with columns year, age, sex, deaths
-#' @param births_by_sex data.table with columns year, sex, births
-#' @param population data.table for filtering years (needs column year)
+#' @param infant_deaths_detailed data.table with detailed infant deaths (age units)
+#' @param monthly_births data.table with monthly births
+#' @param population data.table for filtering years
 #' @param max_age Maximum age to include (default: 100)
 #'
 #' @return data.table with columns year, age, sex, qx
 #'
 #' @export
-calculate_qx_with_infant_mortality <- function(mx_total, deaths_raw, births_by_sex,
-                                                population, max_age = 100) {
-  # Get available years from population data
+calculate_qx_with_infant_mortality <- function(mx_total,
+                                               infant_deaths_detailed,
+                                               monthly_births,
+                                               population,
+                                               max_age = 100) {
+  # Get available years
   pop_years <- unique(population$year)
+  years_to_calc <- intersect(unique(mx_total$year), pop_years)
 
-  # Filter mx to available years and convert to qx for ages 1+
-  mx_filtered <- mx_total[year %in% pop_years]
+  # 1. Calculate qx for ages 1-99 from mx
+  mx_filtered <- mx_total[year %in% years_to_calc]
   qx_from_mx <- convert_mx_to_qx(mx_filtered, max_age = max_age)
+  qx_ages1_99 <- qx_from_mx[age >= 1 & age <= 99, .(year, age, sex, qx)]
 
-  # Calculate q0 directly from deaths/births
-  infant_deaths <- deaths_raw[age == 0 & year %in% pop_years,
-                              .(deaths = sum(deaths)), by = .(year, sex)]
-  q0 <- merge(infant_deaths, births_by_sex, by = c("year", "sex"), all.x = TRUE)
-  q0 <- q0[!is.na(births)]
-  q0[, qx := deaths / births]
-  q0 <- q0[, .(year, age = 0L, sex, qx)]
+  # 2. Calculate q0 using separation factor method
+  # Filter data to relevant years
+  infant_d <- infant_deaths_detailed[year %in% years_to_calc]
+  births_m <- monthly_births[year %in% (years_to_calc - 1) | year %in% years_to_calc]
 
-  # Combine q0 with qx for ages 1+
-  qx_ages1plus <- qx_from_mx[age >= 1, .(year, age, sex, qx)]
-  result <- data.table::rbindlist(list(q0, qx_ages1plus), use.names = TRUE)
+  q0_series <- calculate_infant_mortality_series(
+    infant_deaths = infant_d,
+    monthly_births = births_m,
+    years = years_to_calc,
+    method = "separation_factor"
+  )
+  q0_formatted <- q0_series[, .(year, age = 0L, sex, qx = q0)]
+
+  # 3. Calculate q100+ using TR extrapolation method
+  # We need q98 and q99 from the mx-derived series
+  q100_agg <- calculate_tr_q100_plus(qx_from_mx)
+  q100_formatted <- q100_agg[, .(year, age = 100L, sex, qx = q100_plus)]
+
+  # Combine all parts
+  result <- data.table::rbindlist(list(q0_formatted, qx_ages1_99, q100_formatted), use.names = TRUE)
   data.table::setorder(result, year, sex, age)
+
+  # Report status
+  cli::cli_alert_success(
+    "Calculated qx for {length(unique(result$year))} years"
+  )
+  cli::cli_alert_info(
+    "- Used separation factor method for q0"
+  )
+  cli::cli_alert_info(
+    "- Used TR extrapolation method for q100+"
+  )
 
   result
 }

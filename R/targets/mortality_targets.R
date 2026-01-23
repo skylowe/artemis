@@ -68,6 +68,20 @@ create_mortality_targets <- function() {
       cue = targets::tar_cue(mode = "thorough")
     ),
 
+    # Detailed infant deaths for q0 calculation
+    targets::tar_target(
+      nchs_infant_deaths_detailed,
+      load_infant_deaths(years = 1968:2023),
+      cue = targets::tar_cue(mode = "thorough")
+    ),
+
+    # Monthly births for q0 calculation
+    targets::tar_target(
+      nchs_births_monthly,
+      load_monthly_births(years = 1967:2024),
+      cue = targets::tar_cue(mode = "thorough")
+    ),
+
     # ==========================================================================
     # MORTALITY SUBPROCESS TARGETS
     # ==========================================================================
@@ -127,8 +141,8 @@ create_mortality_targets <- function() {
       mortality_qx_unadjusted,
       calculate_qx_with_infant_mortality(
         mx_total = mortality_mx_total,
-        deaths_raw = nchs_deaths_raw,
-        births_by_sex = nchs_births_by_sex,
+        infant_deaths_detailed = nchs_infant_deaths_detailed,
+        monthly_births = nchs_births_monthly,
         population = census_population_both,
         max_age = 100
       )
