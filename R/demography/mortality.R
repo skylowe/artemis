@@ -3239,13 +3239,12 @@ calculate_infant_mortality <- function(infant_deaths, monthly_births, year,
       deaths_current <- sum(deaths_with_sep$deaths * deaths_with_sep$sep_factor)
       deaths_prev <- sum(deaths_with_sep$deaths * (1 - deaths_with_sep$sep_factor))
 
-      # Exposure calculation (sex-specific births)
-      # E0 = B_current * f + B_prev * (1 - f_prev_cohort)
-      # Simplified: use sex-specific births as primary exposure
-      exposure <- births_sex
-
-      # q0 for current year birth cohort
-      q0 <- deaths_current / exposure
+      # Calculate period q0 by summing partial probabilities
+      # q0 = (deaths_current / births_current) + (deaths_prev / births_prev)
+      term1 <- deaths_current / births_sex
+      term2 <- if (births_prev_sex > 0) deaths_prev / births_prev_sex else 0
+      
+      q0 <- term1 + term2
 
       results[[length(results) + 1]] <- data.table::data.table(
         year = year,
@@ -3253,8 +3252,9 @@ calculate_infant_mortality <- function(infant_deaths, monthly_births, year,
         q0 = q0,
         deaths = total_deaths,
         deaths_current_cohort = deaths_current,
+        deaths_prev_cohort = deaths_prev,
         births = births_sex,
-        exposure = exposure,
+        births_prev = births_prev_sex,
         method = "separation_factor"
       )
     }
