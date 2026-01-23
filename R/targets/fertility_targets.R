@@ -152,18 +152,20 @@ create_fertility_targets <- function() {
     ),
 
     # Step 5: Calculate interpolation weights
+    # Note: ultimate_year (for age 30) is derived from fertility_ultimate_years table
     targets::tar_target(
       fertility_weights,
       calculate_interpolation_weights(
         years = config_assumptions$metadata$projection_period$start_year:
                 config_assumptions$metadata$projection_period$end_year,
         base_year = config_assumptions$fertility$rate_base_year,
-        ultimate_year = config_assumptions$fertility$age30_ultimate_year,
+        ultimate_year = fertility_ultimate_years[age == config_assumptions$fertility$reference_age, ultimate_year],
         exponent = config_assumptions$fertility$weight_exponent
       )
     ),
 
     # Step 6: Solve for ultimate age-30 rate
+    # Note: age30_ultimate_year is derived from fertility_ultimate_years table
     targets::tar_target(
       fertility_ultimate_age30,
       solve_ultimate_age30_rate(
@@ -173,7 +175,7 @@ create_fertility_targets <- function() {
         trend_factors = fertility_trend_factors,
         ultimate_years = fertility_ultimate_years,
         base_year = config_assumptions$fertility$rate_base_year,
-        age30_ultimate_year = config_assumptions$fertility$age30_ultimate_year,
+        age30_ultimate_year = fertility_ultimate_years[age == config_assumptions$fertility$reference_age, ultimate_year],
         weight_exponent = config_assumptions$fertility$weight_exponent
       )
     ),

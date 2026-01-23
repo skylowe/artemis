@@ -22,10 +22,10 @@ fertility:
   reference_age: 30
   # Ultimate attainment years
   projection_start_year: 2025
-  # TR2025: Ultimate period TFR reached in 2045
-  ultimate_year: 2045
-  # TR2025: Age 30 reaches ultimate in 2036
-  age30_ultimate_year: 2036
+  # TR2025: Year when oldest fertility age (49) reaches ultimate rate
+  # Formula: u_x = 2025 + (x-14) * (2050-2025) / (49-14)
+  # Age 30 reaches ultimate in 2036 (derived from this formula)
+  ultimate_year: 2050
   # Interpolation weight exponent (TR2025 uses 1.5)
   # 1.0 = linear, >1 = front-loaded (faster initial change)
   weight_exponent: 1.5

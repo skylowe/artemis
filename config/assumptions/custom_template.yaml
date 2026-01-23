@@ -26,8 +26,9 @@ fertility:
 
   # Ultimate attainment years
   projection_start_year: 2025
+  # Year when oldest fertility age (49) reaches ultimate rate
+  # Age 30's ultimate year (2036) is derived from the formula
   ultimate_year: 2050
-  age30_ultimate_year: 2036
 
   # Interpolation weight exponent (1.0 = linear, >1 = convex/front-loaded)
   weight_exponent: 1.5
