@@ -102,10 +102,10 @@ create_projected_population_targets <- function() {
       )
     ),
 
-    # Age-last-birthday qx
+    # Age-last-birthday qx (per TR2025 Section 1.2.c, applies to all ages 0-99 and 100+)
     targets::tar_target(
       qx_age_last_birthday,
-      calculate_age_last_birthday_qx(period_life_table = tr2025_period_life_tables, min_age = 85, max_age = 99)
+      calculate_age_last_birthday_qx(period_life_table = tr2025_period_life_tables, min_age = 0, max_age = 99)
     ),
 
     # Combined mortality qx

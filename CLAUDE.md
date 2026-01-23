@@ -34,6 +34,11 @@ R-based replication of the SSA Office of the Chief Actuary's long-range OASDI pr
   - Ratio preserved from last historical year (e.g., 2023: male=1.54, female=1.63)
 - **q2-99:** Standard formula qx = mx / (1 + 0.5*mx)
 - **q100+:** TR extrapolation method with k=1.05 (male), k=1.06 (female)
+- **Age-last-birthday qx conversion:** Per TR2025 Section 1.2.c, all qx used for population projection are converted to age-last-birthday basis:
+  - qx_ALB = 1 - Lx+1/Lx for ages 0-99
+  - q100_ALB = 1 - T101/T100 for age 100+
+  - Applied to all ages (not just 85+) per TR methodology
+  - Key functions: `calculate_age_last_birthday_qx()`, `apply_age_last_birthday_qx()`
 - **COVID adjustments:** Applied to qx for 2024-2025 per TR2025 Table
 - **Key functions:** `calculate_4m1()`, `calculate_q1_tr_method()`, `calculate_tr_q100_plus()`
 

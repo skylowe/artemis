@@ -5880,12 +5880,12 @@ combine_mortality_qx_for_projection <- function(mortality_qx_projected,
     use.names = TRUE
   )
 
-  # Apply age-last-birthday qx for ages 85+ (Fix 1)
-  cli::cli_alert_info("Applying age-last-birthday qx adjustment for ages 85+")
+  # Apply age-last-birthday qx for all ages (per TR2025 Section 1.2.c)
+  cli::cli_alert_info("Applying age-last-birthday qx adjustment for ages 0-100 (per TR2025 Section 1.2.c)")
   combined_qx <- apply_age_last_birthday_qx(
     mortality_qx = combined_qx,
     qx_alb = qx_age_last_birthday,
-    min_age = 85
+    min_age = 0
   )
 
   combined_qx

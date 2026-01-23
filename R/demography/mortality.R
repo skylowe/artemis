@@ -600,24 +600,27 @@ load_tr_period_life_tables <- function(
 #'
 #' @description
 #' TR2025's population projection uses age-last-birthday qx, not exact-age qx.
-#' This function converts using the formulas from TR2025 documentation:
+#' This function converts using the formulas from TR2025 documentation (Section 1.2.c):
 #'   - For ages 0-99: qx = 1 - L_{x+1}/L_x
 #'   - For age 100+:  q100 = 1 - T_{101}/T_{100}
 #'
 #' @param period_life_table data.table: output from load_tr_period_life_tables()
-#' @param min_age Integer: minimum age to convert (default: 85)
+#' @param min_age Integer: minimum age to convert (default: 0, per TR methodology)
 #' @param max_age Integer: maximum single age before 100+ group (default: 99)
 #'
 #' @return data.table with columns: year, age, sex, qx_alb (age-last-birthday qx)
 #'
 #' @details
-#' For ages below min_age, the exact-age qx is close enough to age-last-birthday qx.
-#' The difference becomes significant at older ages (5-10% for ages 85+).
+#' Per TR2025 Section 1.2.c: "The values of qx used in projecting the population
+#' are based on age last birthday... values for qx representing age last birthday
+#' are derived as follows: qx = 1 - Lx+1/Lx for ages 0 to 99"
+#'
+#' This conversion applies to all ages 0-99 and 100+, not just older ages.
 #'
 #' @export
 calculate_age_last_birthday_qx <- function(
     period_life_table,
-    min_age = 85,
+    min_age = 0,
     max_age = 99
 ) {
   checkmate::assert_data_table(period_life_table)
@@ -662,7 +665,7 @@ calculate_age_last_birthday_qx <- function(
   result <- data.table::rbindlist(results)
   data.table::setorder(result, year, sex, age)
 
-  # Report the difference
+  # Report the difference from exact-age qx
   comparison <- merge(
     result,
     lt[age >= min_age & age <= 100, .(year, age, sex, qx_exact)],
@@ -670,15 +673,23 @@ calculate_age_last_birthday_qx <- function(
   )
   comparison[, diff_pct := (qx_alb - qx_exact) / qx_exact * 100]
 
-  mean_diff_85_99 <- comparison[age >= 85 & age <= 99, mean(diff_pct)]
-  mean_diff_100 <- comparison[age == 100, mean(diff_pct)]
+  # Calculate mean differences by age group
+  mean_diff_0_84 <- comparison[age >= 0 & age <= 84, mean(diff_pct, na.rm = TRUE)]
+  mean_diff_85_99 <- comparison[age >= 85 & age <= 99, mean(diff_pct, na.rm = TRUE)]
+  mean_diff_100 <- comparison[age == 100, mean(diff_pct, na.rm = TRUE)]
 
   cli::cli_alert_success(
-    "Calculated age-last-birthday qx for ages {min_age}-100"
+    "Calculated age-last-birthday qx for ages {min_age}-100 (per TR2025 Section 1.2.c)"
   )
-  cli::cli_alert_info(
-    "Mean difference from exact-age qx: ages 85-99 = {round(mean_diff_85_99, 1)}%, age 100+ = {round(mean_diff_100, 1)}%"
-  )
+  if (min_age == 0) {
+    cli::cli_alert_info(
+      "Mean diff from exact-age qx: ages 0-84 = {round(mean_diff_0_84, 1)}%, ages 85-99 = {round(mean_diff_85_99, 1)}%, age 100+ = {round(mean_diff_100, 1)}%"
+    )
+  } else {
+    cli::cli_alert_info(
+      "Mean diff from exact-age qx: ages 85-99 = {round(mean_diff_85_99, 1)}%, age 100+ = {round(mean_diff_100, 1)}%"
+    )
+  }
 
   result
 }
@@ -689,9 +700,12 @@ calculate_age_last_birthday_qx <- function(
 #' Replaces exact-age qx values with age-last-birthday qx for specified ages.
 #' This aligns our mortality data with TR2025's population projection methodology.
 #'
+#' Per TR2025 Section 1.2.c, all qx values used for population projection should
+#' be age-last-birthday qx, converted using the formula qx = 1 - Lx+1/Lx.
+#'
 #' @param mortality_qx data.table: mortality qx with columns year, age, sex, qx
 #' @param qx_alb data.table: age-last-birthday qx from calculate_age_last_birthday_qx()
-#' @param min_age Integer: minimum age to replace (default: 85)
+#' @param min_age Integer: minimum age to replace (default: 0, per TR methodology)
 #'
 #' @return data.table with qx values replaced for ages >= min_age
 #'
@@ -699,7 +713,7 @@ calculate_age_last_birthday_qx <- function(
 apply_age_last_birthday_qx <- function(
     mortality_qx,
     qx_alb,
-    min_age = 85
+    min_age = 0
 ) {
   checkmate::assert_data_table(mortality_qx)
   checkmate::assert_data_table(qx_alb)
