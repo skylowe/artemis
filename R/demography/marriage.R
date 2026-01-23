@@ -1644,16 +1644,18 @@ calculate_historical_period <- function(base_margrid,
                                           acs_grids,
                                           nchs_us_totals,
                                           unmarried_pop_grid,
+                                          acs_start = 2008,
+                                          acs_end = 2022,
                                           ss_area_factor = NULL,
                                           smooth = TRUE,
                                           cache_dir = here::here("data/cache/marriage"),
                                           force_recompute = FALSE) {
   # Check for cached results
-  cache_file <- file.path(cache_dir, "historical_rates_1989_2022.rds")
+  cache_file <- file.path(cache_dir, sprintf("historical_rates_1989_%d.rds", acs_end))
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
 
   if (file.exists(cache_file) && !force_recompute) {
-    cli::cli_alert_success("Loading cached historical rates (1989-2022)")
+    cli::cli_alert_success("Loading cached historical rates (1989-{acs_end})")
     cached <- readRDS(cache_file)
 
     # Verify cache integrity
@@ -1666,7 +1668,7 @@ calculate_historical_period <- function(base_margrid,
     cli::cli_warn("Cache file corrupt, recomputing...")
   }
 
-  cli::cli_h1("Phase 6D: Historical Period (1989-2022)")
+  cli::cli_h1("Phase 6D: Historical Period (1989-{acs_end})")
 
   # =========================================================================
   # STEP 1: 1989-1995 from NCHS subset
@@ -1681,14 +1683,15 @@ calculate_historical_period <- function(base_margrid,
   )
 
   # =========================================================================
-  # STEP 2: 2008-2022 from ACS
+  # STEP 2: ACS historical rates
   # =========================================================================
-  # Filter ACS grids to 2008+
-  acs_grids_2008 <- acs_grids[as.integer(names(acs_grids)) >= 2008]
+  # Filter ACS grids to configured range
+  acs_years <- as.integer(names(acs_grids))
+  acs_grids_filtered <- acs_grids[acs_years >= acs_start & acs_years <= acs_end]
 
-  result_2008_2022 <- calculate_historical_rates_2008_2022(
+  result_acs <- calculate_historical_rates_2008_2022(
     base_margrid = base_margrid,
-    acs_grids = acs_grids_2008,
+    acs_grids = acs_grids_filtered,
     nchs_us_totals = nchs_us_totals,
     unmarried_pop_grid = unmarried_pop_grid,
     ss_area_factor = ss_area_factor,
@@ -1696,22 +1699,23 @@ calculate_historical_period <- function(base_margrid,
   )
 
   # =========================================================================
-  # STEP 3: 1996-2007 interpolation
+  # STEP 3: Interpolation between NCHS subset end (1995) and ACS start
   # =========================================================================
-  # Get 1995 grid from step 1 and 2008 grid from step 2
+  # Get 1995 grid from step 1 and first ACS grid from step 2
   grid_1995 <- result_1989_1995$rates[["1995"]]
-  grid_2008 <- result_2008_2022$rates[["2008"]]
+  grid_acs_start <- result_acs$rates[[as.character(acs_start)]]
 
-  if (is.null(grid_1995) || is.null(grid_2008)) {
-    cli::cli_abort("Need both 1995 and 2008 grids for interpolation")
+  if (is.null(grid_1995) || is.null(grid_acs_start)) {
+    cli::cli_abort("Need both 1995 and {acs_start} grids for interpolation")
   }
 
+  interpolation_years <- 1996:(acs_start - 1)
   result_interpolated <- interpolate_marriage_grids(
     grid_start = grid_1995,
-    grid_end = grid_2008,
+    grid_end = grid_acs_start,
     year_start = 1995,
-    year_end = 2008,
-    years = 1996:2007,
+    year_end = acs_start,
+    years = interpolation_years,
     nchs_us_totals = nchs_us_totals,
     unmarried_pop_grid = unmarried_pop_grid,
     ss_area_factor = ss_area_factor
@@ -1723,7 +1727,7 @@ calculate_historical_period <- function(base_margrid,
   all_rates <- c(
     result_1989_1995$rates,
     result_interpolated$rates,
-    result_2008_2022$rates
+    result_acs$rates
   )
 
   # Sort by year
@@ -1733,37 +1737,39 @@ calculate_historical_period <- function(base_margrid,
   all_amr <- data.table::rbindlist(list(
     result_1989_1995$amr,
     result_interpolated$amr,
-    result_2008_2022$amr
+    result_acs$amr
   ))
   data.table::setorder(all_amr, year)
 
   # =========================================================================
   # SUMMARY
   # =========================================================================
+  interp_label <- sprintf("1996-%d", acs_start - 1)
+  acs_label <- sprintf("%d-%d", acs_start, acs_end)
   summary_stats <- data.table::data.table(
-    period = c("1989-1995", "1996-2007", "2008-2022", "Total"),
+    period = c("1989-1995", interp_label, acs_label, "Total"),
     n_years = c(
       length(result_1989_1995$rates),
       length(result_interpolated$rates),
-      length(result_2008_2022$rates),
+      length(result_acs$rates),
       length(all_rates)
     ),
     mean_amr = c(
       mean(result_1989_1995$amr$amr, na.rm = TRUE),
       mean(result_interpolated$amr$amr, na.rm = TRUE),
-      mean(result_2008_2022$amr$amr, na.rm = TRUE),
+      mean(result_acs$amr$amr, na.rm = TRUE),
       mean(all_amr$amr, na.rm = TRUE)
     ),
     min_amr = c(
       min(result_1989_1995$amr$amr, na.rm = TRUE),
       min(result_interpolated$amr$amr, na.rm = TRUE),
-      min(result_2008_2022$amr$amr, na.rm = TRUE),
+      min(result_acs$amr$amr, na.rm = TRUE),
       min(all_amr$amr, na.rm = TRUE)
     ),
     max_amr = c(
       max(result_1989_1995$amr$amr, na.rm = TRUE),
       max(result_interpolated$amr$amr, na.rm = TRUE),
-      max(result_2008_2022$amr$amr, na.rm = TRUE),
+      max(result_acs$amr$amr, na.rm = TRUE),
       max(all_amr$amr, na.rm = TRUE)
     )
   )
@@ -2617,6 +2623,10 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
                                      ultimate_amr = 4000,
                                      ultimate_year = 2047,
                                      end_year = 2099,
+                                     min_age = 14,
+                                     max_age = 100,
+                                     acs_start = 2008,
+                                     acs_end = 2022,
                                      include_same_sex = TRUE,
                                      include_prior_status = TRUE,
                                      cache_dir = here::here("data/cache/marriage"),
@@ -2663,8 +2673,8 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
   standard_pop_grid <- build_standard_population_grid(
     unmarried_pop = std_pop,
     std_year = 2010,
-    min_age = MARGRID_MIN_AGE,
-    max_age = MARGRID_MAX_AGE
+    min_age = min_age,
+    max_age = max_age
   )
 
   # =========================================================================
@@ -2678,6 +2688,8 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
     acs_grids = acs_grids,
     nchs_us_totals = nchs_us_totals,
     unmarried_pop_grid = standard_pop_grid,
+    acs_start = acs_start,
+    acs_end = acs_end,
     cache_dir = cache_dir,
     force_recompute = force_recompute
   )

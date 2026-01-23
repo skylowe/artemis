@@ -92,7 +92,7 @@ create_marriage_divorce_targets <- function() {
         ss_result <- calculate_same_sex_fraction(
           same_sex_grids = acs_same_sex_grids,
           opposite_sex_grids = acs_marriage_grids,
-          years = 2015:2019
+          years = config_assumptions$marriage$same_sex$reference_years
         )
         ss_result$overall_fraction
       }
@@ -117,6 +117,10 @@ create_marriage_divorce_targets <- function() {
         ultimate_amr = config_assumptions$marriage$ultimate_amr,
         ultimate_year = config_assumptions$marriage$ultimate_year,
         end_year = config_assumptions$metadata$projection_period$end_year,
+        min_age = config_assumptions$marriage$min_age,
+        max_age = config_assumptions$marriage$max_age,
+        acs_start = config_assumptions$marriage$acs_start,
+        acs_end = config_assumptions$marriage$acs_end,
         include_same_sex = TRUE,
         include_prior_status = TRUE,
         force_recompute = FALSE
