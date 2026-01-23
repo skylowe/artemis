@@ -447,64 +447,6 @@ projected_population:
     children_max: 18       # Maximum age for "children" category
     marriage_min: 14       # Minimum marriage age
 
-  # Marital status categories
-  marital_statuses:
-    # For total population (4 categories)
-    total_population:
-      - single
-      - married
-      - widowed
-      - divorced
-    # For CNI population (5 categories - includes separated)
-    cni_population:
-      - single
-      - married_spouse_present
-      - separated
-      - widowed
-      - divorced
-
-  # Parent fate categories (for children ages 0-18)
-  parent_fates:
-    - both_alive
-    - only_father_alive
-    - only_mother_alive
-    - both_deceased
-
-  # Parent age groups for children classification
-  parent_age_groups:
-    - [14, 24]
-    - [25, 34]
-    - [35, 44]
-    - [45, 54]
-    - [55, 64]
-    - [65, 100]
-
-  # Armed forces assumptions
-  # TR2025: "subtracting an assumed constant number of armed forces overseas"
-  armed_forces:
-    hold_constant: true
-    reference_year: 2022
-
-  # CNI/civilian ratios
-  # TR2025: "applying the ratios of CNI population to civilian population
-  # by year, sex, and single year of age in the starting year"
-  cni_ratios:
-    hold_constant: true
-    reference_year: 2022
-
-  # Mortality differentials by marital status
-  # TR2025: "relative differences in death rates by marital status observed
-  # for that age and sex during the calendar years 2015-2019"
-  mortality_differentials:
-    reference_years: [2015, 2016, 2017, 2018, 2019]
-    apply_to_projection: true
-
-  # Children per couple projection parameters
-  children_regression:
-    historical_years: [1962, 2022]
-    projection_method: "linear"
-    trend_years: 20  # Last N years for trend calculation
-
 # Data source configuration
 data_sources:
   historical_birth_data:

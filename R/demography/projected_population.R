@@ -1023,6 +1023,27 @@ get_projected_population_config <- function(config = NULL) {
       if (!is.null(pp$projection_start)) defaults$projection_start <- pp$projection_start
       if (!is.null(pp$projection_end)) defaults$projection_end <- pp$projection_end
       if (!is.null(pp$extended_end)) defaults$extended_end <- pp$extended_end
+      if (!is.null(pp$reference_date)) defaults$reference_date <- pp$reference_date
+
+      # Population status
+      if (!is.null(pp$population_status)) {
+        ps <- pp$population_status
+        if (!is.null(ps$gay_percent)) defaults$population_status$gay_percent <- ps$gay_percent
+        if (!is.null(ps$lesbian_percent)) defaults$population_status$lesbian_percent <- ps$lesbian_percent
+        if (!is.null(ps$same_sex_start_year)) defaults$population_status$same_sex_start_year <- ps$same_sex_start_year
+      }
+
+      # Age ranges
+      if (!is.null(pp$ages)) {
+        ages <- pp$ages
+        if (!is.null(ages$min_age)) defaults$ages$min_age <- ages$min_age
+        if (!is.null(ages$max_age)) defaults$ages$max_age <- ages$max_age
+        if (!is.null(ages$max_age_group)) defaults$ages$max_age_group <- ages$max_age_group
+        if (!is.null(ages$mothers_min)) defaults$ages$mothers_min <- ages$mothers_min
+        if (!is.null(ages$mothers_max)) defaults$ages$mothers_max <- ages$mothers_max
+        if (!is.null(ages$children_max)) defaults$ages$children_max <- ages$children_max
+        if (!is.null(ages$marriage_min)) defaults$ages$marriage_min <- ages$marriage_min
+      }
     }
   }
 
