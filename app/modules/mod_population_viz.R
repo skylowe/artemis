@@ -145,11 +145,11 @@ mod_population_viz_server <- function(id, rv) {
     pop_data <- reactive({
       req(rv$active_data$projected_population)
 
-      year <- input$year
-      pop <- rv$active_data$projected_population[year == !!year]
+      selected_year <- input$year
+      pop <- rv$active_data$projected_population[year == selected_year]
 
       if (input$show_marital && !is.null(rv$active_data$projected_marital_population)) {
-        marital <- rv$active_data$projected_marital_population[year == !!year]
+        marital <- rv$active_data$projected_marital_population[year == selected_year]
         marital <- marital[marital_status %in% input$marital_statuses]
         return(list(simple = pop, marital = marital))
       }

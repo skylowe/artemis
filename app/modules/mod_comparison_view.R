@@ -327,7 +327,7 @@ mod_comparison_view_server <- function(id, rv) {
       req(input$scenarios)
       req(input$metric == "population")
 
-      year <- input$pyramid_year
+      selected_year <- input$pyramid_year
       pyramids <- list()
 
       for (scenario_id in input$scenarios) {
@@ -343,7 +343,7 @@ mod_comparison_view_server <- function(id, rv) {
 
         if (is.null(data)) next
 
-        pop <- data[year == !!year]
+        pop <- data[year == selected_year]
         if (nrow(pop) == 0) next
 
         # Aggregate by 5-year age groups

@@ -86,20 +86,20 @@ server <- function(input, output, session) {
     req(rv$active_data$projected_population)
 
     pop <- rv$active_data$projected_population
-    year <- input$dashboard_year %||% 2050
+    selected_year <- input$dashboard_year %||% 2050
 
-    pop_year <- pop[year == !!year]
+    pop_year <- pop[year == selected_year]
     total <- sum(pop_year$population, na.rm = TRUE)
 
     births <- rv$active_data$projected_births
     deaths <- rv$active_data$projected_deaths
 
     births_year <- if (!is.null(births)) {
-      sum(births[year == !!year]$births, na.rm = TRUE)
+      sum(births[year == selected_year]$births, na.rm = TRUE)
     } else NA
 
     deaths_year <- if (!is.null(deaths)) {
-      sum(deaths[year == !!year]$deaths, na.rm = TRUE)
+      sum(deaths[year == selected_year]$deaths, na.rm = TRUE)
     } else NA
 
     tagList(
@@ -156,9 +156,9 @@ server <- function(input, output, session) {
     req(rv$active_data$projected_population)
 
     pop <- rv$active_data$projected_population
-    year <- input$dashboard_year %||% 2050
+    selected_year <- input$dashboard_year %||% 2050
 
-    pop_year <- pop[year == !!year]
+    pop_year <- pop[year == selected_year]
 
     # Group into 5-year age groups
     pop_year[, age_group := cut(

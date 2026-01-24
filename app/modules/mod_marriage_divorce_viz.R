@@ -193,7 +193,7 @@ mod_marriage_divorce_viz_server <- function(id, rv) {
         ggplotly(p) |> layout_artemis()
 
       } else if (chart_type == "heatmap") {
-        year <- input$heatmap_year
+        selected_year <- input$heatmap_year
         age_min <- input$age_range[1]
         age_max <- input$age_range[2]
 
@@ -202,7 +202,7 @@ mod_marriage_divorce_viz_server <- function(id, rv) {
           return(plotly_empty_message("Grid data not available"))
         }
 
-        grid <- data[year == !!year &
+        grid <- data[year == selected_year &
                      husband_age >= age_min & husband_age <= age_max &
                      wife_age >= age_min & wife_age <= age_max]
 
