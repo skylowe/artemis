@@ -135,9 +135,9 @@ mod_mortality_viz_server <- function(id, rv) {
 
     # Main chart
     output$main_chart <- renderPlotly({
-      req(rv$active_data$mortality_qx_for_projection)
+      req(rv$active_data$mortality_qx_projected)
 
-      qx <- rv$active_data$mortality_qx_for_projection
+      qx <- rv$active_data$mortality_qx_projected
       chart_type <- input$chart_type
       years <- seq(input$year_range[1], input$year_range[2])
 
@@ -295,9 +295,9 @@ mod_mortality_viz_server <- function(id, rv) {
 
     # Sex comparison chart
     output$sex_comparison <- renderPlotly({
-      req(rv$active_data$mortality_qx_for_projection)
+      req(rv$active_data$mortality_qx_projected)
 
-      qx <- rv$active_data$mortality_qx_for_projection
+      qx <- rv$active_data$mortality_qx_projected
       years <- seq(input$year_range[1], input$year_range[2])
       qx <- qx[year %in% years]
 
@@ -369,9 +369,9 @@ mod_mortality_viz_server <- function(id, rv) {
 
     # Data table
     output$data_table <- renderDT({
-      req(rv$active_data$mortality_qx_for_projection)
+      req(rv$active_data$mortality_qx_projected)
 
-      qx <- rv$active_data$mortality_qx_for_projection
+      qx <- rv$active_data$mortality_qx_projected
       years <- seq(input$year_range[1], input$year_range[2])
       qx <- qx[year %in% years]
 

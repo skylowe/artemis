@@ -118,9 +118,9 @@ mod_marriage_divorce_viz_server <- function(id, rv) {
     # Get data based on event type
     event_data <- reactive({
       if (input$event_type == "marriage") {
-        rv$active_data$marriage_projection
+        rv$active_data$marriage_amr_projected
       } else {
-        rv$active_data$divorce_projection
+        rv$active_data$divorce_adr_projected
       }
     })
 
@@ -148,7 +148,12 @@ mod_marriage_divorce_viz_server <- function(id, rv) {
         years <- seq(input$year_range[1], input$year_range[2])
 
         # Get rate column name based on data structure
-        if ("amr" %in% names(data)) {
+        # Handle both "amr"/"adr" and "projected_amr"/"projected_adr" column names
+        if ("projected_amr" %in% names(data) || "projected_adr" %in% names(data)) {
+          rate_col <- if (event_type == "marriage") "projected_amr" else "projected_adr"
+          rate_dt <- data[year %in% years, .(year, rate = get(rate_col))]
+          rate_dt <- unique(rate_dt[!is.na(rate)])
+        } else if ("amr" %in% names(data) || "adr" %in% names(data)) {
           rate_col <- if (event_type == "marriage") "amr" else "adr"
           rate_dt <- data[year %in% years, .(year, rate = get(rate_col))]
           rate_dt <- unique(rate_dt[!is.na(rate)])
@@ -273,7 +278,10 @@ mod_marriage_divorce_viz_server <- function(id, rv) {
       data <- event_data()
       req(data)
 
-      rate_col <- if ("amr" %in% names(data)) {
+      # Determine rate column name
+      rate_col <- if ("projected_amr" %in% names(data) || "projected_adr" %in% names(data)) {
+        if (input$event_type == "marriage") "projected_amr" else "projected_adr"
+      } else if ("amr" %in% names(data) || "adr" %in% names(data)) {
         if (input$event_type == "marriage") "amr" else "adr"
       } else "rate"
 
@@ -338,7 +346,11 @@ mod_marriage_divorce_viz_server <- function(id, rv) {
         data <- event_data()
         if (is.null(data)) return()
 
-        if ("amr" %in% names(data)) {
+        if ("projected_amr" %in% names(data) || "projected_adr" %in% names(data)) {
+          rate_col <- if (input$event_type == "marriage") "projected_amr" else "projected_adr"
+          rate_dt <- unique(data[, .(year, rate = get(rate_col))])
+          rate_dt <- rate_dt[!is.na(rate)]
+        } else if ("amr" %in% names(data) || "adr" %in% names(data)) {
           rate_col <- if (input$event_type == "marriage") "amr" else "adr"
           rate_dt <- unique(data[, .(year, rate = get(rate_col))])
           rate_dt <- rate_dt[!is.na(rate)]

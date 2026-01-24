@@ -93,7 +93,11 @@ mod_fertility_viz_server <- function(id, rv) {
     output$main_chart <- renderPlotly({
       req(rv$active_data$fertility_rates_complete)
 
-      rates <- rv$active_data$fertility_rates_complete
+      rates <- copy(rv$active_data$fertility_rates_complete)
+      # Normalize column name (data has birth_rate, we use rate)
+      if ("birth_rate" %in% names(rates) && !"rate" %in% names(rates)) {
+        setnames(rates, "birth_rate", "rate")
+      }
       chart_type <- input$chart_type
 
       if (chart_type == "tfr_ts") {
@@ -126,7 +130,11 @@ mod_fertility_viz_server <- function(id, rv) {
         }
 
         if (input$compare_baseline && !is.null(rv$baseline$fertility_rates_complete)) {
-          baseline_tfr <- rv$baseline$fertility_rates_complete[
+          baseline_rates <- copy(rv$baseline$fertility_rates_complete)
+          if ("birth_rate" %in% names(baseline_rates) && !"rate" %in% names(baseline_rates)) {
+            setnames(baseline_rates, "birth_rate", "rate")
+          }
+          baseline_tfr <- baseline_rates[
             year %in% years,
             .(tfr = sum(rate, na.rm = TRUE)),
             by = year
@@ -217,7 +225,10 @@ mod_fertility_viz_server <- function(id, rv) {
     output$data_table <- renderDT({
       req(rv$active_data$fertility_rates_complete)
 
-      rates <- rv$active_data$fertility_rates_complete
+      rates <- copy(rv$active_data$fertility_rates_complete)
+      if ("birth_rate" %in% names(rates) && !"rate" %in% names(rates)) {
+        setnames(rates, "birth_rate", "rate")
+      }
 
       if (input$chart_type == "tfr_ts") {
         tfr <- rates[, .(TFR = round(sum(rate, na.rm = TRUE), 3)), by = year]

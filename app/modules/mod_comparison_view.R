@@ -200,8 +200,9 @@ mod_comparison_view_server <- function(id, rv) {
           },
           "tfr" = {
             if (!is.null(data$fertility_rates_complete)) {
-              data$fertility_rates_complete[year %in% years,
-                .(value = sum(rate, na.rm = TRUE)), by = year]
+              fert <- copy(data$fertility_rates_complete)
+              rate_col <- if ("birth_rate" %in% names(fert)) "birth_rate" else "rate"
+              fert[year %in% years, .(value = sum(get(rate_col), na.rm = TRUE)), by = year]
             }
           },
           "dependency" = {

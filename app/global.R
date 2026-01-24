@@ -117,9 +117,9 @@ load_baseline_data <- function() {
     "projected_marital_population",
     "projected_cni_population",
     "fertility_rates_complete",
-    "mortality_qx_for_projection",
-    "marriage_projection",
-    "divorce_projection",
+    "mortality_qx_projected",
+    "marriage_amr_projected",
+    "divorce_adr_projected",
     "population_projection_summary"
   )
 
