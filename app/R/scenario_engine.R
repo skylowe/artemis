@@ -39,7 +39,7 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
   setwd(artemis_root)
   on.exit(setwd(old_wd), add = TRUE)
 
-  # Define key targets to run
+  # Define key targets to run (must match what global.R loads for baseline)
   targets_to_run <- c(
     "config_assumptions",
     "projected_population",
@@ -47,6 +47,11 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     "projected_deaths",
     "projected_net_immigration",
     "projected_marital_population",
+    "projected_cni_population",
+    "fertility_rates_complete",
+    "mortality_qx_projected",
+    "marriage_amr_projected",
+    "divorce_adr_projected",
     "population_projection_summary"
   )
 
@@ -61,6 +66,34 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
 
     # Get the store path
     store <- file.path(artemis_root, "_targets")
+
+    # Invalidate config and ALL dependent targets to force re-run with new config
+    # This includes intermediate targets that depend on config
+    report_progress(25, "Invalidating cached targets...")
+    targets_to_invalidate <- c(
+      "config_assumptions",
+      # Fertility chain
+      "fertility_rates_projected", "fertility_rates_complete", "fertility_rates_for_projection",
+      # Mortality chain
+      "mortality_qx_projected", "mortality_mx_projected",
+      # Immigration chain
+      "lpr_immigration_projected", "legal_emigration_projected",
+      "o_immigration_projection", "net_o_for_projection",
+      # Marriage/divorce chain
+      "marriage_amr_projected", "divorce_adr_projected",
+      # Final outputs
+      targets_to_run
+    )
+    tryCatch({
+      targets::tar_invalidate(
+        names = tidyselect::any_of(targets_to_invalidate),
+        store = store
+      )
+    }, error = function(e) {
+      # Ignore errors if targets don't exist yet
+    })
+
+    report_progress(30, "Running projection pipeline...")
 
     # Run incremental make
     targets::tar_make(
