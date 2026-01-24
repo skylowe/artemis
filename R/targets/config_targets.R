@@ -31,10 +31,18 @@ get_config_file <- function() {
     config_file <- "config/assumptions/tr2025.yaml"
     cli::cli_alert_info("Using default config: {.file {config_file}}")
     cli::cli_alert_info("Set {.envvar ARTEMIS_CONFIG} to use a different config file")
+    # Only use here::here for relative paths
+    return(here::here(config_file))
   } else {
     cli::cli_alert_success("Using config from {.envvar ARTEMIS_CONFIG}: {.file {config_file}}")
   }
-  here::here(config_file)
+  # If path is absolute (starts with / or drive letter), return as-is
+  # Otherwise use here::here to resolve relative to project root
+  if (startsWith(config_file, "/") || grepl("^[A-Za-z]:", config_file)) {
+    config_file
+  } else {
+    here::here(config_file)
+  }
 }
 
 #' Create configuration targets

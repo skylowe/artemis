@@ -134,7 +134,8 @@ mod_scenario_manager_ui <- function(id) {
 #' @param id Module namespace ID
 #' @param rv Reactive values from parent
 #' @param config_result Reactive with modified config from config editor
-mod_scenario_manager_server <- function(id, rv, config_result) {
+#' @param parent_session Parent Shiny session for tab navigation
+mod_scenario_manager_server <- function(id, rv, config_result, parent_session = NULL) {
   moduleServer(id, function(input, output, session) {
 
     # Track projection state
@@ -446,8 +447,9 @@ mod_scenario_manager_server <- function(id, rv, config_result) {
       }
 
       # Navigate to comparison tab
-      updateTabsetPanel(session$userData$parent_session, "main_navbar",
-                        selected = "Compare")
+      if (!is.null(parent_session)) {
+        updateTabsetPanel(parent_session, "main_navbar", selected = "Compare")
+      }
     })
   })
 }

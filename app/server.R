@@ -294,8 +294,8 @@ server <- function(input, output, session) {
   # Configuration editor
   config_result <- mod_config_editor_server("config_editor", rv)
 
-  # Scenario manager
-  mod_scenario_manager_server("scenario_manager", rv, config_result)
+  # Scenario manager (pass parent session for tab navigation)
+  mod_scenario_manager_server("scenario_manager", rv, config_result, parent_session = session)
 
   # Population visualization
   mod_population_viz_server("pop_viz", rv)
@@ -322,6 +322,21 @@ server <- function(input, output, session) {
   # ===========================================================================
   # Scenario Switching
   # ===========================================================================
+
+  # Update scenario dropdown when scenarios change
+
+  observe({
+    scenario_choices <- c("TR2025 Baseline" = "baseline")
+    if (length(rv$scenarios) > 0) {
+      scenario_choices <- c(
+        scenario_choices,
+        setNames(names(rv$scenarios), names(rv$scenarios))
+      )
+    }
+    updateSelectInput(session, "active_scenario",
+                      choices = scenario_choices,
+                      selected = input$active_scenario)
+  })
 
   observeEvent(input$active_scenario, {
     if (input$active_scenario == "baseline") {
