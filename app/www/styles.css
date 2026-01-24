@@ -1,0 +1,279 @@
+/* ARTEMIS Visualization Tool - Custom Styles */
+
+/* Root variables */
+:root {
+  --artemis-primary: #2C3E50;
+  --artemis-secondary: #95A5A6;
+  --artemis-success: #18BC9C;
+  --artemis-info: #3498DB;
+  --artemis-warning: #F39C12;
+  --artemis-danger: #E74C3C;
+  --artemis-light: #ECF0F1;
+  --artemis-dark: #2C3E50;
+}
+
+/* Navbar customization */
+.navbar {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.navbar-brand {
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+/* Card enhancements */
+.card {
+  border: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: box-shadow 0.2s ease;
+}
+
+.card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.card-header {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  font-weight: 600;
+}
+
+/* Sidebar styling */
+.sidebar {
+  background-color: #FAFAFA;
+  border-right: 1px solid var(--artemis-light);
+}
+
+.sidebar h5, .sidebar h6 {
+  color: var(--artemis-primary);
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+/* Slider customization */
+.irs--shiny .irs-bar {
+  background: var(--artemis-primary);
+}
+
+.irs--shiny .irs-handle {
+  border-color: var(--artemis-primary);
+}
+
+.irs--shiny .irs-from,
+.irs--shiny .irs-to,
+.irs--shiny .irs-single {
+  background: var(--artemis-primary);
+}
+
+/* Value boxes */
+.value-box {
+  transition: transform 0.2s ease;
+}
+
+.value-box:hover {
+  transform: translateY(-2px);
+}
+
+.value-box .value-box-value {
+  font-weight: 700;
+  font-size: 1.5rem;
+}
+
+/* Accordion styling */
+.accordion-button:not(.collapsed) {
+  background-color: rgba(44, 62, 80, 0.05);
+  color: var(--artemis-primary);
+}
+
+.accordion-button:focus {
+  box-shadow: none;
+  border-color: var(--artemis-primary);
+}
+
+/* Button styling */
+.btn-outline-primary {
+  border-color: var(--artemis-primary);
+  color: var(--artemis-primary);
+}
+
+.btn-outline-primary:hover {
+  background-color: var(--artemis-primary);
+  color: white;
+}
+
+/* Data table styling */
+.dataTables_wrapper {
+  font-size: 0.9rem;
+}
+
+.dataTables_wrapper .dataTables_paginate .paginate_button.current {
+  background: var(--artemis-primary) !important;
+  border-color: var(--artemis-primary) !important;
+  color: white !important;
+}
+
+/* Plotly chart containers */
+.plotly {
+  min-height: 300px;
+}
+
+.js-plotly-plot .plotly .modebar {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.js-plotly-plot:hover .plotly .modebar {
+  opacity: 1;
+}
+
+/* Loading overlay */
+.waiter-overlay {
+  background-color: rgba(44, 62, 80, 0.9) !important;
+}
+
+.waiter-overlay-content {
+  color: white;
+}
+
+/* Progress bar */
+.progress {
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  transition: width 0.3s ease;
+}
+
+/* Alert styling */
+.alert {
+  border: none;
+  border-radius: 8px;
+}
+
+.alert-info {
+  background-color: rgba(52, 152, 219, 0.1);
+  color: #2980B9;
+}
+
+.alert-success {
+  background-color: rgba(24, 188, 156, 0.1);
+  color: #16A085;
+}
+
+.alert-warning {
+  background-color: rgba(243, 156, 18, 0.1);
+  color: #D68910;
+}
+
+.alert-danger {
+  background-color: rgba(231, 76, 60, 0.1);
+  color: #C0392B;
+}
+
+/* Modal styling */
+.modal-header {
+  background-color: var(--artemis-primary);
+  color: white;
+  border-bottom: none;
+}
+
+.modal-header .btn-close {
+  filter: invert(1);
+}
+
+/* Form controls */
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--artemis-primary);
+  box-shadow: 0 0 0 0.2rem rgba(44, 62, 80, 0.15);
+}
+
+/* Checkbox and radio styling */
+.form-check-input:checked {
+  background-color: var(--artemis-primary);
+  border-color: var(--artemis-primary);
+}
+
+/* Tab navigation */
+.nav-tabs .nav-link {
+  color: var(--artemis-secondary);
+  border: none;
+  padding: 0.75rem 1rem;
+  font-weight: 500;
+}
+
+.nav-tabs .nav-link.active {
+  color: var(--artemis-primary);
+  border-bottom: 2px solid var(--artemis-primary);
+  background: transparent;
+}
+
+.nav-tabs .nav-link:hover:not(.active) {
+  color: var(--artemis-primary);
+  border-color: transparent;
+}
+
+/* Badge styling */
+.badge {
+  font-weight: 500;
+  padding: 0.4em 0.65em;
+}
+
+/* Utility classes */
+.text-artemis-primary {
+  color: var(--artemis-primary) !important;
+}
+
+.bg-artemis-primary {
+  background-color: var(--artemis-primary) !important;
+}
+
+.shadow-sm-hover:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Animation for loading states */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.loading {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .sidebar {
+    width: 100% !important;
+  }
+
+  .value-box .value-box-value {
+    font-size: 1.2rem;
+  }
+
+  .card-header {
+    font-size: 0.9rem;
+  }
+}
+
+/* Print styles */
+@media print {
+  .sidebar,
+  .navbar,
+  .btn,
+  .modebar {
+    display: none !important;
+  }
+
+  .card {
+    box-shadow: none;
+    border: 1px solid #ddd;
+  }
+}
