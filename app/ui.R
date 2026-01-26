@@ -1,10 +1,10 @@
-# ARTEMIS Visualization Tool - UI Definition
+# OASDI Population Projection Tool - UI Definition
 # =============================================================================
 
 ui <- page_navbar(
   title = tags$span(
-    tags$strong("ARTEMIS"),
-    tags$span(" | Population Projection Tool", class = "text-muted")
+    tags$strong("OASDI"),
+    tags$span(" | Population Projection Tool", class = "text-light")
   ),
   id = "main_navbar",
   theme = artemis_theme(),
@@ -218,7 +218,7 @@ ui <- page_navbar(
       )
     ),
     nav_item(
-      actionLink("show_about", label = tagList(icon("info-circle"), " About ARTEMIS"))
+      actionLink("show_about", label = tagList(icon("info-circle"), " About OASDI"))
     )
   )
 )
