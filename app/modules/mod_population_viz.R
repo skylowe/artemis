@@ -9,7 +9,7 @@ mod_population_viz_ui <- function(id) {
 
   layout_sidebar(
     sidebar = sidebar(
-      width = 280,
+      width = 250,
 
       # Year selector with animation
       sliderInput(
@@ -105,7 +105,7 @@ mod_population_viz_ui <- function(id) {
           downloadButton(ns("download_pyramid"), "Download", class = "btn-sm btn-outline-secondary")
         ),
         card_body(
-          plotlyOutput(ns("pyramid"), height = "500px")
+          plotlyOutput(ns("pyramid"), height = "550px")
         )
       ),
 

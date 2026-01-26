@@ -9,7 +9,7 @@ mod_comparison_view_ui <- function(id) {
 
   layout_sidebar(
     sidebar = sidebar(
-      width = 300,
+      width = 250,
 
       h5("Select Scenarios"),
       checkboxGroupInput(
@@ -86,7 +86,7 @@ mod_comparison_view_ui <- function(id) {
           )
         ),
         card_body(
-          plotlyOutput(ns("comparison_chart"), height = "400px")
+          plotlyOutput(ns("comparison_chart"), height = "500px")
         )
       ),
 
@@ -113,7 +113,7 @@ mod_comparison_view_ui <- function(id) {
               sep = "",
               width = "100%"
             ),
-            plotlyOutput(ns("pyramid_comparison"), height = "400px")
+            plotlyOutput(ns("pyramid_comparison"), height = "500px")
           )
         )
       )

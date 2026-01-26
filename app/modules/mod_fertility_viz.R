@@ -9,7 +9,7 @@ mod_fertility_viz_ui <- function(id) {
 
   layout_sidebar(
     sidebar = sidebar(
-      width = 280,
+      width = 250,
 
       selectInput(
         ns("chart_type"),
@@ -70,7 +70,7 @@ mod_fertility_viz_ui <- function(id) {
       nav_panel(
         "Chart",
         card_body(
-          plotlyOutput(ns("main_chart"), height = "450px")
+          plotlyOutput(ns("main_chart"), height = "550px")
         )
       ),
       nav_panel(

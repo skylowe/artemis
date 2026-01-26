@@ -10,7 +10,7 @@ mod_timeseries_viz_ui <- function(id, show_marital = FALSE) {
 
   layout_sidebar(
     sidebar = sidebar(
-      width = 280,
+      width = 250,
 
       # Metric selector
       selectInput(
@@ -107,7 +107,7 @@ mod_timeseries_viz_ui <- function(id, show_marital = FALSE) {
           downloadButton(ns("download_chart"), "Download", class = "btn-sm btn-outline-secondary")
         ),
         card_body(
-          plotlyOutput(ns("timeseries"), height = "400px")
+          plotlyOutput(ns("timeseries"), height = "550px")
         )
       ),
 

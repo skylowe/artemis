@@ -82,7 +82,7 @@ mod_scenario_manager_ui <- function(id) {
     card(
       card_header(class = "bg-secondary text-white", "Saved Scenarios"),
       card_body(
-        DTOutput(ns("scenarios_table"), height = "300px")
+        DTOutput(ns("scenarios_table"), height = "400px")
       ),
       card_footer(
         div(

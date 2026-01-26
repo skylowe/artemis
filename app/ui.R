@@ -8,7 +8,7 @@ ui <- page_navbar(
   ),
   id = "main_navbar",
   theme = artemis_theme(),
-  fillable = TRUE,
+  fillable = FALSE,
   header = tagList(
     if (requireNamespace("shinyjs", quietly = TRUE)) shinyjs::useShinyjs(),
     if (requireNamespace("waiter", quietly = TRUE)) waiter::useWaiter(),
@@ -25,7 +25,7 @@ ui <- page_navbar(
     icon = icon("chart-line"),
     layout_sidebar(
       sidebar = sidebar(
-        width = 300,
+        width = 250,
         title = "Quick Controls",
 
         # Year selector
@@ -77,7 +77,7 @@ ui <- page_navbar(
         card(
           card_header("Total Population", class = "bg-light"),
           card_body(
-            plotlyOutput("dashboard_pop_trend", height = "280px")
+            plotlyOutput("dashboard_pop_trend", height = "400px")
           )
         ),
 
@@ -85,7 +85,7 @@ ui <- page_navbar(
         card(
           card_header("Population Pyramid", class = "bg-light"),
           card_body(
-            plotlyOutput("dashboard_pyramid", height = "280px")
+            plotlyOutput("dashboard_pyramid", height = "400px")
           )
         ),
 
@@ -93,7 +93,7 @@ ui <- page_navbar(
         card(
           card_header("Components of Change", class = "bg-light"),
           card_body(
-            plotlyOutput("dashboard_components", height = "280px")
+            plotlyOutput("dashboard_components", height = "400px")
           )
         ),
 
@@ -101,7 +101,7 @@ ui <- page_navbar(
         card(
           card_header("Dependency Ratios", class = "bg-light"),
           card_body(
-            plotlyOutput("dashboard_dependency", height = "280px")
+            plotlyOutput("dashboard_dependency", height = "400px")
           )
         )
       )
@@ -174,7 +174,7 @@ ui <- page_navbar(
     icon = icon("layer-group"),
     layout_sidebar(
       sidebar = sidebar(
-        width = 350,
+        width = 300,
         title = "Configuration",
         mod_config_editor_ui("config_editor")
       ),

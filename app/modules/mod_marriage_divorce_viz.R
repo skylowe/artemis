@@ -9,7 +9,7 @@ mod_marriage_divorce_viz_ui <- function(id) {
 
   layout_sidebar(
     sidebar = sidebar(
-      width = 280,
+      width = 250,
 
       radioButtons(
         ns("event_type"),
@@ -83,7 +83,7 @@ mod_marriage_divorce_viz_ui <- function(id) {
           downloadButton(ns("download"), "Download", class = "btn-sm btn-outline-secondary")
         ),
         card_body(
-          plotlyOutput(ns("main_chart"), height = "450px")
+          plotlyOutput(ns("main_chart"), height = "550px")
         )
       ),
 

@@ -9,7 +9,7 @@ mod_immigration_viz_ui <- function(id) {
 
   layout_sidebar(
     sidebar = sidebar(
-      width = 280,
+      width = 250,
 
       selectInput(
         ns("chart_type"),
@@ -74,7 +74,7 @@ mod_immigration_viz_ui <- function(id) {
       card(
         card_header("Immigration Trends"),
         card_body(
-          plotlyOutput(ns("main_chart"), height = "400px")
+          plotlyOutput(ns("main_chart"), height = "550px")
         )
       ),
 

@@ -263,6 +263,25 @@
   }
 }
 
+/* Scrollable content - ensure nav panels have proper spacing */
+.tab-content {
+  padding-bottom: 2rem;
+}
+
+.tab-pane {
+  padding: 1rem 0;
+}
+
+/* Ensure cards have breathing room when scrolling */
+.card {
+  margin-bottom: 1.5rem;
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
 /* Print styles */
 @media print {
   .sidebar,
