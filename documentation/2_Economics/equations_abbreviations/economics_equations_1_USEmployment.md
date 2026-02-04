@@ -1276,7 +1276,7 @@ DPF5054_FE = (0.00093*RF5054_FE + 0.00074*RF5054_FE(-1) - 0.00008*RF5054_FE(-2)
 - `P`: Labor force participation rate
 - `L`: Labor force
 - `N`: Population
-- `RTP`: Real Total Product (economic output measure)
+- `RTP`: Ratio of real GDP to potential GDP (economic cycle measure)
 - `RU_ASA_ADJ`: Unemployment rate age-sex adjusted adjustment factor
 - `TR_M`/`TR_F`: Time trend for males/females
 - `DI`: Disability insurance adjustment factor

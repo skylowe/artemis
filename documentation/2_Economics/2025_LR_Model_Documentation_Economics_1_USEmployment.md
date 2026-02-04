@@ -214,7 +214,7 @@ The aggregate age-sex-adjusted RU depends on projected distribution of labor for
 ## Related Documentation
 
 - [Equation Details (Appendix 2-1)](equations_abbreviations/2025_LR_Model_Documentation_economics_equations_1_USEmployment.pdf)
-- [Abbreviations (Appendix 2-2)](equations_abbreviations/2025_LR_Model_Documentation_economics_equations_Abbreviations.pdf)
+- [Abbreviations (Appendix 2-2)](2025_LR_Model_Documentation_Economics_Abbreviations.md)
 
 ## References
 
