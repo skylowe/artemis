@@ -2681,63 +2681,18 @@ get_standard_population_2010 <- function(cache_dir = here::here("data/raw/census
   # Fetch actual single-year-of-age data from Census API for 2010
   cli::cli_alert_info("Fetching 2010 Census single-year-of-age population from API...")
 
-  tryCatch({
-    male_pop <- fetch_census_population(years = 2010, ages = 0:100, sex = "male")
-    female_pop <- fetch_census_population(years = 2010, ages = 0:100, sex = "female")
+  male_pop <- fetch_census_population(years = 2010, ages = 0:100, sex = "male")
+  female_pop <- fetch_census_population(years = 2010, ages = 0:100, sex = "female")
 
-    standard_pop <- data.table::rbindlist(list(male_pop, female_pop), use.names = TRUE)
-    standard_pop <- standard_pop[, .(age, sex, population)]
-    data.table::setorder(standard_pop, sex, age)
-
-    # Cache the result
-    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-    saveRDS(standard_pop, cache_file)
-
-    cli::cli_alert_success("Fetched and cached 2010 standard population (single-year-of-age)")
-    return(standard_pop)
-  }, error = function(e) {
-    cli::cli_alert_warning(
-      "Census API unavailable for 2010 standard population: {conditionMessage(e)}"
-    )
-    cli::cli_alert_warning("Using fallback 5-year age group approximation")
-  })
-
-  # Fallback: 5-year age group approximation (only used if API fails)
-  # Source: Census Bureau 2010 Demographic Profile (SF1)
-  age_groups <- data.table::data.table(
-    age_start = c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85),
-    age_end = c(4, 9, 14, 19, 24, 29, 34, 39, 44, 49, 54, 59, 64, 69, 74, 79, 84, 100),
-    pop_male = c(10319427, 10389638, 10579862, 11303666, 11014176, 10635591,
-                 9996500, 10042022, 10393977, 11209085, 10933274, 9523648,
-                 7483818, 5765502, 4243972, 3182388, 2294374, 1273867),
-    pop_female = c(9881935, 9959019, 10097332, 10736677, 10571823, 10466258,
-                   10137620, 10154272, 10562525, 11468206, 11217456, 9970062,
-                   8077500, 6582716, 5094129, 4135407, 3393811, 2723668)
-  )
-
-  results <- list()
-  for (i in seq_len(nrow(age_groups))) {
-    ages_in_group <- age_groups$age_start[i]:age_groups$age_end[i]
-    n_ages <- length(ages_in_group)
-    for (age in ages_in_group) {
-      results[[length(results) + 1]] <- data.table::data.table(
-        age = age, sex = "male",
-        population = round(age_groups$pop_male[i] / n_ages)
-      )
-      results[[length(results) + 1]] <- data.table::data.table(
-        age = age, sex = "female",
-        population = round(age_groups$pop_female[i] / n_ages)
-      )
-    }
-  }
-
-  standard_pop <- data.table::rbindlist(results)
+  standard_pop <- data.table::rbindlist(list(male_pop, female_pop), use.names = TRUE)
+  standard_pop <- standard_pop[, .(age, sex, population)]
   data.table::setorder(standard_pop, sex, age)
 
+  # Cache the result
   dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
   saveRDS(standard_pop, cache_file)
 
-  cli::cli_alert_success("Created and cached 2010 standard population (fallback)")
+  cli::cli_alert_success("Fetched and cached 2010 standard population (single-year-of-age)")
   standard_pop
 }
 
@@ -3300,20 +3255,19 @@ calculate_infant_mortality <- function(infant_deaths, monthly_births, year,
 
   results <- list()
 
+  if (is.null(births_by_sex)) {
+    cli::cli_abort("births_by_sex data is required for sex-specific q0 calculation")
+  }
+
   for (sex_val in c("male", "female")) {
-    # Use actual sex-specific birth counts when available
-    if (!is.null(sex_births_yr) && nrow(sex_births_yr[sex == sex_val]) > 0) {
-      births_sex <- sex_births_yr[sex == sex_val, births]
-    } else {
-      # Fallback: fixed sex ratio (CDC ~51.2% male)
-      sex_ratio <- if (sex_val == "male") 0.512 else 0.488
-      births_sex <- as.integer(round(total_births * sex_ratio))
+    # Use actual sex-specific birth counts
+    births_sex <- sex_births_yr[sex == sex_val, births]
+    if (length(births_sex) == 0) {
+      cli::cli_abort("No sex-specific births for {sex_val} in {target_year}")
     }
-    if (!is.null(sex_births_prev) && nrow(sex_births_prev[sex == sex_val]) > 0) {
-      births_prev_sex <- sex_births_prev[sex == sex_val, births]
-    } else {
-      sex_ratio <- if (sex_val == "male") 0.512 else 0.488
-      births_prev_sex <- as.integer(round(total_births_prev * sex_ratio))
+    births_prev_sex <- sex_births_prev[sex == sex_val, births]
+    if (length(births_prev_sex) == 0) {
+      cli::cli_abort("No sex-specific births for {sex_val} in {prev_year}")
     }
 
     # Get deaths for this sex
@@ -3879,8 +3833,9 @@ calculate_q1_tr_method <- function(mx_data,
     pop_weights <- population[age >= 1 & age <= 4 & year == last_historical_year,
                               .(age, sex, pop_weight = population)]
     mx_weighted <- merge(mx_ages_1_4, pop_weights, by = c("age", "sex"), all.x = TRUE)
-    # Fallback to equal weights if population data is missing
-    mx_weighted[is.na(pop_weight), pop_weight := 1]
+    if (any(is.na(mx_weighted$pop_weight))) {
+      cli::cli_abort("Missing population weights for ages 1-4 in year {last_historical_year}")
+    }
     m4_1_projected <- mx_weighted[, .(
       m4_1 = sum(mx * pop_weight, na.rm = TRUE) / sum(pop_weight, na.rm = TRUE)
     ), by = .(year, sex)]
