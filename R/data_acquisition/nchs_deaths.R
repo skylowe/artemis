@@ -610,7 +610,15 @@ fetch_nchs_deaths_multi <- function(years, cache_dir = "data/cache/nchs_deaths",
     cli::cli_abort("No mortality data retrieved")
   }
 
-  data.table::rbindlist(results, use.names = TRUE)
+  combined <- data.table::rbindlist(results, use.names = TRUE)
+
+  # Apply 1972 50% sampling correction if that year is present
+  if (1972L %in% combined$year) {
+    combined <- adjust_for_sampling(combined, method = "weight")
+    cli::cli_alert_info("Applied 1972 sampling correction (50% sample -> doubled)")
+  }
+
+  combined
 }
 
 #' Calculate total deaths (all causes combined)
