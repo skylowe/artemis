@@ -24,35 +24,8 @@ mod_scenario_manager_ui <- function(id) {
         )
       ),
       card_body(
-        # Status indicator
+        # Status and progress indicator
         uiOutput(ns("run_status")),
-
-        # Progress indicator
-        conditionalPanel(
-          condition = sprintf("input['%s'] > 0", ns("run_projection")),
-          div(
-            id = ns("progress_container"),
-            if (requireNamespace("shinyWidgets", quietly = TRUE)) {
-              shinyWidgets::progressBar(
-                id = ns("projection_progress"),
-                value = 0,
-                status = "primary",
-                display_pct = TRUE,
-                striped = TRUE
-              )
-            } else {
-              tags$div(
-                class = "progress",
-                tags$div(
-                  id = ns("projection_progress"),
-                  class = "progress-bar progress-bar-striped",
-                  role = "progressbar",
-                  style = "width: 0%"
-                )
-              )
-            }
-          )
-        ),
 
         hr(),
 
@@ -107,25 +80,6 @@ mod_scenario_manager_ui <- function(id) {
           )
         )
       )
-    ),
-
-    # Comparison selection
-    card(
-      card_header(class = "bg-info text-white", "Scenario Comparison"),
-      card_body(
-        checkboxGroupInput(
-          ns("compare_scenarios"),
-          "Select scenarios to compare:",
-          choices = c("TR2025 Baseline" = "baseline"),
-          selected = "baseline"
-        ),
-        actionButton(
-          ns("view_comparison"),
-          "View Comparison",
-          icon = icon("exchange-alt"),
-          class = "btn-info w-100"
-        )
-      )
     )
   )
 }
@@ -148,40 +102,35 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
 
     # Render run status
     output$run_status <- renderUI({
-      if (projection_state$running) {
-        div(
-          class = "alert alert-info",
-          icon("spinner", class = "fa-spin"),
-          " Running projection...",
-          tags$small(class = "d-block", projection_state$message)
-        )
-      } else if (!is.null(projection_state$last_result)) {
-        if (projection_state$last_result$success) {
-          div(
-            class = "alert alert-success",
-            icon("check-circle"),
-            " Projection complete",
-            tags$small(
-              class = "d-block",
-              sprintf("Population: %.1fM (2050), %.1fM (2099)",
-                      projection_state$last_result$pop_2050 / 1e6,
-                      projection_state$last_result$pop_2099 / 1e6)
-            )
-          )
-        } else {
-          div(
-            class = "alert alert-danger",
-            icon("exclamation-circle"),
-            " Projection failed",
-            tags$small(class = "d-block", projection_state$last_result$error)
-          )
-        }
-      } else {
-        div(
+      # Initial state — no projection has been run yet
+      if (!projection_state$running && is.null(projection_state$last_result)) {
+        return(div(
           class = "alert alert-secondary",
           icon("info-circle"),
           " Configure assumptions and click Run to generate a projection"
-        )
+        ))
+      }
+
+      if (projection_state$running) {
+        div(class = "alert alert-info mb-0 py-2",
+            icon("cog", class = "fa-spin"),
+            strong(" Projection in progress"))
+      } else if (projection_state$last_result$success) {
+        div(class = "alert alert-success mb-0 py-2",
+            icon("check-circle"),
+            strong(" Projection complete"),
+            tags$small(
+              class = "d-block mt-1",
+              sprintf("Population: %.1fM (2050), %.1fM (2099)",
+                      projection_state$last_result$pop_2050 / 1e6,
+                      projection_state$last_result$pop_2099 / 1e6)
+            ))
+      } else {
+        div(class = "alert alert-danger mb-0 py-2",
+            icon("exclamation-circle"),
+            strong(" Projection failed"),
+            tags$small(class = "d-block mt-1",
+                       projection_state$last_result$error))
       }
     })
 
@@ -197,55 +146,38 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
         return()
       }
 
-      # Show waiter
-      waiter <- Waiter$new(
-        id = session$ns("run_status"),
-        html = tagList(
-          spin_fading_circles(),
-          h5("Running projection pipeline...")
-        )
-      )
-      waiter$show()
-
       projection_state$running <- TRUE
       projection_state$progress <- 0
-      projection_state$message <- "Initializing..."
+      projection_state$message <- "Running projection pipeline..."
 
-      # Run projection
-      tryCatch({
-        result <- run_scenario_projection(
-          config = config,
-          artemis_root = ARTEMIS_ROOT,
-          progress_callback = function(pct, msg) {
-            projection_state$progress <- pct
-            projection_state$message <- msg
-            updateProgressBar(
-              session = session,
-              id = "projection_progress",
-              value = pct,
-              status = if (pct < 100) "primary" else "success"
-            )
+      # Defer the actual projection until after Shiny flushes the UI,
+      # so the "running" state is visible before the sync call blocks
+      session$onFlushed(function() {
+        tryCatch({
+          result <- run_scenario_projection(
+            config = config,
+            artemis_root = ARTEMIS_ROOT,
+            progress_callback = function(pct, msg) {
+              projection_state$progress <- pct
+              projection_state$message <- msg
+            }
+          )
+
+          projection_state$last_result <- result
+          projection_state$running <- FALSE
+
+          if (result$success) {
+            rv$active_data <- result$data
           }
-        )
 
-        projection_state$last_result <- result
-        projection_state$running <- FALSE
-
-        if (result$success) {
-          rv$active_data <- result$data
-          showNotification("Projection complete!", type = "message")
-        }
-
-      }, error = function(e) {
-        projection_state$last_result <- list(
-          success = FALSE,
-          error = e$message
-        )
-        projection_state$running <- FALSE
-        showNotification(paste("Error:", e$message), type = "error")
-      })
-
-      waiter$hide()
+        }, error = function(e) {
+          projection_state$last_result <- list(
+            success = FALSE,
+            error = e$message
+          )
+          projection_state$running <- FALSE
+        })
+      }, once = TRUE)
     })
 
     # Scenarios table
@@ -318,16 +250,6 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
       # Update reactive values
       rv$scenarios[[name]] <- scenario
 
-      # Update comparison choices
-      updateCheckboxGroupInput(
-        session, "compare_scenarios",
-        choices = c(
-          "TR2025 Baseline" = "baseline",
-          setNames(names(rv$scenarios), names(rv$scenarios))
-        ),
-        selected = input$compare_scenarios
-      )
-
       # Clear inputs
       updateTextInput(session, "scenario_name", value = "")
       updateTextAreaInput(session, "scenario_description", value = "")
@@ -389,15 +311,6 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
       # Remove from reactive values
       rv$scenarios[[name]] <- NULL
 
-      # Update comparison choices
-      updateCheckboxGroupInput(
-        session, "compare_scenarios",
-        choices = c(
-          "TR2025 Baseline" = "baseline",
-          setNames(names(rv$scenarios), names(rv$scenarios))
-        )
-      )
-
       removeModal()
       showNotification(paste("Deleted scenario:", name), type = "message")
     })
@@ -437,19 +350,5 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
       showNotification(paste("Created copy:", new_name), type = "message")
     })
 
-    # View comparison
-    observeEvent(input$view_comparison, {
-      selected <- input$compare_scenarios
-
-      if (length(selected) < 2) {
-        showNotification("Select at least 2 scenarios to compare", type = "warning")
-        return()
-      }
-
-      # Navigate to comparison tab
-      if (!is.null(parent_session)) {
-        updateTabsetPanel(parent_session, "main_navbar", selected = "Compare")
-      }
-    })
   })
 }
