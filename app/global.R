@@ -96,6 +96,17 @@ tryCatch(source_artemis_files(), error = function(e) {
 #' Load baseline TR2025 results from targets store
 #' @return List with baseline projection results
 load_baseline_data <- function() {
+  snapshot_file <- file.path(BASELINE_DIR, "baseline_data.rds")
+
+  # If a baseline snapshot exists, load from it (immune to _targets/ overwrites)
+  if (file.exists(snapshot_file)) {
+    cli::cli_alert_info("Loading baseline from saved snapshot")
+    baseline <- readRDS(snapshot_file)
+    cli::cli_alert_success("Loaded {length(baseline)} baseline targets from snapshot")
+    return(baseline)
+  }
+
+  # First load: read from _targets/ store
   targets_store <- file.path(ARTEMIS_ROOT, "_targets")
 
   baseline <- list()
@@ -133,6 +144,10 @@ load_baseline_data <- function() {
 
   if (length(baseline) > 0) {
     cli::cli_alert_success("Loaded {length(baseline)} baseline targets")
+    # Save snapshot so future loads are immune to _targets/ overwrites
+    dir.create(dirname(snapshot_file), recursive = TRUE, showWarnings = FALSE)
+    saveRDS(baseline, snapshot_file)
+    cli::cli_alert_info("Saved baseline snapshot to {.path {snapshot_file}}")
   } else {
     cli::cli_alert_warning("No baseline data loaded - run pipeline first")
   }

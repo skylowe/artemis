@@ -17,15 +17,18 @@ mkdir -p "${PERSIST_DIR}/scenarios"
 mkdir -p "${PERSIST_DIR}/app_data/baseline"
 mkdir -p "${PERSIST_DIR}/app_data/scenarios"
 
-# Copy baseline _targets to user's writable volume on first spawn
-echo "Checking baseline _targets: meta exists=$([ -f ${PERSIST_DIR}/_targets/meta/meta ] && echo yes || echo no), baseline dir=$([ -d ${BASELINE_TARGETS}/meta ] && echo yes || echo no)"
-if [ ! -f "${PERSIST_DIR}/_targets/meta/meta" ] && [ -d "${BASELINE_TARGETS}/meta" ]; then
-    echo "Copying baseline _targets to per-user storage (first run)..."
+# Always restore baseline _targets from image on container start
+# This ensures scenario runs never corrupt the baseline across restarts
+if [ -d "${BASELINE_TARGETS}/meta" ]; then
+    echo "Restoring baseline _targets from image..."
+    rm -rf "${PERSIST_DIR}/_targets"
     mkdir -p "${PERSIST_DIR}/_targets"
     cp -r "${BASELINE_TARGETS}/." "${PERSIST_DIR}/_targets/" || echo "WARNING: _targets copy failed with exit code $?"
-    echo "Baseline _targets copied ($(du -sh ${PERSIST_DIR}/_targets | cut -f1))"
+    echo "Baseline _targets restored ($(du -sh ${PERSIST_DIR}/_targets | cut -f1))"
+    # Clear stale baseline snapshot so it regenerates from fresh _targets
+    rm -f "${PERSIST_DIR}/app_data/baseline/baseline_data.rds"
 else
-    echo "Skipping _targets copy (already exists or no baseline available)"
+    echo "No baseline _targets in image; using existing persist data"
 fi
 
 # Symlink writable _targets into project directory
@@ -33,15 +36,13 @@ if [ ! -e "${PROJECT_DIR}/_targets" ]; then
     ln -s "${PERSIST_DIR}/_targets" "${PROJECT_DIR}/_targets"
 fi
 
-# Symlink app data directories for scenario persistence
-if [ ! -e "${PROJECT_DIR}/app/data/baseline" ]; then
-    mkdir -p "${PROJECT_DIR}/app/data"
-    ln -sf "${PERSIST_DIR}/app_data/baseline" "${PROJECT_DIR}/app/data/baseline"
-fi
-if [ ! -e "${PROJECT_DIR}/app/data/scenarios" ]; then
-    mkdir -p "${PROJECT_DIR}/app/data"
-    ln -sf "${PERSIST_DIR}/app_data/scenarios" "${PROJECT_DIR}/app/data/scenarios"
-fi
+# Replace image directories with symlinks to persist volume
+# (COPY app/ in Dockerfile creates real dirs that block symlink creation)
+rm -rf "${PROJECT_DIR}/app/data/baseline"
+rm -rf "${PROJECT_DIR}/app/data/scenarios"
+mkdir -p "${PROJECT_DIR}/app/data"
+ln -sf "${PERSIST_DIR}/app_data/baseline" "${PROJECT_DIR}/app/data/baseline"
+ln -sf "${PERSIST_DIR}/app_data/scenarios" "${PROJECT_DIR}/app/data/scenarios"
 
 # Symlink data/scenarios for config-level scenario storage
 if [ ! -e "${PROJECT_DIR}/data/scenarios" ]; then
