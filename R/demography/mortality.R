@@ -2762,10 +2762,11 @@ calculate_qx_by_marital_status <- function(qx_total, marital_factors = NULL) {
     # Fill missing factors with 1.0 (no adjustment)
     dt_ms[is.na(relative_factor), relative_factor := 1.0]
 
-    # Apply convergence at age 95+
-    # Linear transition from age 85 to 95
-    dt_ms[age >= 85 & age < 95, relative_factor := relative_factor * (95 - age) / 10 + 1.0 * (age - 85) / 10]
-    dt_ms[age >= 95, relative_factor := 1.0]
+    # NOTE (Deviation #13): Convergence at ages 85-95 is already applied once
+    # in calculate_marital_mortality_factors() Step 3 (blends rates toward total
+    # rate). A second application here was over-suppressing the differential
+    # (75% reduction at age 90 instead of the documented 50%). Removed per
+    # TR2025 Section 1.2.c Step 3 which specifies a single convergence.
 
     # Apply factor to qx
     dt_ms[, qx := qx * relative_factor]
