@@ -160,7 +160,8 @@ create_mortality_targets <- function() {
           population = census_population_both,
           deaths_raw = deaths_agg,
           last_historical_year = last_hist_year,
-          max_age = 100
+          max_age = 100,
+          births_by_sex = nchs_births_by_sex
         )
       }
     ),

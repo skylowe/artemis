@@ -3218,6 +3218,9 @@ get_default_marital_factors <- function() {
 #' @param monthly_births data.table with columns: year, month, births
 #' @param year Integer: year for which to calculate q0
 #' @param method Character: "separation_factor" (default) or "simple"
+#' @param births_by_sex Optional data.table with columns: year, sex, births.
+#'   If provided, uses actual sex-specific birth counts instead of a fixed
+#'   51.2% male ratio.
 #'
 #' @return data.table with columns: year, sex, q0, deaths, births, exposure
 #'
@@ -3242,7 +3245,8 @@ get_default_marital_factors <- function() {
 #'
 #' @export
 calculate_infant_mortality <- function(infant_deaths, monthly_births, year,
-                                       method = c("separation_factor", "simple")) {
+                                       method = c("separation_factor", "simple"),
+                                       births_by_sex = NULL) {
   method <- match.arg(method)
 
   checkmate::assert_data_table(infant_deaths)
@@ -3271,19 +3275,32 @@ calculate_infant_mortality <- function(infant_deaths, monthly_births, year,
   total_births <- sum(births_yr$births)
   total_births_prev <- if (nrow(births_prev) > 0) sum(births_prev$births) else total_births
 
-  # Sex ratio at birth (proportion male)
-  # CDC reports approximately 51.2% male, 48.8% female
-  # This is a biological constant that varies little over time
-  sex_ratio_male <- 0.512
-  sex_ratio_female <- 1 - sex_ratio_male
+  # Sex-specific birth counts: use actual data if available, else fixed ratio
+  if (!is.null(births_by_sex)) {
+    sex_births_yr <- births_by_sex[year == target_year]
+    sex_births_prev <- births_by_sex[year == prev_year]
+  } else {
+    sex_births_yr <- NULL
+    sex_births_prev <- NULL
+  }
 
   results <- list()
 
   for (sex_val in c("male", "female")) {
-    # Adjust births for sex ratio since monthly births data is not sex-specific
-    sex_ratio <- if (sex_val == "male") sex_ratio_male else sex_ratio_female
-    births_sex <- as.integer(round(total_births * sex_ratio))
-    births_prev_sex <- as.integer(round(total_births_prev * sex_ratio))
+    # Use actual sex-specific birth counts when available
+    if (!is.null(sex_births_yr) && nrow(sex_births_yr[sex == sex_val]) > 0) {
+      births_sex <- sex_births_yr[sex == sex_val, births]
+    } else {
+      # Fallback: fixed sex ratio (CDC ~51.2% male)
+      sex_ratio <- if (sex_val == "male") 0.512 else 0.488
+      births_sex <- as.integer(round(total_births * sex_ratio))
+    }
+    if (!is.null(sex_births_prev) && nrow(sex_births_prev[sex == sex_val]) > 0) {
+      births_prev_sex <- sex_births_prev[sex == sex_val, births]
+    } else {
+      sex_ratio <- if (sex_val == "male") 0.512 else 0.488
+      births_prev_sex <- as.integer(round(total_births_prev * sex_ratio))
+    }
 
     # Get deaths for this sex
     deaths_sex <- deaths_yr[sex == sex_val]
@@ -3513,7 +3530,8 @@ calculate_ssa_separation_factors <- function(monthly_births_current, monthly_bir
 #'
 #' @export
 calculate_infant_mortality_series <- function(infant_deaths, monthly_births, years,
-                                               method = "separation_factor") {
+                                               method = "separation_factor",
+                                               births_by_sex = NULL) {
   checkmate::assert_data_table(infant_deaths)
   checkmate::assert_data_table(monthly_births)
   checkmate::assert_integerish(years, min.len = 1)
@@ -3526,7 +3544,8 @@ calculate_infant_mortality_series <- function(infant_deaths, monthly_births, yea
         infant_deaths = infant_deaths,
         monthly_births = monthly_births,
         year = yr,
-        method = method
+        method = method,
+        births_by_sex = births_by_sex
       )
       results[[length(results) + 1]] <- result
     }, error = function(e) {
@@ -4448,7 +4467,8 @@ calculate_qx_with_infant_mortality <- function(mx_total,
                                                population,
                                                deaths_raw = NULL,
                                                last_historical_year = NULL,
-                                               max_age = 100) {
+                                               max_age = 100,
+                                               births_by_sex = NULL) {
   # Get available years
   pop_years <- unique(population$year)
   years_to_calc <- intersect(unique(mx_total$year), pop_years)
@@ -4467,7 +4487,8 @@ calculate_qx_with_infant_mortality <- function(mx_total,
     infant_deaths = infant_d,
     monthly_births = births_m,
     years = years_to_calc,
-    method = "separation_factor"
+    method = "separation_factor",
+    births_by_sex = births_by_sex
   )
   q0_formatted <- q0_series[, .(year, age = 0L, sex, qx = q0)]
 
