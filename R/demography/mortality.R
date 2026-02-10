@@ -2393,8 +2393,16 @@ calculate_life_table <- function(qx, radix = 100000, max_age = 100) {
       Lx[i] <- (lx[i] + lx[i + 1]) / 2
     }
 
-    # Last age (omega): assume half die during year
-    Lx[n] <- lx[n] * 0.5
+    # Last age (omega): L_omega = l_omega / m_omega
+    # Derive mx from qx for the open-ended age interval. For qx close to 1,
+    # use fallback to avoid division by zero.
+    qx_omega <- qx_full[n]
+    if (qx_omega >= 0.999) {
+      Lx[n] <- lx[n] * 0.5  # Fallback when nearly everyone dies
+    } else {
+      mx_omega <- -log(1 - qx_omega)
+      Lx[n] <- lx[n] / mx_omega
+    }
 
     # Tx: total person-years lived above age x
     Tx <- numeric(n)
