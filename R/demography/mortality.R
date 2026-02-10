@@ -2678,12 +2678,32 @@ get_standard_population_2010 <- function(cache_dir = here::here("data/raw/census
     return(readRDS(cache_file))
   }
 
-  # If not cached, create from hardcoded 2010 Census data
-  # These are approximations based on Census Bureau 2010 data
-  cli::cli_alert_info("Creating 2010 standard population from Census data...")
+  # Fetch actual single-year-of-age data from Census API for 2010
+  cli::cli_alert_info("Fetching 2010 Census single-year-of-age population from API...")
 
-  # 2010 Census population by 5-year age groups (in thousands)
-  # Source: Census Bureau 2010 Demographic Profile
+  tryCatch({
+    male_pop <- fetch_census_population(years = 2010, ages = 0:100, sex = "male")
+    female_pop <- fetch_census_population(years = 2010, ages = 0:100, sex = "female")
+
+    standard_pop <- data.table::rbindlist(list(male_pop, female_pop), use.names = TRUE)
+    standard_pop <- standard_pop[, .(age, sex, population)]
+    data.table::setorder(standard_pop, sex, age)
+
+    # Cache the result
+    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+    saveRDS(standard_pop, cache_file)
+
+    cli::cli_alert_success("Fetched and cached 2010 standard population (single-year-of-age)")
+    return(standard_pop)
+  }, error = function(e) {
+    cli::cli_alert_warning(
+      "Census API unavailable for 2010 standard population: {conditionMessage(e)}"
+    )
+    cli::cli_alert_warning("Using fallback 5-year age group approximation")
+  })
+
+  # Fallback: 5-year age group approximation (only used if API fails)
+  # Source: Census Bureau 2010 Demographic Profile (SF1)
   age_groups <- data.table::data.table(
     age_start = c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85),
     age_end = c(4, 9, 14, 19, 24, 29, 34, 39, 44, 49, 54, 59, 64, 69, 74, 79, 84, 100),
@@ -2695,21 +2715,17 @@ get_standard_population_2010 <- function(cache_dir = here::here("data/raw/census
                    8077500, 6582716, 5094129, 4135407, 3393811, 2723668)
   )
 
-  # Expand to single year of age
   results <- list()
   for (i in seq_len(nrow(age_groups))) {
     ages_in_group <- age_groups$age_start[i]:age_groups$age_end[i]
     n_ages <- length(ages_in_group)
-
     for (age in ages_in_group) {
       results[[length(results) + 1]] <- data.table::data.table(
-        age = age,
-        sex = "male",
+        age = age, sex = "male",
         population = round(age_groups$pop_male[i] / n_ages)
       )
       results[[length(results) + 1]] <- data.table::data.table(
-        age = age,
-        sex = "female",
+        age = age, sex = "female",
         population = round(age_groups$pop_female[i] / n_ages)
       )
     }
@@ -2718,12 +2734,10 @@ get_standard_population_2010 <- function(cache_dir = here::here("data/raw/census
   standard_pop <- data.table::rbindlist(results)
   data.table::setorder(standard_pop, sex, age)
 
-  # Cache the result
   dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
   saveRDS(standard_pop, cache_file)
 
-  cli::cli_alert_success("Created and cached 2010 standard population")
-
+  cli::cli_alert_success("Created and cached 2010 standard population (fallback)")
   standard_pop
 }
 
