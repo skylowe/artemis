@@ -2311,11 +2311,14 @@ adjust_qx_with_hmd <- function(qx,
 #' - ex = Tx / lx
 #'
 #' For age 0 (infant), Lx uses separation factor:
-#' L0 = f0 * l0 + (1 - f0) * l1
-#' where f0 ≈ 0.1 for developed countries (most infant deaths occur early)
+#' L0 = l1 + f0 * d0
+#' where f0 is derived from q0 using the Coale-Demeny formula.
+#'
+#' @param f0 Optional numeric: infant separation factor. If NULL (default),
+#'   derived from q0 using the Coale-Demeny formula by sex.
 #'
 #' @export
-calculate_life_table <- function(qx, radix = 100000, max_age = 100) {
+calculate_life_table <- function(qx, radix = 100000, max_age = 100, f0 = NULL) {
   checkmate::assert_data_table(qx)
   checkmate::assert_names(names(qx), must.include = c("age", "sex", "qx"))
   checkmate::assert_int(radix, lower = 1)
@@ -2378,12 +2381,25 @@ calculate_life_table <- function(qx, radix = 100000, max_age = 100) {
     Lx <- numeric(n)
 
     # Age 0: special separation factor for infant mortality
-    # f0 ≈ 0.1 means 10% of infant deaths occur in first fraction of year
-    # L0 = f0 * l0 + (1 - f0) * l1 ≈ 0.1 * l0 + 0.9 * l1
-    # Simplified: L0 = l1 + 0.1 * d0
+    # L0 = l1 + f0 * d0, where f0 is the fraction of the year lived by
+    # those dying in their first year.
+    # Coale-Demeny formula derives f0 from q0 by sex (Actuarial Study 120):
+    #   Male:   f0 = 0.045 + 2.684 * q0  (if q0 < 0.107, else 0.330)
+    #   Female: f0 = 0.053 + 2.800 * q0  (if q0 < 0.107, else 0.350)
     if (n >= 2) {
-      f0 <- 0.1  # Separation factor for infants
-      Lx[1] <- lx[2] + f0 * dx[1]
+      if (!is.null(f0)) {
+        f0_val <- f0  # Use explicitly provided value
+      } else {
+        # Derive from q0 using Coale-Demeny formula
+        q0_val <- qx_full[1]
+        current_sex <- .BY$sex
+        if (current_sex == "male") {
+          f0_val <- if (q0_val >= 0.107) 0.330 else 0.045 + 2.684 * q0_val
+        } else {
+          f0_val <- if (q0_val >= 0.107) 0.350 else 0.053 + 2.800 * q0_val
+        }
+      }
+      Lx[1] <- lx[2] + f0_val * dx[1]
     } else {
       Lx[1] <- lx[1] * 0.5
     }
