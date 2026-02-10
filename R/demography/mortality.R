@@ -3859,11 +3859,16 @@ calculate_q1_tr_method <- function(mx_data,
     # Calculate 4m1 from projected mx
     mx_ages_1_4 <- mx_data[age >= 1 & age <= 4 & year %in% projection_years]
 
-    # Convert mx to "deaths equivalent" for 4m1 calculation
-    # 4m1 = sum(mx_age * weight_age) where weights approximate population distribution
-    # Simplified: use average of mx at ages 1-4
-    m4_1_projected <- mx_ages_1_4[, .(
-      m4_1 = mean(mx, na.rm = TRUE)
+    # Calculate population-weighted 4m1 = sum(Dx) / sum(Px) ≈ sum(mx * Px) / sum(Px)
+    # Use last historical year's population distribution for ages 1-4 as weights
+    # (population distribution at these ages changes slowly over time)
+    pop_weights <- population[age >= 1 & age <= 4 & year == last_historical_year,
+                              .(age, sex, pop_weight = population)]
+    mx_weighted <- merge(mx_ages_1_4, pop_weights, by = c("age", "sex"), all.x = TRUE)
+    # Fallback to equal weights if population data is missing
+    mx_weighted[is.na(pop_weight), pop_weight := 1]
+    m4_1_projected <- mx_weighted[, .(
+      m4_1 = sum(mx * pop_weight, na.rm = TRUE) / sum(pop_weight, na.rm = TRUE)
     ), by = .(year, sex)]
   } else {
     # Extrapolate 4m1 using AAx trajectory (simplified: use last value)
