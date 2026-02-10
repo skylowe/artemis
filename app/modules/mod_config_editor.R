@@ -79,9 +79,27 @@ mod_config_editor_ui <- function(id) {
         ),
 
         checkboxInput(
-          ns("constrain_tfr"),
-          "Constrain TFR to TR2025 values",
-          value = TRUE
+          ns("custom_recent_tfr"),
+          "Override Recent TFR (TR year -1/-2)",
+          value = FALSE
+        ),
+
+        conditionalPanel(
+          condition = sprintf("input['%s']", ns("custom_recent_tfr")),
+          numericInput(
+            ns("custom_tfr_year1"),
+            "TFR (2 years prior)",
+            value = 1.62,
+            min = 0.5, max = 4.0,
+            step = 0.01
+          ),
+          numericInput(
+            ns("custom_tfr_year2"),
+            "TFR (1 year prior)",
+            value = 1.62,
+            min = 0.5, max = 4.0,
+            step = 0.01
+          )
         )
       ),
 
@@ -180,13 +198,7 @@ mod_config_editor_ui <- function(id) {
         checkboxInput(
           ns("use_tr_historical_pop"),
           "Starting Population: TR2025",
-          value = TRUE
-        ),
-
-        checkboxInput(
-          ns("use_tr2025_births"),
-          "Recent Births: TR2025 (2023-24)",
-          value = TRUE
+          value = FALSE
         )
       )
     ),
@@ -265,24 +277,29 @@ mod_config_editor_server <- function(id, rv) {
         value = config$immigration$emigration$ratio %||% 0.25)
 
       updateCheckboxInput(session, "use_tr_historical_pop",
-        value = config$projected_population$use_tr_historical_population %||% TRUE)
+        value = config$projected_population$use_tr_historical_population %||% FALSE)
 
-      # Check if TFR constraint is enabled
-      has_tfr_constraints <- !is.null(config$fertility$constrain_tfr) &&
-                             length(config$fertility$constrain_tfr) > 0
-      updateCheckboxInput(session, "constrain_tfr", value = has_tfr_constraints)
+      # Check if custom recent TFR is enabled and populate values
+      has_custom_tfr <- !is.null(config$fertility$custom_recent_tfr) &&
+                        length(config$fertility$custom_recent_tfr) > 0
+      updateCheckboxInput(session, "custom_recent_tfr", value = has_custom_tfr)
 
-      # Check for TR2025 births
-      has_tr_births <- !is.null(config$fertility$use_tr2025_births_for_years) &&
-                       length(config$fertility$use_tr2025_births_for_years) > 0
-      updateCheckboxInput(session, "use_tr2025_births", value = has_tr_births)
+      if (has_custom_tfr) {
+        tfr_values <- unlist(config$fertility$custom_recent_tfr)
+        if (length(tfr_values) >= 1) {
+          updateNumericInput(session, "custom_tfr_year1", value = tfr_values[1])
+        }
+        if (length(tfr_values) >= 2) {
+          updateNumericInput(session, "custom_tfr_year2", value = tfr_values[2])
+        }
+      }
 
     }) |> bindEvent(rv$config, ignoreNULL = TRUE)
 
     # Use All TR2025 button
     observeEvent(input$use_all_tr, {
       updateCheckboxInput(session, "use_tr_historical_pop", value = TRUE)
-      updateCheckboxInput(session, "use_tr2025_births", value = TRUE)
+      updateCheckboxInput(session, "custom_recent_tfr", value = TRUE)
       updateSelectInput(session, "starting_aax_method", selected = "tr_qx")
       updateSelectInput(session, "distribution_method", selected = "tr_derived")
     })
@@ -290,7 +307,7 @@ mod_config_editor_server <- function(id, rv) {
     # Use All ARTEMIS button
     observeEvent(input$use_all_artemis, {
       updateCheckboxInput(session, "use_tr_historical_pop", value = FALSE)
-      updateCheckboxInput(session, "use_tr2025_births", value = FALSE)
+      updateCheckboxInput(session, "custom_recent_tfr", value = FALSE)
       updateSelectInput(session, "starting_aax_method", selected = "regression")
       updateSelectInput(session, "distribution_method", selected = "dhs")
     })
@@ -307,16 +324,14 @@ mod_config_editor_server <- function(id, rv) {
       config$fertility$ultimate_year <- input$fertility_ultimate_year
       config$fertility$weight_exponent <- input$weight_exponent
 
-      if (input$constrain_tfr) {
-        config$fertility$constrain_tfr <- list("2023" = 1.62, "2024" = 1.62)
+      if (input$custom_recent_tfr) {
+        tr_year <- config$metadata$trustees_report_year %||% 2025
+        config$fertility$custom_recent_tfr <- stats::setNames(
+          as.list(c(input$custom_tfr_year1, input$custom_tfr_year2)),
+          as.character(c(tr_year - 2, tr_year - 1))
+        )
       } else {
-        config$fertility$constrain_tfr <- NULL
-      }
-
-      if (input$use_tr2025_births) {
-        config$fertility$use_tr2025_births_for_years <- c(2023, 2024)
-      } else {
-        config$fertility$use_tr2025_births_for_years <- NULL
+        config$fertility$custom_recent_tfr <- NULL
       }
 
       config$mortality$ultimate_year <- input$mortality_ultimate_year

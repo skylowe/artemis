@@ -164,8 +164,6 @@ create_projected_population_targets <- function() {
                       population_status = config_assumptions$projected_population$population_status,
                       ages = config_assumptions$projected_population$ages),
         qx_100_119 = qx_100_119,
-        tr2025_births = tr2025_implied_births,
-        tr2025_births_years = config_assumptions$fertility$use_tr2025_births_for_years,
         verbose = TRUE
       )
     ),

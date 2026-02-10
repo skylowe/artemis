@@ -80,48 +80,23 @@ create_fertility_targets <- function() {
     # FERTILITY SUBPROCESS TARGETS
     # ==========================================================================
 
-    # TR2025 implied births
-    targets::tar_target(
-      tr2025_implied_births,
-      {
-        substitute_years <- config_assumptions$fertility$use_tr2025_births_for_years
-        if (is.null(substitute_years) || length(substitute_years) == 0) {
-          return(data.table::data.table(year = integer(), sex = character(), births = numeric()))
-        }
-        calculate_tr_implied_births(years = substitute_years)
-      }
-    ),
-
-    # NCHS births with optional TR2025 substitution
-    targets::tar_target(
-      nchs_births_adjusted,
-      {
-        substitute_years <- config_assumptions$fertility$use_tr2025_births_for_years
-        substitute_tr_births(
-          nchs_births = nchs_births_raw,
-          tr2025_births = tr2025_implied_births,
-          substitute_years = substitute_years
-        )
-      }
-    ),
-
-    # Step 1: Calculate historical birth rates
+    # Step 1: Calculate historical birth rates from NCHS births / Census population
     targets::tar_target(
       fertility_rates_historical,
       calculate_historical_birth_rates(
-        births = nchs_births_adjusted,
+        births = nchs_births_raw,
         population = female_pop_for_fertility,
         min_age = config_assumptions$fertility$min_fertility_age,
         max_age = config_assumptions$fertility$max_fertility_age
       )
     ),
 
-    # Step 1b: Apply TFR constraints for specified years
+    # Step 1b: Apply custom TFR overrides for recent years (if configured)
     targets::tar_target(
       fertility_rates_for_projection,
-      constrain_tfr_for_years(
+      apply_custom_recent_tfr(
         birth_rates = fertility_rates_historical,
-        constrain_tfr = config_assumptions$fertility$constrain_tfr
+        custom_recent_tfr = config_assumptions$fertility$custom_recent_tfr
       )
     ),
 

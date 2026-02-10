@@ -32,25 +32,19 @@ fertility:
   # Base year for projections
   # TR2025 uses 2024 with estimated rates (TFR=1.62 from provisional data)
   rate_base_year: 2024
-  # Constrain TFR for specified years to match TR2025's published values
-  # TR2025 publishes TFR=1.62 for 2023 and constrains 2024 to TFR=1.62.
-  # When enabled, this scales age-specific rates proportionally for each year
-  # to hit the target TFR exactly.
-  # Format: year: target_tfr
-  # Set to empty map {} or null to disable constraints
-  constrain_tfr:
-    2023: 1.62
-    2024: 1.62
+  # Override TFR for recent years where final NCHS data may differ from TR assumptions
+  # Typically applies to TR_year - 1 and TR_year - 2 (e.g., 2023 and 2024 for TR2025),
+  # where only provisional data was available when the TR was published.
+  # When set, scales age-specific rates proportionally to hit the specified TFR.
+  # Set to null to use actual NCHS-derived rates (default, recommended for accuracy).
+  # Example to match TR2025 estimates:
+  #   custom_recent_tfr:
+  #     2023: 1.62
+  #     2024: 1.62
+  custom_recent_tfr: null
   # Years to exclude from trend calculations
   exclude_years:
     - 1997  # NCHS age imputation method change
-  # TR2025 birth substitution
-  # TR2025 assumed higher births for 2023-2024 than actual NCHS data shows.
-  # This option substitutes TR2025's implied births (derived from their age 0
-  # population adjusted for infant mortality) for the specified years.
-  use_tr2025_births_for_years:
-    - 2023
-    - 2024
 
 mortality:
   # Projection parameters
@@ -419,7 +413,7 @@ projected_population:
   # Use TR2025 historical population instead of our calculated historical population
   # This is useful for testing to isolate projection methodology differences
   # from historical population estimation differences
-  use_tr_historical_population: true
+  use_tr_historical_population: false
   tr_historical_population_file: "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv"
 
   # Reference date for population stocks

@@ -446,181 +446,45 @@ calculate_fertility_totals <- function(birth_rates) {
   list(tfr = tfr[order(year)], ctfr = ctfr[order(birth_year)])
 }
 
-#' Calculate TR2025 implied births from population and mortality data
-#'
-#' @description
-#' Derives the number of births TR2025 assumed by working backwards from their
-#' age 0 population (Dec 31) and infant mortality rates.
-#'
-#' Formula: implied_births = age_0_population / (1 - q0)
-#'
-#' This is needed because TR2025 assumed higher births for 2023-2024 than
-#' actual NCHS data shows. The TR2025 was published before final NCHS data
-#' was available.
-#'
-#' @param years Integer vector: years to calculate implied births for
-#' @param tr_population_file Character: path to TR2025 SSPopDec file
-#' @param tr_qx_male_file Character: path to TR2025 male death probabilities
-#' @param tr_qx_female_file Character: path to TR2025 female death probabilities
-#'
-#' @return data.table with columns: year, sex, births
-#'
-#' @export
-calculate_tr_implied_births <- function(
-    years,
-    tr_population_file = "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv",
-    tr_qx_male_file = "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv",
-    tr_qx_female_file = "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
-) {
-
-  # Load TR2025 data
-  tr_pop <- data.table::fread(tr_population_file)
-  tr_qx_m <- data.table::fread(tr_qx_male_file)
-  tr_qx_f <- data.table::fread(tr_qx_female_file)
-
-  results <- data.table::rbindlist(lapply(years, function(yr) {
-    # Get age 0 population by sex
-    age0_m <- tr_pop[Year == yr & Age == 0, `M Tot`]
-    age0_f <- tr_pop[Year == yr & Age == 0, `F Tot`]
-
-    if (length(age0_m) == 0 || length(age0_f) == 0) {
-      cli::cli_alert_warning("No TR2025 population data for year {yr}")
-      return(NULL)
-    }
-
-    # Get infant mortality (q0) by sex
-    q0_m <- tr_qx_m[Year == yr, `0`]
-    q0_f <- tr_qx_f[Year == yr, `0`]
-
-    if (length(q0_m) == 0 || length(q0_f) == 0) {
-      cli::cli_alert_warning("No TR2025 mortality data for year {yr}")
-      return(NULL)
-    }
-
-    # Calculate implied births: survivors = births * (1 - q0)
-    # Therefore: births = survivors / (1 - q0)
-    births_m <- age0_m / (1 - q0_m)
-    births_f <- age0_f / (1 - q0_f)
-
-    data.table::data.table(
-      year = c(yr, yr),
-      sex = c("male", "female"),
-      births = c(births_m, births_f)
-    )
-  }))
-
-  if (nrow(results) > 0) {
-    cli::cli_alert_success(
-      "Calculated TR2025 implied births for {length(years)} year(s): {paste(years, collapse=', ')}"
-    )
-  }
-
-  results
-}
-
-#' Substitute NCHS births with TR2025 implied births for specified years
-#'
-#' @description
-#' Replaces NCHS birth counts with TR2025's implied births for specified years.
-#' This allows the model to match TR2025's population projections which were
-#' based on birth assumptions that differed from actual NCHS data.
-#'
-#' @param nchs_births data.table: NCHS births by year and age (from nchs_births_raw)
-#' @param tr2025_births data.table: TR2025 implied births by year and sex
-#' @param substitute_years Integer vector: years to substitute (e.g., c(2023, 2024))
-#'
-#' @return data.table with substituted birth counts
-#'
-#' @details
-#' The substitution preserves the age distribution from NCHS data but scales
-#' the total to match TR2025. This is done because TR2025 only provides total
-#' births (by sex), not births by mother's age.
-#'
-#' @export
-substitute_tr_births <- function(nchs_births, tr2025_births, substitute_years) {
-
-  if (is.null(substitute_years) || length(substitute_years) == 0) {
-    cli::cli_alert_info("No birth substitution years specified - using NCHS data as-is")
-    return(nchs_births)
-  }
-
-  dt <- data.table::copy(nchs_births)
-
-  for (yr in substitute_years) {
-    # Get TR2025 total births for this year
-    tr_total <- tr2025_births[year == yr, sum(births)]
-
-    if (length(tr_total) == 0 || is.na(tr_total)) {
-      cli::cli_alert_warning("No TR2025 births for year {yr} - keeping NCHS data")
-      next
-    }
-
-    # Get NCHS total births for this year
-    nchs_total <- dt[year == yr, sum(births)]
-
-    if (nchs_total == 0) {
-      cli::cli_alert_warning("No NCHS births for year {yr} - cannot substitute")
-      next
-    }
-
-    # Calculate scaling factor
-    scale_factor <- tr_total / nchs_total
-
-    # Apply scaling (preserves age distribution)
-    dt[year == yr, births := births * scale_factor]
-
-    cli::cli_alert_info(
-      "Year {yr}: Substituted TR2025 births ({format(round(tr_total), big.mark=',')} vs NCHS {format(round(nchs_total), big.mark=',')}, scale={round(scale_factor, 4)})"
-    )
-  }
-
-  dt
-}
-
-#' Constrain birth rates to target TFR for specified years
+#' Override birth rates to match custom TFR for specified years
 #'
 #' @description
 #' Scales all age-specific birth rates proportionally for specified years so that
-#' the resulting TFR equals the target value. This matches TR2025's approach of
-#' constraining recent years to match their published TFR values.
+#' the resulting TFR equals the target value. Useful when final NCHS data for
+#' recent years (typically TR_year - 1 and TR_year - 2) was not available when
+#' the Trustees Report was published, and the user wants to match the TR's
+#' estimated TFR values instead.
 #'
 #' @param birth_rates data.table with columns: year, age, birth_rate
-#' @param constrain_tfr Named list or vector mapping years to target TFRs.
+#' @param custom_recent_tfr Named list or vector mapping years to target TFRs.
 #'   Example: list("2023" = 1.62, "2024" = 1.62) or c("2023" = 1.62, "2024" = 1.62)
-#'   Set to NULL to disable constraints.
+#'   Set to NULL to disable (default).
 #'
-#' @return data.table with constrained birth rates for the specified years
+#' @return data.table with overridden birth rates for the specified years
 #'
 #' @details
 #' The scaling preserves the relative age pattern of fertility while adjusting
-#' the overall level to hit the target TFR for each constrained year.
+#' the overall level to hit the target TFR for each specified year.
 #'
-#' Formula: b_x^{constrained} = b_x^{calculated} * (target_TFR / calculated_TFR)
-#'
-#' Per TR2025 documentation (Section 1.1.c, Step 1):
-#' "calculate estimated 2024 births rates... using the estimated total fertility
-#' of 1.62 using selected state data births and residential populations"
+#' Formula: b_x^{override} = b_x^{calculated} * (target_TFR / calculated_TFR)
 #'
 #' @export
-constrain_tfr_for_years <- function(birth_rates, constrain_tfr) {
+apply_custom_recent_tfr <- function(birth_rates, custom_recent_tfr) {
 
-  if (is.null(constrain_tfr) || length(constrain_tfr) == 0) {
-    cli::cli_alert_info("No TFR constraints specified - using calculated rates")
+  if (is.null(custom_recent_tfr) || length(custom_recent_tfr) == 0) {
     return(birth_rates)
   }
 
   dt <- data.table::copy(birth_rates)
 
   # Convert to named list if needed
-  if (!is.list(constrain_tfr)) {
-    constrain_tfr <- as.list(constrain_tfr)
+  if (!is.list(custom_recent_tfr)) {
+    custom_recent_tfr <- as.list(custom_recent_tfr)
   }
 
-  # Process each year
-
-  for (yr_char in names(constrain_tfr)) {
+  for (yr_char in names(custom_recent_tfr)) {
     yr <- as.integer(yr_char)
-    target_tfr <- constrain_tfr[[yr_char]]
+    target_tfr <- custom_recent_tfr[[yr_char]]
 
     if (is.null(target_tfr) || is.na(target_tfr)) {
       next
@@ -629,14 +493,14 @@ constrain_tfr_for_years <- function(birth_rates, constrain_tfr) {
     # Calculate current TFR for this year
     year_rates <- dt[year == yr]
     if (nrow(year_rates) == 0) {
-      cli::cli_alert_warning("No rates for year {yr} - cannot apply TFR constraint")
+      cli::cli_alert_warning("No rates for year {yr} - cannot apply custom TFR")
       next
     }
 
     calculated_tfr <- sum(year_rates$birth_rate, na.rm = TRUE)
 
     if (calculated_tfr == 0) {
-      cli::cli_alert_warning("Calculated TFR is zero for year {yr} - cannot apply constraint")
+      cli::cli_alert_warning("Calculated TFR is zero for year {yr} - cannot apply custom TFR")
       next
     }
 
@@ -646,11 +510,8 @@ constrain_tfr_for_years <- function(birth_rates, constrain_tfr) {
     # Apply scaling to this year's rates
     dt[year == yr, birth_rate := birth_rate * scale_factor]
 
-    # Verify the constraint was applied correctly
-    new_tfr <- dt[year == yr, sum(birth_rate, na.rm = TRUE)]
-
     cli::cli_alert_success(
-      "Constrained {yr} TFR: {round(calculated_tfr, 4)} -> {round(new_tfr, 4)} (target: {target_tfr}, scale: {round(scale_factor, 4)})"
+      "Applied custom TFR for {yr}: {round(calculated_tfr, 4)} -> {round(target_tfr, 4)} (scale: {round(scale_factor, 4)})"
     )
   }
 
