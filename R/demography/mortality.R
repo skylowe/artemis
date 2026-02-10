@@ -3,6 +3,12 @@
 #' Functions for calculating historical death rates, projecting future mortality,
 #' and computing life tables using the SSA methodology.
 #'
+#' NOTE (Deviation #8): TR2025 Section 1.2.b lists extensive historical data
+#' going back to 1900 (Items 2, 5, 12-16, 29). ARTEMIS only processes data
+#' from 1968+ (deaths) and 1980+ (Census population). Pre-1968 data is only
+#' used for historical life tables and has zero impact on the mortality
+#' projection which uses 2008-2019 regression and projects from 2019 onward.
+#'
 #' @name mortality
 NULL
 
@@ -1673,6 +1679,11 @@ run_mortality_projection <- function(deaths,
                                                   by_cause = by_cause)
 
   # Step 2: Apply WH smoothing to historical mx
+  # NOTE (Deviation #10): Smoothing is applied BEFORE the AAx regression. The
+  # TR2025 documentation (Section 1.2.c, Eq 1.2.1-1.2.2) describes smoothing
+  # and regression separately without specifying their ordering. Smoothing first
+  # is standard actuarial practice: it removes age-to-age noise from raw mx,
+  # producing more stable AAx estimates from the subsequent regression.
   cli::cli_h2("Step 2: Apply Whittaker-Henderson smoothing")
   mx_smooth <- smooth_death_rates(mx_historical)
 
@@ -1715,7 +1726,12 @@ run_mortality_projection <- function(deaths,
     effective_base_year <- base_year
   }
 
-  # For tr_qx method, skip projection steps and load TR2025 qx directly
+  # NOTE (Deviation #15): The "tr_qx" method intentionally bypasses the full
+  # regression-based mortality projection (Steps 6-9) and loads TR2025's
+  # pre-computed qx values directly. This ensures exact alignment with TR2025
+  # mortality outputs. All other audit deviations from the TR2025 methodology
+  # (e.g., cause-specific projection, CMS data, age-last-birthday conversion)
+  # are only active when starting_aax_method = "regression" or "capped".
   if (starting_aax_method == "tr_qx") {
     cli::cli_h2("Step 6: Load TR2025 qx directly (skipping projection)")
 
@@ -3193,6 +3209,11 @@ get_default_marital_factors <- function() {
 #' Where:
 #' - D0 = total infant deaths during year
 #' - E0 = exposure (births adjusted for separation factor)
+#'
+#' NOTE (Deviation #16): TR2025 Item 7 provides starting qx values from
+#' 1939-41 decennial life tables for infant/toddler age groups. These are only
+#' used for the 1940-1967 period. ARTEMIS computes q0 from 1968 onward using
+#' NCHS microdata, so the 1939-41 starting values are not needed.
 #'
 #' @export
 calculate_infant_mortality <- function(infant_deaths, monthly_births, year,

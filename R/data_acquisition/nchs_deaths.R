@@ -3,6 +3,17 @@
 #' Functions for downloading and processing death data from NCHS via NBER.
 #' Processes mortality microdata to aggregate deaths by age, sex, and cause.
 #'
+#' NOTE: TR2025 Section 1.2.b data scope vs ARTEMIS implementation:
+#'
+#' Intentionally omitted (zero impact on projections):
+#' - Items 2, 5, 12-16: Pre-1968 historical data (deaths 1900-67, populations
+#'   1900-79, Death Registration area states). Only used for historical life
+#'   tables prior to the regression period (2008-2019).
+#' - Items 17-18: USAF overseas population and 5-year age group splitting for
+#'   pre-1968 ages 85+. Only affects pre-1968 elderly population estimates.
+#' - Item 7: Starting qx from 1939-41 decennial life tables for infant/toddler
+#'   age groups. Only used for 1940-1967 period q0 calculation.
+#'
 #' @name nchs_deaths
 NULL
 

@@ -123,6 +123,9 @@ create_mortality_targets <- function() {
     ),
 
     # Step 5: Run full mortality projection
+    # NOTE: Default starting_aax_method = "tr_qx" loads TR2025 qx directly,
+    # bypassing the regression-based projection. Set to "regression" in config
+    # to exercise the full independent mortality methodology.
     targets::tar_target(
       mortality_mx_projected,
       run_mortality_projection(
