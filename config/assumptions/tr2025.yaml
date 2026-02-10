@@ -105,6 +105,10 @@ mortality:
       age_65_84: 1.00
       age_85_plus: 1.00
 
+  # Marital mortality differential smoothing parameter
+  # TR2025 Section 1.2.c Step 5: WH smoothing with degree=2, smoothing=0.01
+  marital_smoothing_parameter: 0.01
+
   # =========================================================================
   # Ultimate Annual Percentage Reductions (AAx) by Age Group and Cause
   # =========================================================================

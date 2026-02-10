@@ -2859,7 +2859,7 @@ calculate_qx_by_marital_status <- function(qx_total, marital_factors = NULL) {
 #' Proceedings of the Edinburgh Mathematical Society, 41, 63-75.
 #'
 #' @keywords internal
-wh_smooth_marital <- function(values, degree = 2, smoothing = 0.5) {
+wh_smooth_marital <- function(values, degree = 2, smoothing = 0.01) {
   n <- length(values)
   if (n < degree + 1) {
     return(values)  # Can't smooth if too few points
@@ -3036,7 +3036,7 @@ calculate_marital_mortality_factors <- function(
       }
 
       # Apply smoothing
-      smoothed <- wh_smooth_marital(dr_values, degree = 2, smoothing = 0.5)
+      smoothed <- wh_smooth_marital(dr_values, degree = 2, smoothing = 0.01)
 
       # Store back - update rates table by age (avoids data.table chained subset bug)
       ages_to_update <- subset_rows$age
