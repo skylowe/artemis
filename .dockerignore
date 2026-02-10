@@ -1,0 +1,44 @@
+# Large data directories (bind-mounted at runtime)
+data/raw/
+data/cache/
+data/baseline/
+data/outputs/
+data/scenarios/
+
+# Targets cache (per-user at runtime)
+_targets/
+
+# Git
+.git/
+.gitattributes
+
+# renv library (rebuilt in container)
+renv/library/
+renv/staging/
+renv/sandbox/
+
+# Logs
+*.log
+shinyproxy.log
+
+# Environment files (bind-mounted at runtime)
+.Renviron
+
+# IDE / editor
+.Rhistory
+.RData
+*.Rproj.user/
+.vscode/
+.idea/
+
+# Documentation and plans (not needed at runtime)
+plans/
+documentation/
+reports/
+tests/
+CLAUDE.md
+CONFIG_CHANGES.md
+*.md
+
+# Claude config
+.claude/
