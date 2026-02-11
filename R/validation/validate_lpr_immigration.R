@@ -611,3 +611,160 @@ validate_lpr_outputs <- function(projection_result, tolerance = 0.001) {
     summary = messages
   )
 }
+
+#' Validate separate NEW/AOS distributions
+#'
+#' @description
+#' When using separate NEW/AOS distributions (TR2025 Section 1.3 methodology),
+#' validates that each distribution and the resulting projections are correct.
+#'
+#' @param new_distribution data.table with age, sex, distribution
+#' @param aos_distribution data.table with age, sex, distribution
+#' @param new_arrivals data.table with year, age, sex, new_arrivals
+#' @param aos data.table with year, age, sex, aos
+#' @param lpr_immigration data.table with year, age, sex, immigration
+#' @param assumptions data.table with year, lpr_new, lpr_aos, total_lpr
+#' @param tolerance Numeric: acceptable deviation (default: 0.001)
+#'
+#' @return list with validation results
+#'
+#' @export
+validate_separate_distributions <- function(new_distribution = NULL,
+                                             aos_distribution = NULL,
+                                             new_arrivals = NULL,
+                                             aos = NULL,
+                                             lpr_immigration = NULL,
+                                             assumptions = NULL,
+                                             tolerance = 0.001) {
+  checks <- list()
+  messages <- character()
+  all_passed <- TRUE
+
+  cli::cli_h3("Separate Distribution Validation (TR2025 Section 1.3)")
+
+  # Check 1: NEW distribution sums to 1.0
+  if (!is.null(new_distribution)) {
+    new_sum <- sum(new_distribution$distribution)
+    new_pass <- abs(new_sum - 1.0) <= tolerance
+    checks$new_dist_sum <- list(name = "NEW dist sums to 1.0", passed = new_pass)
+    if (new_pass) {
+      cli::cli_alert_success("NEW distribution sums to {round(new_sum, 6)}")
+    } else {
+      all_passed <- FALSE
+      cli::cli_alert_danger("NEW distribution sums to {round(new_sum, 4)}")
+    }
+  }
+
+  # Check 2: AOS distribution sums to 1.0
+  if (!is.null(aos_distribution)) {
+    aos_sum <- sum(aos_distribution$distribution)
+    aos_pass <- abs(aos_sum - 1.0) <= tolerance
+    checks$aos_dist_sum <- list(name = "AOS dist sums to 1.0", passed = aos_pass)
+    if (aos_pass) {
+      cli::cli_alert_success("AOS distribution sums to {round(aos_sum, 6)}")
+    } else {
+      all_passed <- FALSE
+      cli::cli_alert_danger("AOS distribution sums to {round(aos_sum, 4)}")
+    }
+  }
+
+  # Check 3: NEW + AOS = L for each year
+  if (!is.null(new_arrivals) && !is.null(aos) && !is.null(lpr_immigration)) {
+    new_totals <- new_arrivals[, .(new_total = sum(new_arrivals)), by = year]
+    aos_totals <- aos[, .(aos_total = sum(aos)), by = year]
+    lpr_totals <- lpr_immigration[, .(lpr_total = sum(immigration)), by = year]
+
+    combined <- merge(merge(new_totals, aos_totals, by = "year"), lpr_totals, by = "year")
+    combined[, diff := abs((new_total + aos_total) - lpr_total)]
+    combined[, passes := diff <= 1]  # Allow rounding
+
+    sum_pass <- all(combined$passes)
+    checks$new_aos_equals_l <- list(name = "NEW + AOS = L", passed = sum_pass)
+    if (sum_pass) {
+      cli::cli_alert_success("NEW + AOS = L for all {nrow(combined)} years")
+    } else {
+      all_passed <- FALSE
+      failed <- combined[passes == FALSE]
+      cli::cli_alert_danger("NEW + AOS != L for years: {paste(failed$year, collapse=', ')}")
+    }
+  }
+
+  # Check 4: NEW totals match V.A2 assumptions
+  if (!is.null(new_arrivals) && !is.null(assumptions) && "lpr_new" %in% names(assumptions)) {
+    new_totals <- new_arrivals[, .(projected = sum(new_arrivals)), by = year]
+    check <- merge(new_totals, assumptions[, .(year, expected = lpr_new)], by = "year")
+    check[, rel_diff := abs(projected - expected) / expected]
+    check[, passes := rel_diff <= tolerance]
+
+    new_match <- all(check$passes)
+    checks$new_matches_va2 <- list(name = "NEW matches V.A2", passed = new_match)
+    if (new_match) {
+      cli::cli_alert_success("NEW totals match V.A2 assumptions")
+    } else {
+      all_passed <- FALSE
+      cli::cli_alert_danger("NEW totals deviate from V.A2")
+    }
+  }
+
+  n_checks <- length(checks)
+  n_passed <- sum(sapply(checks, function(x) x$passed))
+
+  if (all_passed) {
+    cli::cli_alert_success("All {n_checks} separate distribution checks passed")
+  } else {
+    cli::cli_alert_danger("{n_passed}/{n_checks} separate distribution checks passed")
+  }
+
+  list(passed = all_passed, checks = checks, summary = messages)
+}
+
+#' Validate emigration distribution properties
+#'
+#' @description
+#' Validates emigration distribution regardless of source (CBO or DHS).
+#'
+#' @param distribution data.table with age, sex, distribution
+#' @param source Character: "cbo" or "dhs" for reporting
+#' @param tolerance Numeric: acceptable deviation from 1.0 sum
+#'
+#' @return list with validation results
+#'
+#' @export
+validate_emigration_distribution <- function(distribution,
+                                              source = "unknown",
+                                              tolerance = 0.001) {
+  checks <- list()
+
+  dist_sum <- sum(distribution$distribution)
+  sum_pass <- abs(dist_sum - 1.0) <= tolerance
+
+  age_range <- range(distribution$age)
+  age_pass <- age_range[1] == 0 && age_range[2] >= 99
+
+  sexes <- unique(distribution$sex)
+  sex_pass <- all(c("male", "female") %in% sexes)
+
+  no_neg <- all(distribution$distribution >= 0)
+
+  all_passed <- sum_pass && age_pass && sex_pass && no_neg
+
+  if (all_passed) {
+    cli::cli_alert_success("Emigration distribution ({source}): valid (ages {age_range[1]}-{age_range[2]}, sums to {round(dist_sum, 6)})")
+  } else {
+    if (!sum_pass) cli::cli_alert_danger("Emigration distribution sums to {round(dist_sum, 4)}")
+    if (!age_pass) cli::cli_alert_danger("Emigration age range: {age_range[1]}-{age_range[2]}")
+    if (!sex_pass) cli::cli_alert_danger("Missing sex categories")
+    if (!no_neg) cli::cli_alert_danger("Negative values in distribution")
+  }
+
+  list(
+    passed = all_passed,
+    checks = list(
+      sums_to_one = sum_pass,
+      age_range = age_pass,
+      both_sexes = sex_pass,
+      non_negative = no_neg
+    ),
+    source = source
+  )
+}

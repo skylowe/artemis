@@ -1,17 +1,28 @@
-#' Legal Emigration Projection
+#' Legal Emigration Projection (DEPRECATED)
 #'
-#' Functions for projecting legal emigration by age and sex.
-#' Uses CBO-derived age-sex distributions with TR2025 methodology.
+#' @description
+#' \lifecycle{deprecated}
+#'
+#' This file contains legacy emigration functions that have been superseded by
+#' canonical versions in `lpr_immigration.R`. The pipeline uses the versions
+#' from `lpr_immigration.R` exclusively.
+#'
+#' Deprecated functions:
+#' - `project_legal_emigration_legacy()` -> use `project_legal_emigration()` in lpr_immigration.R
+#' - `get_tr_emigration_assumptions()` -> use `get_tr_lpr_assumptions()` in lpr_immigration.R
+#' - `calculate_net_lpr_immigration()` -> use `calculate_net_lpr()` in lpr_immigration.R
+#' - `run_legal_emigration_projection()` -> pipeline handles emigration directly
 #'
 #' @name legal_emigration
 NULL
 
-#' Project legal emigration by age and sex
+#' Project legal emigration by age and sex (DEPRECATED)
 #'
 #' @description
-#' Projects legal emigration using TR2025 methodology:
-#' - Total emigration = emigration_ratio * total LPR immigration
-#' - Distributed by age and sex using a fixed distribution
+#' \lifecycle{deprecated}
+#' Use `project_legal_emigration()` from `lpr_immigration.R` instead.
+#' This function is renamed to `_legacy` to avoid conflict with the canonical
+#' version in `lpr_immigration.R`.
 #'
 #' @param lpr_immigration data.table with columns: year, age, sex, count
 #'   OR numeric vector of total LPR immigration by year
@@ -21,18 +32,16 @@ NULL
 #'
 #' @return data.table with columns: year, age, sex, emigration
 #'
-#' @details
-#' TR2025 methodology:
-#' - Legal emigration = 25% of LPR immigration
-#' - Distributed by age and sex based on historical patterns
-#'
-#' Formula: E_x,s^z = ratio * sum(L) * EDIST_x,s
-#'
-#' @export
-project_legal_emigration <- function(lpr_immigration,
+#' @keywords internal
+project_legal_emigration_legacy <- function(lpr_immigration,
                                      emigration_distribution,
                                      emigration_ratio = 0.25,
                                      years = NULL) {
+  cli::cli_warn(c(
+    "!" = "{.fn project_legal_emigration_legacy} is deprecated",
+    "i" = "Use {.fn project_legal_emigration} from {.file R/demography/lpr_immigration.R} instead"
+  ))
+
   # Handle different input types for lpr_immigration
   if (is.data.table(lpr_immigration) || is.data.frame(lpr_immigration)) {
     lpr_immigration <- data.table::as.data.table(lpr_immigration)
@@ -96,33 +105,31 @@ project_legal_emigration <- function(lpr_immigration,
   result
 }
 
-#' Get TR2025 emigration assumptions
+#' Get TR2025 emigration assumptions (DEPRECATED)
 #'
 #' @description
-#' Returns the TR2025 legal emigration assumptions.
-#' Emigration is calculated as a ratio of LPR immigration.
+#' \lifecycle{deprecated}
+#' Use `get_tr_lpr_assumptions()` from `lpr_immigration.R` instead.
+#' That function loads assumptions from V.A2 data rather than hardcoding values.
 #'
 #' @param config list: configuration with immigration assumptions (optional)
 #' @param years Integer vector: years to get assumptions for
-#' @param emigration_ratio Numeric: ratio of emigration to LPR immigration.
-#'   If NULL and config provided, reads from config$immigration$emigration$ratio.
-#'   Default: 0.25.
+#' @param emigration_ratio Numeric: ratio of emigration to LPR immigration
 #'
 #' @return data.table with columns: year, total_emigration
 #'
-#' @details
-#' TR2025 intermediate assumptions:
-#' - Emigration ratio: 25% of LPR immigration
-#' - 2024: 315,750 (25% of 1,263,000)
-#' - 2025-26: 303,250 (25% of 1,213,000)
-#' - 2027+: 262,500 (25% of 1,050,000)
-#'
-#' @export
+#' @keywords internal
 get_tr_emigration_assumptions <- function(config = NULL,
                                           years = 2024:2099,
                                           emigration_ratio = NULL) {
+  cli::cli_warn(c(
+    "!" = "{.fn get_tr_emigration_assumptions} is deprecated",
+    "i" = "Use {.fn get_tr_lpr_assumptions} from {.file R/demography/lpr_immigration.R}",
+    "i" = "That function loads from V.A2 data instead of hardcoded values"
+  ))
+
   # Get emigration ratio from config or use default
- if (is.null(emigration_ratio)) {
+  if (is.null(emigration_ratio)) {
     if (!is.null(config) && !is.null(config$immigration$emigration$ratio)) {
       emigration_ratio <- config$immigration$emigration$ratio
     } else {
@@ -130,12 +137,9 @@ get_tr_emigration_assumptions <- function(config = NULL,
     }
   }
 
-  # TR2025 LPR immigration assumptions
-  lpr_assumptions <- data.table::data.table(
-    year = years
-  )
+  # TR2025 LPR immigration assumptions (hardcoded - DEPRECATED)
+  lpr_assumptions <- data.table::data.table(year = years)
 
-  # Set LPR immigration levels
   lpr_assumptions[, total_lpr := data.table::fcase(
     year == 2024, 1263000,
     year %in% 2025:2026, 1213000,
@@ -143,24 +147,29 @@ get_tr_emigration_assumptions <- function(config = NULL,
     default = 1050000
   )]
 
-  # Calculate emigration using configured ratio
   lpr_assumptions[, total_emigration := total_lpr * emigration_ratio]
 
   lpr_assumptions[, .(year, total_lpr, total_emigration)]
 }
 
-#' Calculate net LPR immigration
+#' Calculate net LPR immigration (DEPRECATED)
 #'
 #' @description
-#' Calculates net LPR immigration (immigration - emigration) by age and sex.
+#' \lifecycle{deprecated}
+#' Use `calculate_net_lpr()` from `lpr_immigration.R` instead.
 #'
 #' @param lpr_immigration data.table with columns: year, age, sex, immigration (or count)
 #' @param legal_emigration data.table with columns: year, age, sex, emigration
 #'
 #' @return data.table with columns: year, age, sex, immigration, emigration, net_lpr
 #'
-#' @export
+#' @keywords internal
 calculate_net_lpr_immigration <- function(lpr_immigration, legal_emigration) {
+  cli::cli_warn(c(
+    "!" = "{.fn calculate_net_lpr_immigration} is deprecated",
+    "i" = "Use {.fn calculate_net_lpr} from {.file R/demography/lpr_immigration.R}"
+  ))
+
   lpr_immigration <- data.table::as.data.table(lpr_immigration)
   legal_emigration <- data.table::as.data.table(legal_emigration)
 
@@ -188,33 +197,35 @@ calculate_net_lpr_immigration <- function(lpr_immigration, legal_emigration) {
   result
 }
 
-#' Run legal emigration projection using CBO distribution
+#' Run legal emigration projection using CBO distribution (DEPRECATED)
 #'
 #' @description
-#' Convenience function to run the complete legal emigration projection
-#' using CBO-derived distribution and TR2025 methodology.
+#' \lifecycle{deprecated}
+#' The pipeline now handles emigration projection directly via the
+#' `emigration_distribution` and `legal_emigration_projected` targets.
 #'
-#' @param cbo_data data.table from load_cbo_migration() (optional, will load if NULL)
-#' @param reference_years Integer vector: years to use for distribution (default: 2021:2024)
-#' @param projection_years Integer vector: years to project (default: 2025:2099)
-#' @param emigration_ratio Numeric: ratio of emigration to immigration (default: 0.25)
-#' @param use_tr_assumptions Logical: if TRUE, use TR2025 LPR assumptions;
-#'   if FALSE, use CBO LPR immigration data
+#' @param cbo_data data.table from load_cbo_migration() (optional)
+#' @param reference_years Integer vector: years to use for distribution
+#' @param projection_years Integer vector: years to project
+#' @param emigration_ratio Numeric: ratio of emigration to immigration
+#' @param use_tr_assumptions Logical: use TR2025 LPR assumptions
 #'
-#' @return list with:
-#'   - emigration: data.table with projected emigration by year, age, sex
-#'   - distribution: data.table with the age-sex distribution used
-#'   - assumptions: data.table with the LPR/emigration assumptions
+#' @return list with emigration, distribution, assumptions
 #'
-#' @export
+#' @keywords internal
 run_legal_emigration_projection <- function(cbo_data = NULL,
                                             reference_years = 2021:2024,
                                             projection_years = 2025:2099,
                                             emigration_ratio = 0.25,
                                             use_tr_assumptions = TRUE) {
+  cli::cli_warn(c(
+    "!" = "{.fn run_legal_emigration_projection} is deprecated",
+    "i" = "Emigration is now handled by the pipeline targets directly",
+    "i" = "See {.file R/targets/immigration_targets.R} emigration_distribution target"
+  ))
+
   # Load CBO data if not provided
   if (is.null(cbo_data)) {
-    source("R/data_acquisition/cbo_migration.R")
     cbo_data <- load_cbo_migration()
   }
 
@@ -236,17 +247,12 @@ run_legal_emigration_projection <- function(cbo_data = NULL,
   }
 
   # Project emigration
-  emigration <- project_legal_emigration(
+  emigration <- project_legal_emigration_legacy(
     lpr_immigration = lpr_totals,
     emigration_distribution = emig_dist,
     emigration_ratio = emigration_ratio,
     years = years
   )
-
-  # Report summary
-  total_by_year <- emigration[, .(total = sum(emigration)), by = year]
-  cli::cli_alert_success("Projected emigration for {length(unique(emigration$year))} years")
-  cli::cli_alert_info("Sample totals: {projection_years[1]}={format(total_by_year[year==projection_years[1], total], big.mark=',')}, {tail(projection_years, 1)}={format(total_by_year[year==tail(projection_years, 1), total], big.mark=',')}")
 
   list(
     emigration = emigration,
