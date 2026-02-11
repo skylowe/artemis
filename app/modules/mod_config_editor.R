@@ -210,26 +210,15 @@ mod_config_editor_ui <- function(id) {
         icon = icon("database"),
         class = "text-secondary",
 
-        # Quick toggle buttons
-        div(
-          class = "btn-group w-100 mb-3",
-          role = "group",
-          actionButton(
-            ns("use_all_tr"),
-            "Use All TR2025",
-            class = "btn-outline-primary btn-sm"
+        selectInput(
+          ns("historical_pop_source"),
+          "Historical Population Source",
+          choices = c(
+            "ARTEMIS (Census all ages)" = "census",
+            "ARTEMIS Hybrid (Census 0-84, SSA 85+)" = "hybrid",
+            "SSA TR2025 (all ages)" = "ssa"
           ),
-          actionButton(
-            ns("use_all_artemis"),
-            "Use All ARTEMIS",
-            class = "btn-outline-secondary btn-sm"
-          )
-        ),
-
-        checkboxInput(
-          ns("use_tr_historical_pop"),
-          "Starting Population: TR2025",
-          value = FALSE
+          selected = "hybrid"
         )
       )
     ),
@@ -325,8 +314,8 @@ mod_config_editor_server <- function(id, rv) {
       updateSliderInput(session, "emigration_ratio",
         value = config$immigration$emigration$ratio %||% 0.25)
 
-      updateCheckboxInput(session, "use_tr_historical_pop",
-        value = config$projected_population$use_tr_historical_population %||% FALSE)
+      updateSelectInput(session, "historical_pop_source",
+        selected = config$historical_population$population_source %||% "hybrid")
 
       # Check if custom recent TFR is enabled and populate values
       has_custom_tfr <- !is.null(config$fertility$custom_recent_tfr) &&
@@ -344,24 +333,6 @@ mod_config_editor_server <- function(id, rv) {
       }
 
     }) |> bindEvent(rv$config, ignoreNULL = TRUE)
-
-    # Use All TR2025 button
-    observeEvent(input$use_all_tr, {
-      updateCheckboxInput(session, "use_tr_historical_pop", value = TRUE)
-      updateCheckboxInput(session, "custom_recent_tfr", value = TRUE)
-      updateSelectInput(session, "starting_aax_method", selected = "tr_qx")
-      updateSelectInput(session, "lpr_assumptions_source", selected = "va2")
-      updateSelectInput(session, "distribution_method", selected = "tr_derived")
-    })
-
-    # Use All ARTEMIS button
-    observeEvent(input$use_all_artemis, {
-      updateCheckboxInput(session, "use_tr_historical_pop", value = FALSE)
-      updateCheckboxInput(session, "custom_recent_tfr", value = FALSE)
-      updateSelectInput(session, "starting_aax_method", selected = "regression")
-      updateSelectInput(session, "lpr_assumptions_source", selected = "va2")
-      updateSelectInput(session, "distribution_method", selected = "dhs")
-    })
 
     # Build modified config when Apply is clicked
     observeEvent(input$apply_config, {
@@ -406,7 +377,9 @@ mod_config_editor_server <- function(id, rv) {
       config$immigration$lpr$distribution_method <- input$distribution_method
       config$immigration$emigration$ratio <- input$emigration_ratio
 
-      config$projected_population$use_tr_historical_population <- input$use_tr_historical_pop
+      config$historical_population$population_source <- input$historical_pop_source
+      # "ssa" mode bypasses historical calculation, so also set use_tr flag
+      config$projected_population$use_tr_historical_population <- (input$historical_pop_source == "ssa")
 
       # Store modified config
       modified_config(config)

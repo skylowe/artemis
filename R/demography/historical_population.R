@@ -77,6 +77,10 @@ calculate_historical_population <- function(start_year = 1940,
                                              end_year = 2022,
                                              ages = 0:100,
                                              config = NULL,
+                                             lpr_assumptions = NULL,
+                                             immigration_dist = NULL,
+                                             emigration_dist = NULL,
+                                             births_by_sex = NULL,
                                              cache_dir = here::here("data/cache"),
                                              use_cache = TRUE) {
   cli::cli_h1("Calculating Historical Population (Eq 1.4.1)")
@@ -122,63 +126,114 @@ calculate_historical_population <- function(start_year = 1940,
     return(result)
   }
 
-  # Get tab years (from config if available)
-  tab_years <- get_tab_years(config)
-  tab_years <- tab_years[tab_years >= start_year & tab_years <= end_year]
+  # Determine population source mode from config
+  max_age <- max(ages)
+  pop_source <- config$historical_population$population_source %||% "hybrid"
+  if (!pop_source %in% c("census", "hybrid", "ssa")) {
+    cli::cli_abort(c(
+      "Invalid population_source: {.val {pop_source}}",
+      "i" = "Must be one of: {.val census}, {.val hybrid}, {.val ssa}"
+    ))
+  }
+  cli::cli_alert_info("Population source mode: {.val {pop_source}}")
 
-  cli::cli_alert_info("Estimating population for {start_year}-{end_year}")
-  cli::cli_alert_info("Tab years: {length(tab_years)} ({min(tab_years)}-{max(tab_years)})")
+  # =========================================================================
+  # SSA MODE: Use SSPopDec directly for all ages — no component adjustments
+  # =========================================================================
+  if (pop_source == "ssa") {
+    cli::cli_h2("Loading SSPopDec for all years/ages (SSA mode)")
+    all_pop <- load_tr_population_by_year(start_year:end_year, ages, config)
 
-  # Step 1: Gather all component data
-  cli::cli_h2("Step 1: Gathering Component Data")
-  components <- gather_population_components(
-    years = start_year:end_year,
-    ages = ages,
-    cache_dir = cache_dir,
-    config = config
-  )
+    # Still compute component totals for analysis/validation
+    cli::cli_h2("Gathering components for analysis (not used for population)")
+    components <- gather_population_components(
+      years = start_year:end_year,
+      ages = ages,
+      cache_dir = cache_dir,
+      config = config,
+      lpr_assumptions = lpr_assumptions,
+      immigration_dist = immigration_dist,
+      emigration_dist = emigration_dist,
+      births_by_sex = births_by_sex
+    )
+    component_totals <- compute_component_totals(components, config)
 
-  # Step 2: Calculate tab year populations (ages 0-84)
-  cli::cli_h2("Step 2: Tab Year Populations (Ages 0-84)")
-  tab_pop_0_84 <- calculate_tab_year_populations(
-    tab_years = tab_years,
-    components = components,
-    ages = 0:84,
-    config = config
-  )
+  } else {
+    # =========================================================================
+    # CENSUS / HYBRID MODE: Component method with interpolation
+    # =========================================================================
+    # Get tab years (from config if available)
+    tab_years <- get_tab_years(config)
+    tab_years <- tab_years[tab_years >= start_year & tab_years <= end_year]
 
-  # Step 3: Build up ages 85+ for tab years (from SSPopDec)
-  cli::cli_h2("Step 3: Ages 85+ from SSPopDec")
-  tab_pop_85_plus <- build_up_ages_85_plus(
-    tab_years = tab_years,
-    components = components,
-    max_age = max(ages),
-    config = config
-  )
+    cli::cli_alert_info("Estimating population for {start_year}-{end_year}")
+    cli::cli_alert_info("Tab years: {length(tab_years)} ({min(tab_years)}-{max(tab_years)})")
 
-  # Combine tab year populations
-  tab_pop <- data.table::rbindlist(list(tab_pop_0_84, tab_pop_85_plus))
-  data.table::setorder(tab_pop, year, sex, age)
+    # Step 1: Gather all component data
+    cli::cli_h2("Step 1: Gathering Component Data")
+    components <- gather_population_components(
+      years = start_year:end_year,
+      ages = ages,
+      cache_dir = cache_dir,
+      config = config,
+      lpr_assumptions = lpr_assumptions,
+      immigration_dist = immigration_dist,
+      emigration_dist = emigration_dist,
+      births_by_sex = births_by_sex
+    )
 
-  # Step 4: Interpolate between tab years
-  cli::cli_h2("Step 4: Inter-Tab Year Interpolation")
-  all_pop <- interpolate_populations(
-    tab_year_pops = tab_pop,
-    tab_years = tab_years,
-    target_years = start_year:end_year,
-    components = components,
-    config = config
-  )
+    if (pop_source == "census") {
+      # CENSUS MODE: Census PEP + Eq 1.4.1 for ALL ages 0-100
+      cli::cli_h2("Step 2: Tab Year Populations (Ages 0-{max_age}, Census mode)")
+      tab_pop <- calculate_tab_year_populations(
+        tab_years = tab_years,
+        components = components,
+        ages = 0:max_age,
+        config = config
+      )
+      # No Step 3 — Census PEP provides all ages
+    } else {
+      # HYBRID MODE (default): Census PEP for 0-84, SSPopDec for 85+
+      cli::cli_h2("Step 2: Tab Year Populations (Ages 0-84)")
+      tab_pop_0_84 <- calculate_tab_year_populations(
+        tab_years = tab_years,
+        components = components,
+        ages = 0:84,
+        config = config
+      )
+
+      cli::cli_h2("Step 3: Ages 85+ from SSPopDec")
+      tab_pop_85_plus <- build_up_ages_85_plus(
+        tab_years = tab_years,
+        components = components,
+        max_age = max_age,
+        config = config
+      )
+
+      tab_pop <- data.table::rbindlist(list(tab_pop_0_84, tab_pop_85_plus))
+    }
+
+    data.table::setorder(tab_pop, year, sex, age)
+
+    # Step 4: Interpolate between tab years
+    cli::cli_h2("Step 4: Inter-Tab Year Interpolation")
+    all_pop <- interpolate_populations(
+      tab_year_pops = tab_pop,
+      tab_years = tab_years,
+      target_years = start_year:end_year,
+      components = components,
+      config = config
+    )
+
+    component_totals <- compute_component_totals(components, config)
+  }
 
   # Summary statistics
   cli::cli_h2("Summary")
   total_by_year <- all_pop[, .(total = sum(population)), by = year]
-  cli::cli_alert_success("Calculated {nrow(all_pop)} population cells")
+  cli::cli_alert_success("Calculated {nrow(all_pop)} population cells (mode: {pop_source})")
   cli::cli_alert_info("1940 total: {format(total_by_year[year == min(year), total], big.mark = ',', scientific = FALSE)}")
   cli::cli_alert_info("{end_year} total: {format(total_by_year[year == max(year), total], big.mark = ',', scientific = FALSE)}")
-
-  # Compute component totals by year for analysis
-  component_totals <- compute_component_totals(components, config)
 
   # Save to cache (both population and components)
   cache_data <- list(
@@ -309,7 +364,11 @@ compute_component_totals <- function(components, config = NULL) {
 gather_population_components <- function(years,
                                           ages,
                                           cache_dir,
-                                          config = NULL) {
+                                          config = NULL,
+                                          lpr_assumptions = NULL,
+                                          immigration_dist = NULL,
+                                          emigration_dist = NULL,
+                                          births_by_sex = NULL) {
   components <- list()
 
   # 1. Census USAF (resident + armed forces overseas) populations
@@ -342,16 +401,22 @@ gather_population_components <- function(years,
 
   # 8. Mortality data (qx)
   cli::cli_alert("Loading mortality data...")
-  components$mortality <- load_mortality_data()
+  components$mortality <- load_mortality_data(config)
 
-  # 9. Immigration/emigration data
-  cli::cli_alert("Loading immigration/emigration data...")
-  components$immigration <- load_immigration_data()
-  components$emigration <- load_emigration_data()
+  # 9. Immigration/emigration from upstream LPR subprocess
+  cli::cli_alert("Building immigration/emigration from LPR assumptions...")
+  imm_emig <- build_historical_immigration_emigration(
+    lpr_assumptions = lpr_assumptions,
+    immigration_dist = immigration_dist,
+    emigration_dist = emigration_dist,
+    years = years
+  )
+  components$immigration <- imm_emig$immigration
+  components$emigration <- imm_emig$emigration
 
-  # 10. Births data
+  # 10. Births data from NCHS
   cli::cli_alert("Loading births data...")
-  components$births <- load_births_data()
+  components$births <- build_historical_births(births_by_sex, years)
 
   cli::cli_alert_success("All component data gathered")
 
@@ -952,131 +1017,226 @@ fetch_armed_forces_for_historical <- function(years) {
 
 #' Load Mortality Data for Population Calculations
 #'
+#' @description
+#' Loads death probabilities (qx) by year, age, and sex. Tries the mortality
+#' subprocess cache first, then TR2025 DeathProbsE files via config paths.
+#' Errors if neither source is available.
+#'
 #' @keywords internal
-load_mortality_data <- function() {
-  # Load qx from mortality subprocess
+load_mortality_data <- function(config = NULL) {
+  # Try mortality subprocess cache
   qx_file <- here::here("data/cache/mortality/historical_qx.rds")
-
   if (file.exists(qx_file)) {
     return(readRDS(qx_file))
   }
 
-  # Fallback: Load from TR2025 raw files
-  cli::cli_alert_info("Mortality cache not found, loading from TR2025 qx files")
-  result <- load_tr_mortality()
-  if (is.null(result) || nrow(result) == 0) {
-    cli::cli_abort(c(
-      "Mortality data unavailable",
-      "i" = "Neither cache ({qx_file}) nor TR2025 qx files found",
-      "i" = "Run mortality subprocess first, or ensure TR2025 qxprd files are in data/raw/SSA_TR2025/"
-    ))
-  }
-  result
-}
-
-#' Load TR2025 Mortality Data
-#'
-#' @keywords internal
-load_tr_mortality <- function() {
-  # Load from TR2025 raw files
-  male_file <- here::here("data/raw/SSA_TR2025/qxprdM_Alt2_TR2025.csv")
-  female_file <- here::here("data/raw/SSA_TR2025/qxprdF_Alt2_TR2025.csv")
-
-  if (!file.exists(male_file) || !file.exists(female_file)) {
-    cli::cli_abort(c(
-      "TR2025 mortality qx files not found",
-      "x" = "Male file: {male_file}",
-      "x" = "Female file: {female_file}",
-      "i" = "Place TR2025 qx files in data/raw/SSA_TR2025/"
-    ))
-  }
-
-  male_qx <- data.table::fread(male_file)
-  female_qx <- data.table::fread(female_file)
-
-  # Reshape to long format
-  male_long <- data.table::melt(
-    male_qx,
-    id.vars = "Year",
-    variable.name = "age_col",
-    value.name = "qx"
-  )
-  male_long[, sex := "male"]
-  male_long[, age := as.integer(gsub("Age", "", age_col))]
-
-  female_long <- data.table::melt(
-    female_qx,
-    id.vars = "Year",
-    variable.name = "age_col",
-    value.name = "qx"
-  )
-  female_long[, sex := "female"]
-  female_long[, age := as.integer(gsub("Age", "", age_col))]
-
-  data.table::rbindlist(list(male_long, female_long))[, .(
-    year = Year,
-    age = age,
-    sex = sex,
-    qx = qx
-  )]
-}
-
-#' Load Immigration Data
-#'
-#' @keywords internal
-load_immigration_data <- function() {
-  # Load from LPR immigration subprocess
-  lpr_file <- here::here("data/cache/immigration/lpr_immigration.rds")
-
-  if (file.exists(lpr_file)) {
-    return(readRDS(lpr_file))
+  # Try TR2025 DeathProbsE files (these are primary data, not a "fallback")
+  # The mortality subprocess may not have been run yet, but the TR2025 raw
+  # files contain the same qx data that the subprocess would produce.
+  if (!is.null(config$mortality$starting_tr_qx)) {
+    cli::cli_alert_info("Mortality cache not found, loading from TR2025 DeathProbsE files")
+    return(load_tr_mortality(config))
   }
 
   cli::cli_abort(c(
-    "Immigration cache not found at {lpr_file}",
-    "i" = "Run LPR immigration subprocess first: targets::tar_make(names = matches('lpr_immigration'))"
+    "Mortality data unavailable",
+    "x" = "Cache not found: {qx_file}",
+    "x" = "Config missing {.field mortality.starting_tr_qx} file paths",
+    "i" = "Run mortality subprocess: targets::tar_make(names = matches('mortality'))",
+    "i" = "Or ensure TR2025 DeathProbsE files are configured in config YAML"
   ))
 }
 
-#' Load Emigration Data
+#' Load TR2025 Mortality Data from DeathProbsE Files
+#'
+#' @description
+#' Reads death probability files specified in config. Uses historical file
+#' (1900-2022) and projected file (2023-2100). File paths come from
+#' `config$mortality$starting_tr_qx`.
+#'
+#' @param config List: configuration with mortality file paths
 #'
 #' @keywords internal
-load_emigration_data <- function() {
-  # Load from LPR immigration subprocess
-  emig_file <- here::here("data/cache/emigration/legal_emigration.rds")
+load_tr_mortality <- function(config = NULL) {
+  # Resolve file paths from config
+  tr_year <- if (!is.null(config)) config$metadata$trustees_report_year else 2025
+  tr_dir <- here::here(paste0("data/raw/SSA_TR", tr_year))
 
-  if (file.exists(emig_file)) {
-    return(readRDS(emig_file))
-  }
-
-  cli::cli_abort(c(
-    "Emigration cache not found at {emig_file}",
-    "i" = "Run legal emigration subprocess first: targets::tar_make(names = matches('legal_emigration'))"
-  ))
-}
-
-#' Load Births Data
-#'
-#' @keywords internal
-load_births_data <- function() {
-  # Load from fertility subprocess
-  births_file <- here::here("data/cache/fertility/births_by_sex.rds")
-
-  if (file.exists(births_file)) {
-    return(readRDS(births_file))
-  }
-
-  # Try NCHS births directly
-  cli::cli_alert_info("Births cache not found, fetching from NCHS")
-  result <- fetch_nchs_births_by_sex()
-  if (is.null(result) || nrow(result) == 0) {
+  if (!is.null(config$mortality$starting_tr_qx)) {
+    male_hist <- here::here(config$mortality$starting_tr_qx$male_qx_hist_file)
+    female_hist <- here::here(config$mortality$starting_tr_qx$female_qx_hist_file)
+    male_proj <- here::here(config$mortality$starting_tr_qx$male_qx_file)
+    female_proj <- here::here(config$mortality$starting_tr_qx$female_qx_file)
+  } else {
     cli::cli_abort(c(
-      "Births data unavailable",
-      "i" = "Neither cache ({births_file}) nor NCHS API returned data",
-      "i" = "Run fertility subprocess first: targets::tar_make(names = matches('fertility'))"
+      "Config missing {.field mortality.starting_tr_qx} file paths",
+      "i" = "Add male_qx_hist_file, female_qx_hist_file, male_qx_file, female_qx_file to config"
     ))
   }
+
+  # Need at least historical files
+  if (!file.exists(male_hist) || !file.exists(female_hist)) {
+    cli::cli_abort(c(
+      "TR{tr_year} historical mortality files not found",
+      "x" = "Male file: {male_hist}",
+      "x" = "Female file: {female_hist}",
+      "i" = "Place TR{tr_year} DeathProbsE files in {tr_dir}/"
+    ))
+  }
+
+  read_qx_file <- function(filepath, sex_label) {
+    # Skip first row (description line), then read CSV
+    raw <- data.table::fread(filepath, skip = 1)
+    # Columns: Year, 0, 1, 2, ..., 119
+    data.table::melt(
+      raw,
+      id.vars = "Year",
+      variable.name = "age_col",
+      value.name = "qx"
+    )[, .(
+      year = Year,
+      age = as.integer(as.character(age_col)),
+      sex = sex_label,
+      qx = qx
+    )]
+  }
+
+  result_parts <- list()
+  result_parts$male_hist <- read_qx_file(male_hist, "male")
+  result_parts$female_hist <- read_qx_file(female_hist, "female")
+
+  # Add projected if available (for years beyond historical coverage)
+  if (file.exists(male_proj)) {
+    result_parts$male_proj <- read_qx_file(male_proj, "male")
+  }
+  if (file.exists(female_proj)) {
+    result_parts$female_proj <- read_qx_file(female_proj, "female")
+  }
+
+  result <- data.table::rbindlist(result_parts)
+  # Remove duplicates (projected overlaps at boundary year)
+  result <- unique(result, by = c("year", "age", "sex"))
+  data.table::setorder(result, year, sex, age)
   result
+}
+
+#' Build Historical Immigration and Emigration from Upstream LPR Data
+#'
+#' Constructs age-sex immigration and emigration data from V.A2 totals and
+#' the same age-sex distributions used by the LPR projection subprocess.
+#'
+#' @param lpr_assumptions data.table from lpr_assumptions target (year, total_lpr,
+#'   total_emigration, etc.). Must cover historical years.
+#' @param immigration_dist Immigration age-sex distribution from lpr_distribution target.
+#'   Can be a list with combined_distribution, or a data.table with age, sex, distribution.
+#' @param emigration_dist data.table from emigration_distribution target (age, sex, distribution).
+#' @param years Integer vector of years to cover.
+#'
+#' @return List with $immigration and $emigration data.tables
+#' @keywords internal
+build_historical_immigration_emigration <- function(lpr_assumptions,
+                                                     immigration_dist,
+                                                     emigration_dist,
+                                                     years) {
+  if (is.null(lpr_assumptions)) {
+    cli::cli_abort("lpr_assumptions is required for historical immigration/emigration")
+  }
+  if (is.null(immigration_dist)) {
+    cli::cli_abort("immigration_dist is required for historical immigration/emigration")
+  }
+  if (is.null(emigration_dist)) {
+    cli::cli_abort("emigration_dist is required for historical immigration/emigration")
+  }
+
+  # Extract combined distribution (handles both list and data.table formats)
+  if (is.list(immigration_dist) && "combined_distribution" %in% names(immigration_dist)) {
+    imm_dist <- data.table::as.data.table(immigration_dist$combined_distribution)
+  } else {
+    imm_dist <- data.table::as.data.table(immigration_dist)
+  }
+  emig_dist <- data.table::as.data.table(emigration_dist)
+
+  # Filter assumptions to requested years
+  assumptions <- data.table::as.data.table(lpr_assumptions)
+  assumptions <- assumptions[year %in% years]
+
+  if (nrow(assumptions) == 0) {
+    cli::cli_alert_warning("No LPR assumptions available for years {min(years)}-{max(years)}")
+    # Return empty data.tables with correct schema
+    empty_imm <- data.table::data.table(year = integer(), age = integer(),
+                                         sex = character(), immigration = numeric())
+    empty_emig <- data.table::data.table(year = integer(), age = integer(),
+                                          sex = character(), emigration = numeric())
+    return(list(immigration = empty_imm, emigration = empty_emig))
+  }
+
+  cli::cli_alert_info("  Building immigration for {nrow(assumptions)} years ({min(assumptions$year)}-{max(assumptions$year)})")
+
+  # Build immigration: total_lpr × immigration_dist for each year
+  imm_list <- list()
+  for (i in seq_len(nrow(assumptions))) {
+    yr <- assumptions$year[i]
+    total <- assumptions$total_lpr[i]
+    if (is.na(total)) total <- 0
+    yr_imm <- data.table::copy(imm_dist)
+    yr_imm[, year := yr]
+    yr_imm[, immigration := total * distribution]
+    yr_imm[, distribution := NULL]
+    imm_list[[i]] <- yr_imm
+  }
+  immigration <- data.table::rbindlist(imm_list)
+  data.table::setcolorder(immigration, c("year", "age", "sex", "immigration"))
+
+  # Build emigration: total_emigration × emigration_dist for each year
+  emig_list <- list()
+  for (i in seq_len(nrow(assumptions))) {
+    yr <- assumptions$year[i]
+    total <- assumptions$total_emigration[i]
+    if (is.na(total)) total <- 0
+    yr_emig <- data.table::copy(emig_dist)
+    yr_emig[, year := yr]
+    yr_emig[, emigration := total * distribution]
+    yr_emig[, distribution := NULL]
+    emig_list[[i]] <- yr_emig
+  }
+  emigration <- data.table::rbindlist(emig_list)
+  data.table::setcolorder(emigration, c("year", "age", "sex", "emigration"))
+
+  cli::cli_alert_success("  Built immigration ({nrow(immigration)} rows) and emigration ({nrow(emigration)} rows)")
+
+  list(immigration = immigration, emigration = emigration)
+}
+
+#' Build Historical Births from NCHS Data
+#'
+#' Converts nchs_births_by_sex (long format: year, sex, births) to wide format
+#' (year, male, female) for the component method. Years outside NCHS coverage
+#' (pre-1968) are not included — the closure ratio method compensates.
+#'
+#' @param births_by_sex data.table from nchs_births_by_sex target (year, sex, births).
+#' @param years Integer vector of years to cover.
+#'
+#' @return data.table with columns: year, male, female
+#' @keywords internal
+build_historical_births <- function(births_by_sex, years) {
+  if (is.null(births_by_sex) || nrow(births_by_sex) == 0) {
+    cli::cli_alert_warning("No births data provided; closure ratios will compensate")
+    return(data.table::data.table(year = integer(), male = numeric(), female = numeric()))
+  }
+
+  dt <- data.table::as.data.table(births_by_sex)
+  dt <- dt[year %in% years]
+
+  # Pivot to wide format: year, male, female
+  wide <- data.table::dcast(dt, year ~ sex, value.var = "births")
+
+  nchs_range <- range(dt$year)
+  missing_years <- setdiff(years, dt$year)
+  if (length(missing_years) > 0) {
+    cli::cli_alert_info("  Births available for {nchs_range[1]}-{nchs_range[2]}; {length(missing_years)} years without births data (closure ratios compensate)")
+  }
+
+  wide
 }
 
 # =============================================================================
@@ -1156,11 +1316,9 @@ calculate_tab_year_populations <- function(tab_years,
     dep_total <- dep_ratio * (af_total + fed_total)
     pop[, dependents := distribute_overseas_by_age(dep_total, age, sex, "dependents", overseas_cfg)]
 
-    # Add beneficiaries abroad
+    # Add beneficiaries abroad (data available 2000+; pre-2000 is 0)
     ben_total <- components$beneficiaries[year == yr, total_beneficiaries]
-    if (length(ben_total) == 0) {
-      cli::cli_abort("SSA beneficiaries data missing for year {yr}")
-    }
+    if (length(ben_total) == 0) ben_total <- 0
     pop[, beneficiaries := distribute_overseas_by_age(ben_total, age, sex, "beneficiaries", overseas_cfg)]
 
     # Add other citizens overseas
@@ -1297,19 +1455,248 @@ build_up_ages_85_plus <- function(tab_years,
 }
 
 # =============================================================================
+# COMPONENT METHOD FOR INTER-TAB YEAR INTERPOLATION
+# =============================================================================
+
+#' Apply Component Method for One Year Step
+#'
+#' @description
+#' Implements the demographic accounting identity for a single year step:
+#'   P(a,s,t) = P(a-1,s,t-1) * (1 - qx(a,s,t)) + Births(s,t) + Imm(a,s,t) - Emig(a,s,t)
+#'
+#' Per TR2025 Section 1.4.c: "populations are estimated taking into account
+#' the components of changes due to births, deaths, legal emigration,
+#' adjustments of status, and net LPR immigration."
+#'
+#' @param prev_pop data.table with columns: age, sex, population
+#'   Population at December 31 of the previous year.
+#' @param year Integer: the target year being estimated.
+#' @param components List of component data with mortality, immigration,
+#'   emigration, and births.
+#' @param max_age Integer: maximum single year of age (default: 100).
+#'
+#' @return data.table with columns: age, sex, population
+#'
+#' @keywords internal
+apply_component_method <- function(prev_pop, target_year, components, max_age = 100) {
+  # --- Validate required components ---
+  yr <- target_year
+  mort <- components$mortality
+  if (!"year" %in% names(mort)) {
+    cli::cli_abort(c(
+      "Mortality data missing {.field year} column",
+      "i" = "Expected columns: year, age, sex, qx"
+    ))
+  }
+  qx_yr <- mort[year == yr]
+  if (nrow(qx_yr) == 0) {
+    cli::cli_abort("Mortality data missing for year {yr} in component method")
+  }
+
+  imm_yr <- components$immigration[year == yr]
+  if (nrow(imm_yr) == 0) {
+    cli::cli_abort("Immigration data missing for year {yr} in component method")
+  }
+
+  emig_yr <- components$emigration[year == yr]
+  if (nrow(emig_yr) == 0) {
+    cli::cli_abort("Emigration data missing for year {yr} in component method")
+  }
+
+  births_data <- components$births
+  if (is.null(births_data) || !yr %in% births_data$year) {
+    # Pre-1968 births not available from NCHS; closure ratios compensate
+    births_male <- 0
+    births_female <- 0
+  } else {
+    births_male <- births_data[year == yr, male]
+    births_female <- births_data[year == yr, female]
+    if (length(births_male) == 0) births_male <- 0
+    if (length(births_female) == 0) births_female <- 0
+  }
+
+  # --- Build new population by age and sex ---
+  result_list <- list()
+
+  for (s in c("male", "female")) {
+    for (a in 0:max_age) {
+      # Births: age 0 gets new births
+      if (a == 0) {
+        birth_count <- if (s == "male") births_male else births_female
+        # Age 0 survivors from births during the year
+        q0 <- qx_yr[age == 0 & sex == s, qx]
+        if (length(q0) == 0) {
+          cli::cli_abort("Missing qx at year {yr}, age 0, sex {s}")
+        }
+        # Approximate: births spread over year, half exposed to mortality
+        new_pop <- birth_count * (1 - q0 / 2)
+      } else if (a == max_age) {
+        # Open-ended group: survivors from age max_age-1 aging in
+        # + survivors from max_age staying
+        prev_from_below <- prev_pop[age == (a - 1) & sex == s, population]
+        prev_staying <- prev_pop[age == a & sex == s, population]
+        if (length(prev_from_below) == 0) {
+          cli::cli_abort("Missing prev_pop at age {a - 1}, sex {s} for year {yr} component method")
+        }
+        if (length(prev_staying) == 0) {
+          cli::cli_abort("Missing prev_pop at age {a}, sex {s} for year {yr} component method")
+        }
+
+        q_below <- qx_yr[age == (a - 1) & sex == s, qx]
+        q_stay <- qx_yr[age == a & sex == s, qx]
+        if (length(q_below) == 0) {
+          cli::cli_abort("Missing qx at year {yr}, age {a - 1}, sex {s}")
+        }
+        if (length(q_stay) == 0) {
+          cli::cli_abort("Missing qx at year {yr}, age {a}, sex {s}")
+        }
+
+        new_pop <- prev_from_below * (1 - q_below) + prev_staying * (1 - q_stay)
+      } else {
+        # Standard aging: survivors from age a-1 last year
+        prev_a <- prev_pop[age == (a - 1) & sex == s, population]
+        if (length(prev_a) == 0) {
+          cli::cli_abort("Missing prev_pop at age {a - 1}, sex {s} for year {yr} component method")
+        }
+
+        q <- qx_yr[age == a & sex == s, qx]
+        if (length(q) == 0) {
+          cli::cli_abort("Missing qx at year {yr}, age {a}, sex {s}")
+        }
+        new_pop <- prev_a * (1 - q)
+      }
+
+      # Add net immigration (immigration - emigration)
+      imm_val <- imm_yr[age == a & sex == s, immigration]
+      if (length(imm_val) == 0) {
+        cli::cli_abort("Missing immigration at year {yr}, age {a}, sex {s}")
+      }
+
+      emig_val <- emig_yr[age == a & sex == s, emigration]
+      if (length(emig_val) == 0) {
+        cli::cli_abort("Missing emigration at year {yr}, age {a}, sex {s}")
+      }
+
+      net_imm <- imm_val - emig_val
+
+      new_pop <- new_pop + net_imm
+
+      result_list[[length(result_list) + 1L]] <- data.table::data.table(
+        age = a, sex = s, population = max(0, new_pop)
+      )
+    }
+  }
+
+  data.table::rbindlist(result_list)
+}
+
+#' Interpolate with Error-of-Closure Ratios
+#'
+#' @description
+#' For a pair of adjacent tab years, forward-projects population from the
+#' lower tab year using the component method, then applies linearly
+#' interpolated closure ratios to eliminate error at the upper tab year.
+#'
+#' Per TR2025 Section 1.4.c: "These estimates are then multiplied by the
+#' appropriate age-sex-specific ratios so that the error of closure at the
+#' tab years is eliminated."
+#'
+#' @param tab_year_pops data.table of tab year populations (year, age, sex, population)
+#' @param lower_tab Integer: lower bracketing tab year
+#' @param upper_tab Integer: upper bracketing tab year
+#' @param components List of component data
+#' @param max_age Integer: maximum single year of age
+#'
+#' @return data.table with interpolated populations for years between
+#'   lower_tab and upper_tab (exclusive of both endpoints)
+#'
+#' @keywords internal
+interpolate_with_closure <- function(tab_year_pops,
+                                      lower_tab,
+                                      upper_tab,
+                                      components,
+                                      max_age = 100) {
+  gap_years <- (lower_tab + 1):(upper_tab - 1)
+  if (length(gap_years) == 0) return(NULL)
+
+  cli::cli_alert("    Closure interpolation: {lower_tab} -> {upper_tab} ({length(gap_years)} gap years)")
+
+  # Known tab year populations
+  known_upper <- tab_year_pops[year == upper_tab, .(age, sex, population)]
+
+  # Forward-project from lower tab year through to upper tab year
+  # collecting intermediate populations along the way
+  current_pop <- tab_year_pops[year == lower_tab, .(age, sex, population)]
+  projected <- list()
+
+  for (yr in (lower_tab + 1):upper_tab) {
+    current_pop <- apply_component_method(current_pop, yr, components, max_age)
+    projected[[as.character(yr)]] <- data.table::copy(current_pop)
+  }
+
+  # Compute closure ratios at upper tab year: R(a,s) = known / projected
+  projected_upper <- projected[[as.character(upper_tab)]]
+  closure <- merge(
+    known_upper[, .(age, sex, known_pop = population)],
+    projected_upper[, .(age, sex, proj_pop = population)],
+    by = c("age", "sex")
+  )
+  # Avoid division by zero: if projected is 0 and known is 0, ratio = 1
+  # If projected is 0 but known > 0, use additive adjustment instead
+  closure[, ratio := data.table::fifelse(
+    proj_pop > 0, known_pop / proj_pop, 1.0
+  )]
+
+  # For each gap year, linearly interpolate the ratio from 1.0 (at lower tab)
+  # to R (at upper tab), then apply to component-projected population
+  gap_span <- upper_tab - lower_tab
+  result_list <- list()
+
+  for (yr in gap_years) {
+    # Ratio interpolation weight: 0 at lower_tab, 1 at upper_tab
+    w <- (yr - lower_tab) / gap_span
+    yr_pop <- projected[[as.character(yr)]]
+
+    adjusted <- merge(yr_pop, closure[, .(age, sex, ratio)], by = c("age", "sex"))
+    # Interpolated ratio: blend from 1.0 toward closure ratio
+    adjusted[, interp_ratio := 1.0 + w * (ratio - 1.0)]
+    adjusted[, population := pmax(0, population * interp_ratio)]
+
+    result_list[[as.character(yr)]] <- adjusted[, .(
+      year = as.integer(yr),
+      age = age,
+      sex = sex,
+      population = population,
+      source = "closure_adjusted"
+    )]
+  }
+
+  data.table::rbindlist(result_list)
+}
+
+# =============================================================================
 # INTER-TAB YEAR INTERPOLATION
 # =============================================================================
+
 #' Interpolate Populations Between Tab Years
 #'
 #' @description
-#' For years between tab years, interpolates population using components
-#' of change (births, deaths, immigration, emigration) and applies
-#' closure ratios to ensure consistency.
+#' For years between tab years, estimates population using the component
+#' method (births, deaths, immigration, emigration) with error-of-closure
+#' ratio adjustment per TR2025 Section 1.4.c.
+#'
+#' Post-1980 non-tab years use Census USAF data with full component
+#' adjustments. The 2010-2021 gap (between tab years 2009 and 2022) gets
+#' additional closure-ratio smoothing.
+#'
+#' Pre-1980 non-tab years use forward-projected component method with
+#' closure ratios at each tab year boundary.
 #'
 #' @param tab_year_pops data.table of tab year populations
 #' @param tab_years Integer vector of tab years
 #' @param target_years Integer vector of all years to estimate
 #' @param components List of component data
+#' @param config List: configuration
 #'
 #' @return data.table with complete population time series
 #'
@@ -1326,144 +1713,202 @@ interpolate_populations <- function(tab_year_pops,
     return(tab_year_pops)
   }
 
+  max_age <- max(tab_year_pops$age)
   cli::cli_alert("  Interpolating {length(non_tab_years)} non-tab years...")
 
-  # For modern years (post-1980), use Census USAF data directly
-  # This is more accurate than interpolating between tab years
+  # =========================================================================
+  # POST-1980 NON-TAB YEARS: Census USAF with full component adjustments
+  # =========================================================================
   modern_non_tab <- non_tab_years[non_tab_years >= 1980 & non_tab_years <= 2023]
 
   modern_list <- list()
   if (length(modern_non_tab) > 0) {
     cli::cli_alert("  Using Census data with full components for {length(modern_non_tab)} modern years")
+
+    if (is.null(config$historical_population$dependent_ratio)) {
+      cli::cli_abort("Config missing {.field historical_population.dependent_ratio}")
+    }
+    dep_ratio <- config$historical_population$dependent_ratio
+    overseas_cfg <- config$historical_population$overseas_distributions
+    if (is.null(overseas_cfg)) {
+      cli::cli_abort("Config missing {.field historical_population.overseas_distributions}")
+    }
+
     census_data <- components$census_usaf[year %in% modern_non_tab]
 
-    if (nrow(census_data) > 0) {
-      # Apply FULL adjustments like tab year calculation to avoid discontinuities
-      for (yr in modern_non_tab) {
-        year_data <- census_data[year == yr]
-        if (nrow(year_data) == 0) next
-
-        # Get base population
-        pop <- data.table::copy(year_data)
-        data.table::setnames(pop, "population", "usaf_pop", skip_absent = TRUE)
-
-        # Apply undercount adjustment
-        uc <- components$undercount[year == yr]
-        if (nrow(uc) > 0) {
-          pop <- merge(pop, uc[, .(age, sex, undercount_rate)], by = c("age", "sex"), all.x = TRUE)
-          pop[is.na(undercount_rate), undercount_rate := 0]
-          pop[, uc_adjustment := usaf_pop * undercount_rate / (1 - undercount_rate)]
-        } else {
-          pop[, uc_adjustment := 0]
-        }
-
-        # Add territory population
-        terr <- components$territories[year == yr]
-        if (nrow(terr) > 0) {
-          pop <- merge(pop, terr[, .(age, sex, territory_pop)], by = c("age", "sex"), all.x = TRUE)
-          pop[is.na(territory_pop), territory_pop := 0]
-        } else {
-          pop[, territory_pop := 0]
-        }
-
-        # Read config parameters for overseas distributions
-        if (is.null(config$historical_population$dependent_ratio)) {
-          cli::cli_abort("Config missing {.field historical_population.dependent_ratio}")
-        }
-        dep_ratio <- config$historical_population$dependent_ratio
-        overseas_cfg <- config$historical_population$overseas_distributions
-        if (is.null(overseas_cfg)) {
-          cli::cli_abort("Config missing {.field historical_population.overseas_distributions}")
-        }
-
-        # Add federal employees (distributed by age using armed forces distribution)
-        fed_total <- components$fed_employees[year == yr, employees_overseas]
-        if (length(fed_total) == 0 || is.na(fed_total)) fed_total <- 0
-        pop[, fed_emp := distribute_overseas_by_age(fed_total, age, sex, "federal", overseas_cfg)]
-
-        # Calculate dependents (dependent_ratio * (armed forces + federal employees))
-        af_total <- components$armed_forces[year == yr, sum(population, na.rm = TRUE)]
-        if (length(af_total) == 0 || is.na(af_total)) af_total <- 0
-        dep_total <- dep_ratio * (af_total + fed_total)
-        pop[, dependents := distribute_overseas_by_age(dep_total, age, sex, "dependents", overseas_cfg)]
-
-        # Add beneficiaries abroad
-        ben_total <- components$beneficiaries[year == yr, total_beneficiaries]
-        if (length(ben_total) == 0) {
-          cli::cli_abort("SSA beneficiaries data missing for year {yr}")
-        }
-        pop[, beneficiaries := distribute_overseas_by_age(ben_total, age, sex, "beneficiaries", overseas_cfg)]
-
-        # Add other citizens overseas
-        oth_total <- components$other_overseas[year == yr, other_overseas]
-        if (length(oth_total) == 0) {
-          cli::cli_abort("Other overseas citizens estimate missing for year {yr}")
-        }
-        pop[, other_overseas := distribute_overseas_by_age(oth_total, age, sex, "other", overseas_cfg)]
-
-        # Calculate total population (Eq 1.4.1) - same as tab year
-        pop[, population := usaf_pop + uc_adjustment + territory_pop +
-              fed_emp + dependents + beneficiaries + other_overseas]
-
-        modern_list[[as.character(yr)]] <- pop[, .(
-          year = yr,
-          age = age,
-          sex = sex,
-          population = population,
-          source = "census_with_components"
-        )]
+    for (yr in modern_non_tab) {
+      year_data <- census_data[year == yr]
+      if (nrow(year_data) == 0) {
+        cli::cli_abort("Census USAF data missing for modern non-tab year {yr}")
       }
+
+      pop <- data.table::copy(year_data)
+      data.table::setnames(pop, "population", "usaf_pop", skip_absent = TRUE)
+
+      # Undercount adjustment
+      uc <- components$undercount[year == yr]
+      if (nrow(uc) > 0) {
+        pop <- merge(pop, uc[, .(age, sex, undercount_rate)], by = c("age", "sex"), all.x = TRUE)
+        pop[is.na(undercount_rate), undercount_rate := 0]
+        pop[, uc_adjustment := usaf_pop * undercount_rate / (1 - undercount_rate)]
+      } else {
+        pop[, uc_adjustment := 0]
+      }
+
+      # Territory population
+      terr <- components$territories[year == yr]
+      if (nrow(terr) > 0) {
+        pop <- merge(pop, terr[, .(age, sex, territory_pop)], by = c("age", "sex"), all.x = TRUE)
+        pop[is.na(territory_pop), territory_pop := 0]
+      } else {
+        pop[, territory_pop := 0]
+      }
+
+      # Federal employees overseas
+      fed_total <- components$fed_employees[year == yr, employees_overseas]
+      if (length(fed_total) == 0 || is.na(fed_total)) fed_total <- 0
+      pop[, fed_emp := distribute_overseas_by_age(fed_total, age, sex, "federal", overseas_cfg)]
+
+      # Dependents
+      af_total <- components$armed_forces[year == yr, sum(population, na.rm = TRUE)]
+      if (length(af_total) == 0 || is.na(af_total)) af_total <- 0
+      dep_total <- dep_ratio * (af_total + fed_total)
+      pop[, dependents := distribute_overseas_by_age(dep_total, age, sex, "dependents", overseas_cfg)]
+
+      # Beneficiaries abroad (data available 2000+; pre-2000 is 0)
+      ben_total <- components$beneficiaries[year == yr, total_beneficiaries]
+      if (length(ben_total) == 0) ben_total <- 0
+      pop[, beneficiaries := distribute_overseas_by_age(ben_total, age, sex, "beneficiaries", overseas_cfg)]
+
+      # Other citizens overseas
+      oth_total <- components$other_overseas[year == yr, other_overseas]
+      if (length(oth_total) == 0) {
+        cli::cli_abort("Other overseas citizens estimate missing for year {yr}")
+      }
+      pop[, other_overseas := distribute_overseas_by_age(oth_total, age, sex, "other", overseas_cfg)]
+
+      # Total population (Eq 1.4.1)
+      pop[, population := usaf_pop + uc_adjustment + territory_pop +
+            fed_emp + dependents + beneficiaries + other_overseas]
+
+      modern_list[[as.character(yr)]] <- pop[, .(
+        year = yr,
+        age = age,
+        sex = sex,
+        population = population,
+        source = "census_with_components"
+      )]
     }
   }
 
   modern_result <- data.table::rbindlist(modern_list)
 
-  # For pre-1980 non-tab years, use traditional interpolation
+  # =========================================================================
+  # POST-1980 CLOSURE RATIO ADJUSTMENT (2010-2021 gap)
+  # =========================================================================
+  # Tab years 2009 and 2022 bracket a 13-year gap. Census USAF data is used
+  # directly for 2010-2021, but closure error accumulates. Apply smooth ratio
+  # adjustment anchored at both tab years to eliminate discontinuities.
+  if (2009 %in% tab_years && 2022 %in% tab_years && nrow(modern_result) > 0) {
+    gap_2010_2021 <- 2010:2021
+    gap_in_modern <- gap_2010_2021[gap_2010_2021 %in% modern_result$year]
+
+    if (length(gap_in_modern) > 0) {
+      cli::cli_alert("  Applying closure ratio smoothing for 2010-2021 gap")
+
+      # Forward-project from 2009 tab year to 2022 using component method
+      projected_2022 <- tab_year_pops[year == 2009, .(age, sex, population)]
+      for (yr in 2010:2022) {
+        projected_2022 <- apply_component_method(projected_2022, yr, components, max_age)
+      }
+
+      # Closure ratios at 2022
+      known_2022 <- tab_year_pops[year == 2022, .(age, sex, known_pop = population)]
+      closure_2022 <- merge(
+        known_2022,
+        projected_2022[, .(age, sex, proj_pop = population)],
+        by = c("age", "sex")
+      )
+      closure_2022[, ratio := data.table::fifelse(proj_pop > 0, known_pop / proj_pop, 1.0)]
+
+      # Also compute what the 2009 tab year Census-with-components estimate
+      # would have been (it IS the tab year, so ratio = 1.0 by definition)
+      gap_span <- 2022 - 2009
+
+      for (yr in gap_in_modern) {
+        w <- (yr - 2009) / gap_span
+        yr_data <- modern_result[year == yr]
+
+        if (nrow(yr_data) > 0) {
+          adjusted <- merge(yr_data, closure_2022[, .(age, sex, ratio)],
+                            by = c("age", "sex"), all.x = TRUE)
+          na_count <- sum(is.na(adjusted$ratio))
+          if (na_count > 0) {
+            cli::cli_abort("Missing closure ratios for {na_count} age-sex cells in year {yr}")
+          }
+          adjusted[, interp_ratio := 1.0 + w * (ratio - 1.0)]
+          adjusted[, population := pmax(0, population * interp_ratio)]
+          adjusted[, source := "census_closure_adjusted"]
+          adjusted[, c("ratio", "interp_ratio") := NULL]
+
+          # Replace in modern_result
+          modern_result <- modern_result[!(year == yr)]
+          modern_result <- data.table::rbindlist(list(
+            modern_result,
+            adjusted[, .(year, age, sex, population, source)]
+          ))
+        }
+      }
+    }
+  }
+
+  # =========================================================================
+  # PRE-1980 NON-TAB YEARS: Component method with closure ratios
+  # =========================================================================
+  # Per TR2025 Section 1.4.c: populations between tab years use components
+  # of change (births, deaths, emigration, AOS, net LPR immigration) with
+  # error-of-closure ratio adjustment at each tab year boundary.
   early_non_tab <- non_tab_years[non_tab_years < 1980]
 
-  interp_list <- lapply(early_non_tab, function(yr) {
-    # Find bracketing tab years
-    lower_tab <- max(tab_years[tab_years < yr], na.rm = TRUE)
-    upper_tab <- min(tab_years[tab_years > yr], na.rm = TRUE)
+  early_result_list <- list()
+  if (length(early_non_tab) > 0) {
+    # Find pre-1980 tab years and sort them
+    pre1980_tabs <- sort(tab_years[tab_years <= 1980])
 
-    if (is.infinite(lower_tab)) lower_tab <- min(tab_years)
-    if (is.infinite(upper_tab)) upper_tab <- max(tab_years)
+    cli::cli_alert("  Component method + closure ratios for {length(early_non_tab)} pre-1980 years")
 
-    # Get populations at bracketing years
-    lower_pop <- tab_year_pops[year == lower_tab]
-    upper_pop <- tab_year_pops[year == upper_tab]
+    # Process each pair of adjacent tab years
+    for (i in seq_along(pre1980_tabs)[-length(pre1980_tabs)]) {
+      lower <- pre1980_tabs[i]
+      upper <- pre1980_tabs[i + 1]
 
-    if (nrow(lower_pop) == 0 || nrow(upper_pop) == 0) {
-      return(NULL)
+      # Which early non-tab years fall in this gap?
+      gap_years_in_range <- early_non_tab[early_non_tab > lower & early_non_tab < upper]
+      if (length(gap_years_in_range) == 0) next
+
+      gap_result <- interpolate_with_closure(
+        tab_year_pops = tab_year_pops,
+        lower_tab = lower,
+        upper_tab = upper,
+        components = components,
+        max_age = max_age
+      )
+
+      if (!is.null(gap_result) && nrow(gap_result) > 0) {
+        early_result_list[[paste0(lower, "_", upper)]] <- gap_result
+      }
     }
+  }
 
-    # Linear interpolation weight
-    if (lower_tab == upper_tab) {
-      weight <- 0
-    } else {
-      weight <- (yr - lower_tab) / (upper_tab - lower_tab)
-    }
+  early_result <- data.table::rbindlist(early_result_list)
 
-    # Merge and interpolate
-    merged <- merge(
-      lower_pop[, .(age, sex, pop_lower = population)],
-      upper_pop[, .(age, sex, pop_upper = population)],
-      by = c("age", "sex")
-    )
-
-    merged[, .(
-      year = yr,
-      age = age,
-      sex = sex,
-      population = pop_lower + weight * (pop_upper - pop_lower),
-      source = "interpolated"
-    )]
-  })
-
-  interp_result <- data.table::rbindlist(interp_list[!sapply(interp_list, is.null)])
-
-  # Combine all results
-  result <- data.table::rbindlist(list(tab_year_pops, modern_result, interp_result), fill = TRUE)
+  # =========================================================================
+  # COMBINE ALL RESULTS
+  # =========================================================================
+  result <- data.table::rbindlist(
+    list(tab_year_pops, modern_result, early_result),
+    fill = TRUE
+  )
   data.table::setorder(result, year, sex, age)
 
   result

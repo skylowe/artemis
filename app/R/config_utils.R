@@ -207,7 +207,7 @@ summarize_config <- function(config) {
     list("Immigration Scenario", config$immigration$va2_alternative),
     list("Ultimate AMR", config$marriage$ultimate_amr),
     list("Ultimate ADR", config$divorce$ultimate_adr),
-    list("Use TR2025 Population", config$projected_population$use_tr_historical_population)
+    list("Population Source", config$historical_population$population_source %||% "hybrid")
   )
 
   data.frame(
