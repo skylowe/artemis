@@ -2507,8 +2507,7 @@ calculate_life_expectancy <- function(life_table, at_ages = c(0, 65)) {
 #' using the 2010 Census standard population as weights.
 #'
 #' @param mx data.table with central death rates (year, age, sex, mx)
-#' @param standard_pop data.table with standard population (age, sex, population)
-#'   If NULL, fetches 2010 Census standard population.
+#' @param standard_pop data.table with standard population (age, sex, population).
 #'
 #' @return data.table with columns:
 #'   - year: calendar year
@@ -2527,14 +2526,9 @@ calculate_life_expectancy <- function(life_table, at_ages = c(0, 65)) {
 #' Results are expressed per 100,000 population.
 #'
 #' @export
-calculate_age_adjusted_death_rates <- function(mx, standard_pop = NULL) {
+calculate_age_adjusted_death_rates <- function(mx, standard_pop) {
   checkmate::assert_data_table(mx)
   checkmate::assert_names(names(mx), must.include = c("age", "sex", "mx"))
-
-  # Get standard population if not provided
-  if (is.null(standard_pop)) {
-    standard_pop <- get_standard_population_2010()
-  }
   checkmate::assert_data_table(standard_pop)
   checkmate::assert_names(names(standard_pop), must.include = c("age", "sex", "population"))
 
