@@ -32,6 +32,11 @@ cdc_wonder:
     database_id: "D66"
     rate_limit_per_minute: 60
     max_rows: 75000
+  # Provisional Mortality Statistics (D176)
+  mortality:
+    endpoint: "/controller/datarequest/D176"
+    database_id: "D176"
+    rate_limit_per_minute: 30
   # Older natality database
   natality_historic:
     endpoint: "/controller/datarequest/D27"

@@ -665,20 +665,41 @@ process_mortality_data <- function(dt, year) {
 #' Fetch deaths for multiple years
 #'
 #' @description
-#' Downloads and aggregates death data for multiple years.
+#' Downloads and aggregates death data for multiple years. Optionally uses
+#' CDC WONDER provisional data for the most recent year when configured.
 #'
 #' @param years Integer vector: years to fetch
 #' @param cache_dir Character: directory to cache data
 #' @param force_download Logical: if TRUE, re-download even if cached
+#' @param config List: assumptions config (optional). When
+#'   `config$mortality$use_wonder_provisional` is TRUE, the most recent year
+#'   (trustees_report_year - 2) is fetched from WONDER instead of FTP.
 #'
 #' @return data.table with columns: year, age, sex, cause, deaths
 #'
 #' @export
 fetch_nchs_deaths_multi <- function(years, cache_dir = "data/cache/nchs_deaths",
-                                     force_download = FALSE) {
+                                     force_download = FALSE, config = NULL) {
+  # Determine if WONDER provisional data should be used
+  use_wonder <- !is.null(config) &&
+    isTRUE(config$mortality$use_wonder_provisional)
+  provisional_year <- NULL
+
+  if (use_wonder) {
+    provisional_year <- config$metadata$trustees_report_year - 2L
+    if (!provisional_year %in% years) {
+      use_wonder <- FALSE
+      cli::cli_alert_info("Provisional year {provisional_year} not in requested years, using FTP for all")
+    } else {
+      cli::cli_alert_info("Using WONDER provisional data for {provisional_year}")
+    }
+  }
+
+  # Fetch FTP years (excluding provisional year if using WONDER)
+  ftp_years <- if (use_wonder) setdiff(years, provisional_year) else years
   results <- list()
 
-  for (yr in years) {
+  for (yr in ftp_years) {
     cli::cli_alert("Processing mortality year {yr}...")
     tryCatch({
       results[[as.character(yr)]] <- fetch_nchs_deaths_by_age(
@@ -691,11 +712,47 @@ fetch_nchs_deaths_multi <- function(years, cache_dir = "data/cache/nchs_deaths",
     })
   }
 
-  if (length(results) == 0) {
+  if (length(results) == 0 && !use_wonder) {
     cli::cli_abort("No mortality data retrieved")
   }
 
   combined <- data.table::rbindlist(results, use.names = TRUE)
+
+  # Fetch WONDER provisional data and apply prior year cause proportions
+
+  if (use_wonder) {
+    prior_year <- provisional_year - 1L
+    if (!prior_year %in% combined$year) {
+      cli::cli_alert_warning(
+        "Prior year {prior_year} not available for cause proportions, falling back to FTP for {provisional_year}"
+      )
+      # Fall back: fetch provisional year via FTP
+      tryCatch({
+        ftp_result <- fetch_nchs_deaths_by_age(provisional_year, cache_dir, force_download)
+        combined <- data.table::rbindlist(list(combined, ftp_result), use.names = TRUE)
+      }, error = function(e) {
+        cli::cli_alert_warning("FTP fallback also failed for {provisional_year}: {conditionMessage(e)}")
+      })
+    } else {
+      tryCatch({
+        wonder_deaths <- fetch_wonder_provisional_deaths(provisional_year)
+        nchs_prior <- combined[year == prior_year]
+        wonder_with_cause <- apply_prior_year_cause_proportions(wonder_deaths, nchs_prior)
+        combined <- data.table::rbindlist(list(combined, wonder_with_cause), use.names = TRUE)
+        cli::cli_alert_success("Added WONDER provisional data for {provisional_year}")
+      }, error = function(e) {
+        cli::cli_alert_warning(
+          "WONDER fetch failed for {provisional_year}, falling back to FTP: {conditionMessage(e)}"
+        )
+        tryCatch({
+          ftp_result <- fetch_nchs_deaths_by_age(provisional_year, cache_dir, force_download)
+          combined <- data.table::rbindlist(list(combined, ftp_result), use.names = TRUE)
+        }, error = function(e2) {
+          cli::cli_alert_warning("FTP fallback also failed: {conditionMessage(e2)}")
+        })
+      })
+    }
+  }
 
   # Apply ICD-9 to ICD-10 comparability ratios for 1979-1998
   if (any(combined$year >= 1979L & combined$year <= 1998L)) {

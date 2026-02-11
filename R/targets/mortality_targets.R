@@ -24,7 +24,7 @@ create_mortality_targets <- function() {
     # NCHS Deaths data (1968-2023)
     targets::tar_target(
       nchs_deaths_raw,
-      fetch_nchs_deaths_multi(years = 1968:2023),
+      fetch_nchs_deaths_multi(years = 1968:2023, config = config_assumptions),
       cue = targets::tar_cue(mode = "thorough")
     ),
 

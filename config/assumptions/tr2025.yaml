@@ -105,6 +105,11 @@ mortality:
       age_65_84: 1.00
       age_85_plus: 1.00
 
+  # Use CDC WONDER provisional data for the most recent death year.
+  # The provisional year is auto-derived as trustees_report_year - 2.
+  # Set to false if final NCHS microdata is available for that year.
+  use_wonder_provisional: false
+
   # Marital mortality differentials
   # TR2025 Section 1.2.c: reference years for calculating marital mortality factors
   marital_reference_years: [2015, 2016, 2017, 2018, 2019]
