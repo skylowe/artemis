@@ -3926,34 +3926,29 @@ calculate_q1_tr_method <- function(mx_data,
   }
 
   # Calculate 4m1 for projected years
-  # Note: For projected years, we need projected mx for ages 1-4
-  # If mx_data contains projected years, use them; otherwise use trend
+  # Projected mx for ages 1-4 must be available in mx_data
   projected_mx_years <- unique(mx_data$year)
   projected_mx_years <- projected_mx_years[projected_mx_years > last_historical_year]
 
-  if (length(projected_mx_years) > 0) {
-    # Calculate 4m1 from projected mx
-    mx_ages_1_4 <- mx_data[age >= 1 & age <= 4 & year %in% projection_years]
-
-    # Calculate population-weighted 4m1 = sum(Dx) / sum(Px) ≈ sum(mx * Px) / sum(Px)
-    # Use last historical year's population distribution for ages 1-4 as weights
-    # (population distribution at these ages changes slowly over time)
-    pop_weights <- population[age >= 1 & age <= 4 & year == last_historical_year,
-                              .(age, sex, pop_weight = population)]
-    mx_weighted <- merge(mx_ages_1_4, pop_weights, by = c("age", "sex"), all.x = TRUE)
-    if (any(is.na(mx_weighted$pop_weight))) {
-      cli::cli_abort("Missing population weights for ages 1-4 in year {last_historical_year}")
-    }
-    m4_1_projected <- mx_weighted[, .(
-      m4_1 = sum(mx * pop_weight, na.rm = TRUE) / sum(pop_weight, na.rm = TRUE)
-    ), by = .(year, sex)]
-  } else {
-    # Extrapolate 4m1 using AAx trajectory (simplified: use last value)
-    cli::cli_alert_warning("No projected mx available, using last historical 4m1 with decay")
-    m4_1_projected <- data.table::CJ(year = projection_years, sex = c("male", "female"))
-    m4_1_projected <- merge(m4_1_projected, m4_1_last, by = "sex")
-    data.table::setnames(m4_1_projected, "m4_1_last", "m4_1")
+  if (length(projected_mx_years) == 0) {
+    cli::cli_abort("No projected mx data available for ages 1-4. Cannot calculate projected q1.")
   }
+
+  # Calculate 4m1 from projected mx
+  mx_ages_1_4 <- mx_data[age >= 1 & age <= 4 & year %in% projection_years]
+
+  # Calculate population-weighted 4m1 = sum(Dx) / sum(Px) ≈ sum(mx * Px) / sum(Px)
+  # Use last historical year's population distribution for ages 1-4 as weights
+  # (population distribution at these ages changes slowly over time)
+  pop_weights <- population[age >= 1 & age <= 4 & year == last_historical_year,
+                            .(age, sex, pop_weight = population)]
+  mx_weighted <- merge(mx_ages_1_4, pop_weights, by = c("age", "sex"), all.x = TRUE)
+  if (any(is.na(mx_weighted$pop_weight))) {
+    cli::cli_abort("Missing population weights for ages 1-4 in year {last_historical_year}")
+  }
+  m4_1_projected <- mx_weighted[, .(
+    m4_1 = sum(mx * pop_weight, na.rm = TRUE) / sum(pop_weight, na.rm = TRUE)
+  ), by = .(year, sex)]
 
   # Calculate projected q1 = 4m1 * ratio
   q1_projected <- merge(m4_1_projected, ratio_data[, .(sex, q1_m4_1_ratio)], by = "sex")
