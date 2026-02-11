@@ -2309,10 +2309,13 @@ adjust_qx_with_hmd <- function(qx,
 #'
 #' For age 0 (infant), Lx uses separation factor:
 #' L0 = l1 + f0 * d0
-#' where f0 is derived from q0 using the Coale-Demeny formula.
+#' where f0 is the average fraction of the year lived by infants who die
+#' before age 1, derived from actual infant death timing data.
 #'
-#' @param f0 Optional numeric: infant separation factor. If NULL (default),
-#'   derived from q0 using the Coale-Demeny formula by sex.
+#' @param f0 Infant separation factor. Can be:
+#'   - data.table with year, sex, f0 columns (looked up per group)
+#'   - single numeric value (used for all groups)
+#'   - NULL: error (must be provided)
 #'
 #' @export
 calculate_life_table <- function(qx, radix = 100000, max_age = 100, f0 = NULL) {
@@ -2379,22 +2382,24 @@ calculate_life_table <- function(qx, radix = 100000, max_age = 100, f0 = NULL) {
 
     # Age 0: special separation factor for infant mortality
     # L0 = l1 + f0 * d0, where f0 is the fraction of the year lived by
-    # those dying in their first year.
-    # Coale-Demeny formula derives f0 from q0 by sex (Actuarial Study 120):
-    #   Male:   f0 = 0.045 + 2.684 * q0  (if q0 < 0.107, else 0.330)
-    #   Female: f0 = 0.053 + 2.800 * q0  (if q0 < 0.107, else 0.350)
+    # those dying in their first year, derived from actual infant death timing.
     if (n >= 2) {
-      if (!is.null(f0)) {
-        f0_val <- f0  # Use explicitly provided value
-      } else {
-        # Derive from q0 using Coale-Demeny formula
-        q0_val <- qx_full[1]
+      if (is.data.table(f0)) {
+        # Look up f0 for this year/sex from the data.table
         current_sex <- .BY$sex
-        if (current_sex == "male") {
-          f0_val <- if (q0_val >= 0.107) 0.330 else 0.045 + 2.684 * q0_val
+        if ("year" %in% names(f0) && !is.null(.BY$year)) {
+          f0_row <- f0[year == .BY$year & sex == current_sex]
         } else {
-          f0_val <- if (q0_val >= 0.107) 0.350 else 0.053 + 2.800 * q0_val
+          f0_row <- f0[sex == current_sex]
         }
+        if (nrow(f0_row) == 0) {
+          cli::cli_abort("No f0 value found for year={.BY$year}, sex={current_sex}")
+        }
+        f0_val <- f0_row$f0[1]
+      } else if (is.numeric(f0)) {
+        f0_val <- f0
+      } else {
+        cli::cli_abort("f0 must be provided as a data.table or numeric value")
       }
       Lx[1] <- lx[2] + f0_val * dx[1]
     } else {
@@ -3574,6 +3579,103 @@ load_infant_deaths <- function(years, cache_dir = "data/cache/nchs_deaths") {
   }
 
   data.table::rbindlist(results, fill = TRUE)
+}
+
+#' Calculate life table infant separation factor from actual death timing data
+#'
+#' @description
+#' Computes the fraction of the first year of life lived on average by infants
+#' who die before age 1 (f0), using actual infant death age-at-death data.
+#' This is the data-derived approach referenced by Actuarial Study 120, as
+#' opposed to model-based approximations (e.g., Coale-Demeny).
+#'
+#' f0 = weighted mean of (age_at_death_in_days / 365.25) across all infant deaths
+#'
+#' @param infant_deaths data.table with columns: year, sex, age_unit, age_value, deaths
+#' @return data.table with columns: year, sex, f0
+#'
+#' @export
+calculate_infant_separation_factor <- function(infant_deaths) {
+  checkmate::assert_data_table(infant_deaths)
+  checkmate::assert_names(names(infant_deaths),
+    must.include = c("year", "sex", "age_unit", "age_value", "deaths"))
+
+  dt <- data.table::copy(infant_deaths)
+
+  # Convert age_unit/age_value to fraction of year
+  dt[, age_days := data.table::fcase(
+    age_unit == "minutes", age_value / (60 * 24),
+    age_unit == "hours", age_value / 24,
+    age_unit == "days", as.numeric(age_value),
+    age_unit == "months", age_value * 30.4375,  # 365.25 / 12
+    default = NA_real_
+  )]
+
+  # Remove records that couldn't be converted
+  dt <- dt[!is.na(age_days) & deaths > 0]
+
+  # For each age group, use the midpoint of the interval as representative age
+  # (e.g., deaths at "3 days" means died between day 3 and day 4, midpoint = 3.5)
+  dt[, age_fraction := (age_days + 0.5) / 365.25]
+
+  # Cap at 1.0 (deaths at 11 months with midpoint can slightly exceed)
+  dt[, age_fraction := pmin(age_fraction, 1.0)]
+
+  # Death-weighted mean fraction of year lived, by year and sex
+  result <- dt[, .(
+    f0 = sum(age_fraction * deaths) / sum(deaths)
+  ), by = .(year, sex)]
+
+  cli::cli_alert_info(paste0(
+    "Computed infant separation factor (f0) for {length(unique(result$year))} years, ",
+    "range: {round(min(result$f0), 4)} - {round(max(result$f0), 4)}"
+  ))
+
+  result
+}
+
+#' Extend f0 separation factors to cover projected years
+#'
+#' @description
+#' For projected years beyond the last historical year, carries forward the
+#' last historical f0 value by sex. The infant separation factor is very
+#' stable in developed countries, so this is appropriate for projections.
+#'
+#' @param f0_historical data.table with year, sex, f0 columns from
+#'   calculate_infant_separation_factor()
+#' @param target_years Integer vector of years that need f0 values
+#' @return data.table with year, sex, f0 covering all target_years
+#'
+#' @export
+extend_f0_to_projected_years <- function(f0_historical, target_years) {
+  checkmate::assert_data_table(f0_historical)
+  checkmate::assert_names(names(f0_historical), must.include = c("year", "sex", "f0"))
+
+  last_hist_year <- max(f0_historical$year)
+  proj_years <- target_years[target_years > last_hist_year]
+
+  if (length(proj_years) == 0) {
+    # All target years are in historical data
+    return(f0_historical[year %in% target_years])
+  }
+
+  # Get last historical f0 by sex
+  last_f0 <- f0_historical[year == last_hist_year, .(sex, f0)]
+
+  # Create projected rows
+  proj_rows <- data.table::CJ(year = proj_years, sex = unique(last_f0$sex))
+  proj_rows <- merge(proj_rows, last_f0, by = "sex", all.x = TRUE)
+
+  # Combine historical (for target years that are historical) and projected
+  hist_subset <- f0_historical[year %in% target_years]
+  result <- data.table::rbindlist(list(hist_subset, proj_rows), use.names = TRUE)
+  data.table::setorder(result, year, sex)
+
+  cli::cli_alert_info(
+    "Extended f0 to {length(proj_years)} projected years using {last_hist_year} values"
+  )
+
+  result
 }
 
 #' Load monthly births data

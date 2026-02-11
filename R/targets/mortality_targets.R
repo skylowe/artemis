@@ -176,13 +176,20 @@ create_mortality_targets <- function() {
       )
     ),
 
+    # Step 6c: Compute infant separation factor (f0) from actual death timing
+    targets::tar_target(
+      mortality_infant_f0,
+      calculate_infant_separation_factor(nchs_infant_deaths_detailed)
+    ),
+
     # Step 7: Calculate life tables
     targets::tar_target(
       mortality_life_tables,
       calculate_life_table(
         qx = mortality_qx_historical,
         radix = 100000,
-        max_age = 100
+        max_age = 100,
+        f0 = mortality_infant_f0
       )
     ),
 
@@ -217,10 +224,15 @@ create_mortality_targets <- function() {
         }
         qx_adjusted <- adjust_qx_with_hmd(qx = qx_proj, transition_age = 85, max_age = 100)
 
+        # Extend f0 to cover projected years using last historical value
+        proj_years <- sort(unique(qx_adjusted$year))
+        f0_proj <- extend_f0_to_projected_years(mortality_infant_f0, proj_years)
+
         # Convert to age-last-birthday qx (TR2025 Section 1.2.c):
         # qx_alb = 1 - L_{x+1}/L_x for ages 0-99, q100 = 1 - T101/T100
         cli::cli_alert_info("Applying age-last-birthday qx conversion (regression mode)")
-        lt_temp <- calculate_life_table(qx = qx_adjusted, radix = 100000, max_age = 100)
+        lt_temp <- calculate_life_table(qx = qx_adjusted, radix = 100000, max_age = 100,
+                                        f0 = f0_proj)
         # Add qx_exact column for ALB function compatibility
         lt_temp[, qx_exact := qx]
         qx_alb <- calculate_age_last_birthday_qx(lt_temp, min_age = 0, max_age = 99)
@@ -231,11 +243,16 @@ create_mortality_targets <- function() {
     # Step 10: Calculate projected life tables
     targets::tar_target(
       mortality_life_tables_projected,
-      calculate_life_table(
-        qx = mortality_qx_projected,
-        radix = 100000,
-        max_age = 100
-      )
+      {
+        proj_years <- sort(unique(mortality_qx_projected$year))
+        f0_proj <- extend_f0_to_projected_years(mortality_infant_f0, proj_years)
+        calculate_life_table(
+          qx = mortality_qx_projected,
+          radix = 100000,
+          max_age = 100,
+          f0 = f0_proj
+        )
+      }
     ),
 
     # Step 11: Calculate projected life expectancy
