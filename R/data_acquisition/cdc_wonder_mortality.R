@@ -17,7 +17,7 @@ NULL
 #' total deaths by single year of age and sex. Returns total deaths only
 #' (no cause breakdown — cause is applied separately via prior year proportions).
 #'
-#' @param year Integer: provisional year to fetch
+#' @param year Integer: provisional year to fetch (2018+)
 #' @param cache_dir Character: directory to cache results
 #' @param force_download Logical: if TRUE, re-fetch even if cached
 #'
@@ -25,8 +25,9 @@ NULL
 #'
 #' @details
 #' CDC WONDER's Provisional Mortality Statistics database (D176) provides
-#' near-real-time death counts. The request uses form-encoded POST parameters
-#' to group by single year of age and sex.
+#' near-real-time death counts. The API accepts XML request documents via POST
+#' and returns XML responses. Results are grouped by single year of age
+#' (D176.V52) and sex (D176.V7).
 #'
 #' @export
 fetch_wonder_provisional_deaths <- function(year,
@@ -46,44 +47,41 @@ fetch_wonder_provisional_deaths <- function(year,
 
   cli::cli_alert_info("Fetching provisional deaths from CDC WONDER for {year}...")
 
-  # Build WONDER D176 POST request
+  # Build WONDER D176 XML request
+  xml_request <- build_wonder_d176_request(year)
   base_url <- "https://wonder.cdc.gov/controller/datarequest/D176"
 
-  # WONDER form parameters for D176 (Provisional Mortality Statistics)
-  # Group by: Single Year of Age (D176.V5), Sex (D176.V7)
-  # Filter by: Year (D176.V1)
-  params <- list(
-    "B_1" = "D176.V5",       # Group by single year of age
-    "B_2" = "D176.V7",       # Group by sex
-    "F_D176.V1" = as.character(year),  # Filter year
-    "O_V5_fmode" = "freg",   # Age: regular
-    "O_V7_fmode" = "freg",   # Sex: regular
-    "action" = "Send",
-    "M_1" = "D176.M1",       # Measure: Deaths
-    "O_title" = "",
-    "O_timeout" = "600",
-    "O_location" = "D176.V9",
-    "VM_I" = "*All*"         # All ICD codes
-  )
-
-  req <- create_api_request(base_url, timeout_seconds = 120) |>
+  req <- httr2::request(base_url) |>
+    httr2::req_timeout(180) |>
     httr2::req_method("POST") |>
-    httr2::req_body_form(!!!params)
+    httr2::req_body_form(
+      request_xml = xml_request,
+      accept_datause_restrictions = "true"
+    ) |>
+    httr2::req_error(is_error = function(resp) FALSE)
 
-  resp <- api_request_with_retry(req, max_retries = 3)
-
+  resp <- httr2::req_perform(req)
   status <- httr2::resp_status(resp)
+  body <- httr2::resp_body_string(resp)
+
   if (status != 200) {
+    # Extract error messages from XML response
+    error_msgs <- extract_wonder_error_messages(body)
     cli::cli_abort(c(
       "WONDER API returned status {status} for provisional deaths",
       "i" = "Year: {year}",
-      "i" = "The WONDER provisional database may not have data for this year"
+      error_msgs
     ))
   }
 
-  # Parse response — WONDER returns tab-delimited text
-  body <- httr2::resp_body_string(resp)
-  result <- parse_wonder_mortality_response(body, year)
+  result <- parse_wonder_xml_response(body, year)
+
+  if (nrow(result) == 0) {
+    cli::cli_abort(c(
+      "WONDER returned no data rows for year {year}",
+      "i" = "The provisional database may not have data for this year yet"
+    ))
+  }
 
   saveRDS(result, cache_file)
   cli::cli_alert_success(
@@ -93,81 +91,256 @@ fetch_wonder_provisional_deaths <- function(year,
   result
 }
 
-#' Parse WONDER mortality response
+#' Build WONDER D176 XML request
 #'
-#' @param body Character: response body from WONDER API
+#' @description
+#' Constructs the XML request document for the WONDER D176 (Provisional
+#' Mortality Statistics) API. Groups by single year of age and sex, filtered
+#' to a specific year.
+#'
+#' @param year Integer: year to query
+#'
+#' @return Character string containing the XML request
+#'
+#' @details
+#' The XML format follows the WONDER API specification. Key variable codes:
+#' - D176.V52: Single-Year Age Groups (B_1 group-by)
+#' - D176.V7: Sex (B_2 group-by)
+#' - D176.V1: Year (F_ filter)
+#' - D176.M1: Deaths measure
+#'
+#' The template includes all required filter, option, and variable parameters
+#' based on the D176 database defaults.
+#'
+#' @keywords internal
+build_wonder_d176_request <- function(year) {
+  year_str <- as.character(year)
+
+  paste0(
+    "<request-parameters>",
+    "<parameter><name>accept_datause_restrictions</name><value>true</value></parameter>",
+    # Group by single year of age and sex
+    "<parameter><name>B_1</name><value>D176.V52</value></parameter>",
+    "<parameter><name>B_2</name><value>D176.V7</value></parameter>",
+    "<parameter><name>B_3</name><value>*None*</value></parameter>",
+    "<parameter><name>B_4</name><value>*None*</value></parameter>",
+    "<parameter><name>B_5</name><value>*None*</value></parameter>",
+    # Finder values - year filter and locations
+    "<parameter><name>F_D176.V1</name><value>", year_str, "</value></parameter>",
+    "<parameter><name>F_D176.V10</name><value>*All*</value></parameter>",
+    "<parameter><name>F_D176.V100</name><value>*All*</value></parameter>",
+    "<parameter><name>F_D176.V13</name><value>*All*</value></parameter>",
+    "<parameter><name>F_D176.V2</name><value>*All*</value></parameter>",
+    "<parameter><name>F_D176.V25</name><value>*All*</value></parameter>",
+    "<parameter><name>F_D176.V26</name><value>*All*</value></parameter>",
+    "<parameter><name>F_D176.V27</name><value>*All*</value></parameter>",
+    "<parameter><name>F_D176.V77</name><value>*All*</value></parameter>",
+    "<parameter><name>F_D176.V79</name><value>*All*</value></parameter>",
+    "<parameter><name>F_D176.V80</name><value>*All*</value></parameter>",
+    "<parameter><name>F_D176.V9</name><value>*All*</value></parameter>",
+    # Index/label values
+    "<parameter><name>I_D176.V1</name><value>", year_str, "</value></parameter>",
+    "<parameter><name>I_D176.V10</name><value>*All* (The United States)</value></parameter>",
+    "<parameter><name>I_D176.V100</name><value>*All* (All Dates)</value></parameter>",
+    "<parameter><name>I_D176.V2</name><value>*All*</value></parameter>",
+    "<parameter><name>I_D176.V25</name><value>All Causes of Death</value></parameter>",
+    "<parameter><name>I_D176.V27</name><value>*All* (The United States)</value></parameter>",
+    "<parameter><name>I_D176.V77</name><value>*All* (The United States)</value></parameter>",
+    "<parameter><name>I_D176.V79</name><value>*All* (The United States)</value></parameter>",
+    "<parameter><name>I_D176.V80</name><value>*All* (The United States)</value></parameter>",
+    "<parameter><name>I_D176.V9</name><value>*All* (The United States)</value></parameter>",
+    # Measures - deaths, population, crude rate
+    "<parameter><name>M_1</name><value>D176.M1</value></parameter>",
+    "<parameter><name>M_2</name><value>D176.M2</value></parameter>",
+    "<parameter><name>M_3</name><value>D176.M3</value></parameter>",
+    # Options
+    "<parameter><name>O_MMWR</name><value>false</value></parameter>",
+    "<parameter><name>O_V100_fmode</name><value>freg</value></parameter>",
+    "<parameter><name>O_V10_fmode</name><value>freg</value></parameter>",
+    "<parameter><name>O_V13_fmode</name><value>fadv</value></parameter>",
+    "<parameter><name>O_V15_fmode</name><value>fadv</value></parameter>",
+    "<parameter><name>O_V16_fmode</name><value>fadv</value></parameter>",
+    "<parameter><name>O_V1_fmode</name><value>freg</value></parameter>",
+    "<parameter><name>O_V25_fmode</name><value>freg</value></parameter>",
+    "<parameter><name>O_V26_fmode</name><value>fadv</value></parameter>",
+    "<parameter><name>O_V27_fmode</name><value>freg</value></parameter>",
+    "<parameter><name>O_V2_fmode</name><value>freg</value></parameter>",
+    "<parameter><name>O_V77_fmode</name><value>freg</value></parameter>",
+    "<parameter><name>O_V79_fmode</name><value>freg</value></parameter>",
+    "<parameter><name>O_V80_fmode</name><value>freg</value></parameter>",
+    "<parameter><name>O_V9_fmode</name><value>freg</value></parameter>",
+    "<parameter><name>O_aar</name><value>aar_none</value></parameter>",
+    "<parameter><name>O_aar_pop</name><value>0000</value></parameter>",
+    "<parameter><name>O_age</name><value>D176.V52</value></parameter>",
+    "<parameter><name>O_dates</name><value>YEAR</value></parameter>",
+    "<parameter><name>O_death_location</name><value>D176.V79</value></parameter>",
+    "<parameter><name>O_death_urban</name><value>D176.V89</value></parameter>",
+    "<parameter><name>O_javascript</name><value>on</value></parameter>",
+    "<parameter><name>O_location</name><value>D176.V9</value></parameter>",
+    "<parameter><name>O_mcd</name><value>D176.V13</value></parameter>",
+    "<parameter><name>O_precision</name><value>1</value></parameter>",
+    "<parameter><name>O_race</name><value>D176.V42</value></parameter>",
+    "<parameter><name>O_rate_per</name><value>100000</value></parameter>",
+    "<parameter><name>O_show_totals</name><value>false</value></parameter>",
+    "<parameter><name>O_timeout</name><value>600</value></parameter>",
+    "<parameter><name>O_title</name><value></value></parameter>",
+    "<parameter><name>O_ucd</name><value>D176.V2</value></parameter>",
+    "<parameter><name>O_urban</name><value>D176.V19</value></parameter>",
+    # Variable filter values
+    "<parameter><name>V_D176.V1</name><value></value></parameter>",
+    "<parameter><name>V_D176.V10</name><value></value></parameter>",
+    "<parameter><name>V_D176.V100</name><value></value></parameter>",
+    "<parameter><name>V_D176.V11</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V12</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V13</name><value></value></parameter>",
+    "<parameter><name>V_D176.V13_AND</name><value></value></parameter>",
+    "<parameter><name>V_D176.V15</name><value></value></parameter>",
+    "<parameter><name>V_D176.V15_AND</name><value></value></parameter>",
+    "<parameter><name>V_D176.V16</name><value></value></parameter>",
+    "<parameter><name>V_D176.V16_AND</name><value></value></parameter>",
+    "<parameter><name>V_D176.V17</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V19</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V2</name><value></value></parameter>",
+    "<parameter><name>V_D176.V20</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V21</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V22</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V23</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V25</name><value></value></parameter>",
+    "<parameter><name>V_D176.V26</name><value></value></parameter>",
+    "<parameter><name>V_D176.V26_AND</name><value></value></parameter>",
+    "<parameter><name>V_D176.V27</name><value></value></parameter>",
+    "<parameter><name>V_D176.V4</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V42</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V43</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V44</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V5</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V51</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V52</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V6</name><value>00</value></parameter>",
+    "<parameter><name>V_D176.V7</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V77</name><value></value></parameter>",
+    "<parameter><name>V_D176.V79</name><value></value></parameter>",
+    "<parameter><name>V_D176.V80</name><value></value></parameter>",
+    "<parameter><name>V_D176.V81</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V89</name><value>*All*</value></parameter>",
+    "<parameter><name>V_D176.V9</name><value></value></parameter>",
+    # Metadata
+    "<parameter><name>action-Send</name><value>Send</value></parameter>",
+    "<parameter><name>dataset_code</name><value>D176</value></parameter>",
+    "<parameter><name>finder-stage-D176.V1</name><value>codeset</value></parameter>",
+    "<parameter><name>finder-stage-D176.V10</name><value>codeset</value></parameter>",
+    "<parameter><name>finder-stage-D176.V100</name><value>codeset</value></parameter>",
+    "<parameter><name>finder-stage-D176.V13</name><value>codeset</value></parameter>",
+    "<parameter><name>finder-stage-D176.V2</name><value>codeset</value></parameter>",
+    "<parameter><name>finder-stage-D176.V25</name><value>codeset</value></parameter>",
+    "<parameter><name>finder-stage-D176.V26</name><value>codeset</value></parameter>",
+    "<parameter><name>finder-stage-D176.V27</name><value>codeset</value></parameter>",
+    "<parameter><name>finder-stage-D176.V77</name><value>codeset</value></parameter>",
+    "<parameter><name>finder-stage-D176.V79</name><value>codeset</value></parameter>",
+    "<parameter><name>finder-stage-D176.V80</name><value>codeset</value></parameter>",
+    "<parameter><name>finder-stage-D176.V9</name><value>codeset</value></parameter>",
+    "<parameter><name>saved_id</name><value></value></parameter>",
+    "<parameter><name>stage</name><value>request</value></parameter>",
+    "</request-parameters>"
+  )
+}
+
+#' Parse WONDER XML response
+#'
+#' @description
+#' Parses the XML response from the WONDER D176 API into a data.table.
+#' The response contains `<r>` (row) elements with `<c>` (cell) children.
+#' When grouped by age and sex, rows with a new age have 5 cells
+#' (age, sex, deaths, population, rate) while continuation rows for the
+#' same age have 4 cells (sex, deaths, population, rate).
+#'
+#' @param body Character: XML response body from WONDER API
 #' @param year Integer: year for the data
 #'
 #' @return data.table with columns: year, age, sex, deaths
 #'
 #' @keywords internal
-parse_wonder_mortality_response <- function(body, year) {
-  # WONDER returns tab-delimited data with header rows
-  # Read as data.table, skipping metadata rows
-  lines <- strsplit(body, "\n")[[1]]
+parse_wonder_xml_response <- function(body, year) {
+  doc <- xml2::read_xml(body)
+  rows <- xml2::xml_find_all(doc, ".//r")
 
-  # Find the header line (contains "Deaths")
-  header_idx <- grep("Deaths", lines)[1]
-  if (is.na(header_idx)) {
-    cli::cli_abort("Could not parse WONDER response: no 'Deaths' header found")
+  if (length(rows) == 0) {
+    return(data.table::data.table(year = integer(), age = integer(),
+                                   sex = character(), deaths = integer()))
   }
 
-  # Read from header line onward
-  dt <- data.table::fread(
-    text = paste(lines[header_idx:length(lines)], collapse = "\n"),
-    sep = "\t",
-    header = TRUE,
-    fill = TRUE,
-    na.strings = c("", "Suppressed", "Not Applicable", "Unreliable")
-  )
+  # Parse rows with carry-forward for age labels.
+  # Rows with a new age group have 5 cells; continuation rows have 4.
+  results <- list()
+  current_age <- NA_character_
 
-  # Standardize column names (WONDER uses variable labels)
-  names(dt) <- tolower(gsub("[^a-zA-Z0-9]", "_", names(dt)))
+  for (row in rows) {
+    cells <- xml2::xml_find_all(row, ".//c")
+    n <- length(cells)
 
-  # Extract age and sex columns
-  # WONDER D176 returns "Single Year Ages" and "Sex" columns
-  age_col <- grep("age|year", names(dt), value = TRUE)[1]
-  sex_col <- grep("sex", names(dt), value = TRUE)[1]
-  deaths_col <- grep("deaths", names(dt), value = TRUE)[1]
+    if (n == 5L) {
+      current_age <- xml2::xml_attr(cells[[1]], "l")
+      sex_val <- xml2::xml_attr(cells[[2]], "l")
+      deaths_val <- xml2::xml_attr(cells[[3]], "v")
+    } else if (n == 4L) {
+      sex_val <- xml2::xml_attr(cells[[1]], "l")
+      deaths_val <- xml2::xml_attr(cells[[2]], "v")
+    } else {
+      next
+    }
 
-  if (is.na(age_col) || is.na(sex_col) || is.na(deaths_col)) {
-    cli::cli_abort(c(
-      "Could not identify required columns in WONDER response",
-      "i" = "Found columns: {paste(names(dt), collapse = ', ')}"
-    ))
+    if (!is.na(current_age) && !is.na(sex_val) && !is.na(deaths_val)) {
+      results[[length(results) + 1L]] <- list(
+        age_raw = current_age,
+        sex_raw = sex_val,
+        deaths_raw = deaths_val
+      )
+    }
   }
 
-  result <- dt[, .SD, .SDcols = c(age_col, sex_col, deaths_col)]
-  data.table::setnames(result, c("age_raw", "sex_raw", "deaths"))
+  if (length(results) == 0L) {
+    return(data.table::data.table(year = integer(), age = integer(),
+                                   sex = character(), deaths = integer()))
+  }
 
-  # Parse age: WONDER returns age as text (e.g., "0", "1", "< 1 year", "100+")
-  result[, age := suppressWarnings(as.integer(gsub("[^0-9]", "", age_raw)))]
-  # Handle "< 1" or "Under 1" as age 0
-  result[grepl("< ?1|under|less", age_raw, ignore.case = TRUE), age := 0L]
-  # Handle 100+ as age 100
-  result[grepl("100\\+|100 and over", age_raw, ignore.case = TRUE), age := 100L]
+  dt <- data.table::rbindlist(results)
+
+  # Parse age: "< 1 year" -> 0, "1 year" -> 1, "100+" -> 100, "Not Stated" -> NA
+  dt[, age := suppressWarnings(as.integer(gsub("[^0-9]", "", age_raw)))]
+  dt[grepl("< ?1|under", age_raw, ignore.case = TRUE), age := 0L]
+  dt[grepl("100\\+|100 and over", age_raw, ignore.case = TRUE), age := 100L]
 
   # Parse sex
-  result[, sex := data.table::fcase(
-    grepl("^[Mm]", sex_raw), "male",
+  dt[, sex := data.table::fcase(
     grepl("^[Ff]", sex_raw), "female",
+    grepl("^[Mm]", sex_raw), "male",
     default = NA_character_
   )]
 
-  # Parse deaths (may have commas)
-  result[, deaths := suppressWarnings(
-    as.integer(gsub(",", "", as.character(deaths)))
-  )]
+  # Parse deaths (comma-formatted integers)
+  dt[, deaths := suppressWarnings(as.integer(gsub(",", "", deaths_raw)))]
 
-  # Filter valid rows
-  result <- result[!is.na(age) & !is.na(sex) & !is.na(deaths) & age >= 0 & age <= 119]
+  # Filter to valid rows
+  dt <- dt[!is.na(age) & !is.na(sex) & !is.na(deaths) & age >= 0L & age <= 100L]
 
   # Format output
-  result[, year := year]
-  result <- result[, .(year, age, sex, deaths)]
+  dt[, year := as.integer(year)]
+  result <- dt[, .(year, age, sex, deaths)]
   data.table::setorder(result, age, sex)
 
   result
+}
+
+#' Extract error messages from WONDER XML response
+#'
+#' @param body Character: XML response body
+#' @return Character vector of error messages (prefixed with "x" for cli)
+#' @keywords internal
+extract_wonder_error_messages <- function(body) {
+  msgs <- regmatches(body, gregexpr("<message>[^<]+</message>", body))[[1]]
+  msgs <- gsub("</?message>", "", msgs)
+  if (length(msgs) == 0L) return(character())
+  stats::setNames(msgs, rep("x", length(msgs)))
 }
 
 #' Apply prior year cause proportions to WONDER total deaths

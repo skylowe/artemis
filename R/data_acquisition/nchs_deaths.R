@@ -308,9 +308,9 @@ map_icd8_to_cause <- function(icd8_code) {
 #' @export
 fetch_nchs_deaths_by_age <- function(year, cache_dir = "data/cache/nchs_deaths",
                                       force_download = FALSE) {
-  # Validate year
-  if (year < 1968 || year > 2023) {
-    cli::cli_abort("Year must be between 1968 and 2023")
+  # Validate year (lower bound: first year of NCHS microdata)
+  if (year < 1968) {
+    cli::cli_abort("Year must be >= 1968 (first year of NCHS microdata)")
   }
 
   # Ensure cache directory exists
@@ -719,39 +719,21 @@ fetch_nchs_deaths_multi <- function(years, cache_dir = "data/cache/nchs_deaths",
   combined <- data.table::rbindlist(results, use.names = TRUE)
 
   # Fetch WONDER provisional data and apply prior year cause proportions
-
   if (use_wonder) {
     prior_year <- provisional_year - 1L
     if (!prior_year %in% combined$year) {
-      cli::cli_alert_warning(
-        "Prior year {prior_year} not available for cause proportions, falling back to FTP for {provisional_year}"
-      )
-      # Fall back: fetch provisional year via FTP
-      tryCatch({
-        ftp_result <- fetch_nchs_deaths_by_age(provisional_year, cache_dir, force_download)
-        combined <- data.table::rbindlist(list(combined, ftp_result), use.names = TRUE)
-      }, error = function(e) {
-        cli::cli_alert_warning("FTP fallback also failed for {provisional_year}: {conditionMessage(e)}")
-      })
-    } else {
-      tryCatch({
-        wonder_deaths <- fetch_wonder_provisional_deaths(provisional_year)
-        nchs_prior <- combined[year == prior_year]
-        wonder_with_cause <- apply_prior_year_cause_proportions(wonder_deaths, nchs_prior)
-        combined <- data.table::rbindlist(list(combined, wonder_with_cause), use.names = TRUE)
-        cli::cli_alert_success("Added WONDER provisional data for {provisional_year}")
-      }, error = function(e) {
-        cli::cli_alert_warning(
-          "WONDER fetch failed for {provisional_year}, falling back to FTP: {conditionMessage(e)}"
-        )
-        tryCatch({
-          ftp_result <- fetch_nchs_deaths_by_age(provisional_year, cache_dir, force_download)
-          combined <- data.table::rbindlist(list(combined, ftp_result), use.names = TRUE)
-        }, error = function(e2) {
-          cli::cli_alert_warning("FTP fallback also failed: {conditionMessage(e2)}")
-        })
-      })
+      cli::cli_abort(c(
+        "Prior year {prior_year} not available for cause proportions",
+        "i" = "WONDER provisional data requires prior year NCHS data for cause distribution",
+        "i" = "Ensure years includes {prior_year} or set use_wonder_provisional: false"
+      ))
     }
+
+    wonder_deaths <- fetch_wonder_provisional_deaths(provisional_year)
+    nchs_prior <- combined[year == prior_year]
+    wonder_with_cause <- apply_prior_year_cause_proportions(wonder_deaths, nchs_prior)
+    combined <- data.table::rbindlist(list(combined, wonder_with_cause), use.names = TRUE)
+    cli::cli_alert_success("Added WONDER provisional data for {provisional_year}")
   }
 
   # Apply ICD-9 to ICD-10 comparability ratios for 1979-1998
@@ -893,9 +875,9 @@ adjust_for_sampling <- function(deaths, method = c("weight", "interpolate")) {
 #' @export
 fetch_nchs_infant_deaths_detail <- function(year, cache_dir = "data/cache/nchs_deaths",
                                              force_download = FALSE) {
-  # Validate year
-  if (year < 1968 || year > 2023) {
-    cli::cli_abort("Year must be between 1968 and 2023")
+  # Validate year (lower bound: first year of NCHS microdata)
+  if (year < 1968) {
+    cli::cli_abort("Year must be >= 1968 (first year of NCHS microdata)")
   }
 
   # Check for cached data

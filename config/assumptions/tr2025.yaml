@@ -107,7 +107,7 @@ mortality:
   # Use CDC WONDER provisional data for the most recent death year.
   # The provisional year is auto-derived as trustees_report_year - 2.
   # Set to false if final NCHS microdata is available for that year.
-  use_wonder_provisional: false
+  use_wonder_provisional: true
 
   # Marital mortality differentials
   # TR2025 Section 1.2.c: reference years for calculating marital mortality factors

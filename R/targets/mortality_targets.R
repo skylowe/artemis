@@ -21,24 +21,33 @@ create_mortality_targets <- function() {
     # DATA ACQUISITION TARGETS
     # ==========================================================================
 
-    # NCHS Deaths data (1968-2023)
+    # NCHS Deaths data (1968 to TR year - 2)
+    # Start year 1968: first year of NCHS microdata with single-year-of-age detail
+    # End year derived from config: provisional year = trustees_report_year - 2
     targets::tar_target(
       nchs_deaths_raw,
-      fetch_nchs_deaths_multi(years = 1968:2023, config = config_assumptions),
+      {
+        tr_year <- config_assumptions$metadata$trustees_report_year
+        last_death_year <- tr_year - 2L
+        fetch_nchs_deaths_multi(years = 1968:last_death_year, config = config_assumptions)
+      },
       cue = targets::tar_cue(mode = "thorough")
     ),
 
     # Census population for mortality calculations
+    # End year matches death data (population denominators for mx calculation)
     targets::tar_target(
       census_population_both,
       {
+        tr_year <- config_assumptions$metadata$trustees_report_year
+        last_death_year <- tr_year - 2L
         vintage <- set_census_vintage_option(config_assumptions)
-        cache_file <- sprintf("data/cache/census/population_by_age_sex_1980_2023_v%d_bysex.rds", vintage)
+        cache_file <- sprintf("data/cache/census/population_by_age_sex_1980_%d_v%d_bysex.rds", last_death_year, vintage)
         load_or_fetch(
           cache_file = cache_file,
           fetch_fn = function() {
-            male_pop <- fetch_census_population_all(years = 1980:2023, ages = 0:100, sex = "male")
-            female_pop <- fetch_census_population_all(years = 1980:2023, ages = 0:100, sex = "female")
+            male_pop <- fetch_census_population_all(years = 1980:last_death_year, ages = 0:100, sex = "male")
+            female_pop <- fetch_census_population_all(years = 1980:last_death_year, ages = 0:100, sex = "female")
             data.table::rbindlist(list(male_pop, female_pop), use.names = TRUE)
           },
           save_cache = TRUE
@@ -48,9 +57,14 @@ create_mortality_targets <- function() {
     ),
 
     # Total births by year for q0 calculation
+    # Birth data available one year ahead of death data (preliminary release)
     targets::tar_target(
       nchs_births_total,
-      load_total_births_for_q0(years = 1968:2024),
+      {
+        tr_year <- config_assumptions$metadata$trustees_report_year
+        last_birth_year <- tr_year - 1L
+        load_total_births_for_q0(years = 1968:last_birth_year)
+      },
       cue = targets::tar_cue(mode = "thorough")
     ),
 
@@ -58,8 +72,10 @@ create_mortality_targets <- function() {
     targets::tar_target(
       nchs_births_by_sex,
       {
+        tr_year <- config_assumptions$metadata$trustees_report_year
+        last_birth_year <- tr_year - 1L
         raw_data <- load_cached_multi_year(
-          years = 1968:2024,
+          years = 1968:last_birth_year,
           cache_pattern = "data/raw/nchs/births_by_month_sex_%d.rds",
           on_missing = "skip"
         )
@@ -71,14 +87,23 @@ create_mortality_targets <- function() {
     # Detailed infant deaths for q0 calculation
     targets::tar_target(
       nchs_infant_deaths_detailed,
-      load_infant_deaths(years = 1968:2023),
+      {
+        tr_year <- config_assumptions$metadata$trustees_report_year
+        last_death_year <- tr_year - 2L
+        load_infant_deaths(years = 1968:last_death_year)
+      },
       cue = targets::tar_cue(mode = "thorough")
     ),
 
     # Monthly births for q0 calculation
+    # Starts 1 year before death data for birth cohort alignment
     targets::tar_target(
       nchs_births_monthly,
-      load_monthly_births(years = 1967:2024),
+      {
+        tr_year <- config_assumptions$metadata$trustees_report_year
+        last_birth_year <- tr_year - 1L
+        load_monthly_births(years = 1967:last_birth_year)
+      },
       cue = targets::tar_cue(mode = "thorough")
     ),
 
