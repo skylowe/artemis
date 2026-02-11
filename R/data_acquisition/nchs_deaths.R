@@ -140,6 +140,91 @@ map_icd9_to_cause <- function(icd9_code) {
   result
 }
 
+#' ICD-9 to ICD-10 comparability ratios
+#'
+#' @description
+#' Returns published NCHS comparability ratios for mapping ICD-9 coded deaths
+#' (1979-1998) to ICD-10 equivalents. Ratios represent ICD-10 deaths / ICD-9
+#' deaths for each cause category.
+#'
+#' @return data.table with columns: cause, ratio
+#'
+#' @details
+#' Source: Anderson RN, Minino AM, Hoyert DL, Rosenberg HM. Comparability of
+#' cause of death between ICD-9 and ICD-10: Preliminary estimates. National
+#' Vital Statistics Reports; vol 49 no 2. Hyattsville, Maryland: NCHS. 2001.
+#'
+#' The OTH ratio is not directly published; it is computed as a residual to
+#' preserve total deaths per year/age/sex group.
+#'
+#' @export
+get_icd9_comparability_ratios <- function() {
+  data.table::data.table(
+    cause = c("CVD", "CAN", "ACV", "RES", "DEM"),
+    ratio = c(0.9735, 1.0090, 1.0302, 0.8903, 1.5519)
+  )
+}
+
+#' Apply ICD-9 to ICD-10 comparability ratios
+#'
+#' @description
+#' Adjusts death counts for years 1979-1998 using NCHS comparability ratios
+#' to make ICD-9 coded deaths consistent with ICD-10 coding conventions.
+#' Total deaths per year/age/sex are preserved by computing the OTH ratio
+#' as a residual.
+#'
+#' @param dt data.table with columns: year, age, sex, cause, deaths
+#'
+#' @return data.table with adjusted death counts for ICD-9 years
+#'
+#' @details
+#' Per TR2025 Section 1.2.c footnote 4, published NCHS comparability ratios
+#' are applied to make 1979-1998 data consistent with 1999+ ICD-10 coding.
+#'
+#' @export
+apply_icd_comparability_ratios <- function(dt) {
+  result <- data.table::copy(dt)
+
+  # Only apply to ICD-9 years (1979-1998)
+  icd9_mask <- result$year >= 1979L & result$year <= 1998L
+  if (!any(icd9_mask)) return(result)
+
+  ratios <- get_icd9_comparability_ratios()
+
+  # Get total deaths per year/age/sex before adjustment
+  totals_before <- result[icd9_mask, .(total = sum(deaths)), by = .(year, age, sex)]
+
+  # Apply ratios to each cause (except OTH)
+  for (i in seq_len(nrow(ratios))) {
+    cause_i <- ratios$cause[i]
+    ratio_i <- ratios$ratio[i]
+    mask <- icd9_mask & result$cause == cause_i
+    result[mask, deaths := as.integer(round(deaths * ratio_i))]
+  }
+
+  # Compute adjusted totals (excluding OTH) and set OTH as residual
+  non_oth_totals <- result[icd9_mask & cause != "OTH",
+                           .(non_oth = sum(deaths)), by = .(year, age, sex)]
+  oth_adjusted <- merge(totals_before, non_oth_totals, by = c("year", "age", "sex"))
+  oth_adjusted[, oth_deaths := pmax(0L, as.integer(total - non_oth))]
+
+  # Update OTH deaths in place: select only OTH rows in ICD-9 range, then
+  # look up adjusted value from oth_adjusted via match on (year, age, sex)
+  oth_idx <- which(icd9_mask & result$cause == "OTH")
+  if (length(oth_idx) > 0) {
+    oth_keys <- result[oth_idx, .(year, age, sex)]
+    matched <- oth_adjusted[oth_keys, on = .(year, age, sex)]
+    result[oth_idx, deaths := matched$oth_deaths]
+  }
+
+  n_years <- length(unique(result[icd9_mask]$year))
+  cli::cli_alert_success(
+    "Applied ICD-9 to ICD-10 comparability ratios for {n_years} years (1979-1998)"
+  )
+
+  result
+}
+
 #' Map ICD-8 code to broad cause category
 #'
 #' @description
@@ -611,6 +696,11 @@ fetch_nchs_deaths_multi <- function(years, cache_dir = "data/cache/nchs_deaths",
   }
 
   combined <- data.table::rbindlist(results, use.names = TRUE)
+
+  # Apply ICD-9 to ICD-10 comparability ratios for 1979-1998
+  if (any(combined$year >= 1979L & combined$year <= 1998L)) {
+    combined <- apply_icd_comparability_ratios(combined)
+  }
 
   # Apply 1972 50% sampling correction if that year is present
   if (1972L %in% combined$year) {
