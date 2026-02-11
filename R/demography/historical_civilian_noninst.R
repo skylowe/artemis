@@ -85,9 +85,12 @@ calculate_historical_civilian_noninst <- function(start_year = 2010,
     return(readRDS(cache_file))
   }
 
-  # Define years (excluding 2020 if in range)
+  # Define years (excluding ACS-unavailable years from config)
   years <- start_year:end_year
-  years <- years[years != 2020]  # ACS not available for 2020
+  acs_excluded <- config$historical_population$acs_excluded_years
+  if (!is.null(acs_excluded)) {
+    years <- years[!years %in% acs_excluded]
+  }
   cli::cli_alert_info("Processing {length(years)} years: {min(years)}-{max(years)}")
 
   # Step 1: Load civilian noninst totals by age/sex
@@ -109,11 +112,12 @@ calculate_historical_civilian_noninst <- function(start_year = 2010,
   cli::cli_h2("Step 4: Balancing Married Populations")
   result <- balance_c_married_populations(result, config)
 
-  # Step 5: Add same-sex marriage orientation (2013+)
+  # Step 5: Add same-sex marriage orientation
+  ss_start <- config$projected_population$population_status$same_sex_start_year
   if (include_orientation) {
-    cli::cli_h2("Step 5: Adding Same-Sex Marriage Orientation (2013+)")
+    cli::cli_h2("Step 5: Adding Same-Sex Marriage Orientation ({ss_start}+)")
     result <- add_c_orientation(result, config)
-    cli::cli_alert_info("Added orientation for {sum(result$year >= 2013)} year-rows")
+    cli::cli_alert_info("Added orientation for {sum(result$year >= ss_start)} year-rows")
   } else {
     result[, orientation := "heterosexual"]
   }

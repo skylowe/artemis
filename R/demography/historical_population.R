@@ -1095,9 +1095,11 @@ fetch_armed_forces_for_historical <- function(years) {
       af <- fetch_armed_forces_overseas(years = post1950_years)
       af
     }, error = function(e) {
-      cli::cli_alert_warning("Armed forces data error (1950+): {conditionMessage(e)}")
-      # Return empty data.table if fetch fails
-      data.table::data.table(year = integer(), population = numeric(), source = character())
+      cli::cli_abort(c(
+        "Failed to fetch armed forces overseas data for 1950+",
+        "x" = conditionMessage(e),
+        "i" = "DMDC/troopdata source required for armed forces overseas"
+      ))
     })
 
     if (nrow(post1950_data) > 0) {

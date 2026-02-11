@@ -318,14 +318,15 @@ get_marital_status_proportions <- function(years = 1940:2022,
   results <- list()
 
   for (yr in years) {
-    if (yr >= 2006 && yr != 2020) {
+    acs_excluded <- config$historical_population$acs_excluded_years
+    if (yr >= 2006 && !yr %in% acs_excluded) {
       # Use ACS data directly
       yr_data <- get_acs_marital_year(yr, acs_data, ages)
     } else if (yr >= 2000 && yr < 2006) {
       # Interpolate between Census 2000 and ACS 2006
       yr_data <- interpolate_marital_proportions(yr, ipums_data, acs_data, ages)
-    } else if (yr == 2020) {
-      # Average 2019 and 2021 due to COVID data issues
+    } else if (yr %in% acs_excluded) {
+      # Average surrounding years for ACS-excluded years (e.g., 2020 COVID)
       yr_data <- average_surrounding_years(yr, acs_data, ages)
     } else {
       # Use IPUMS data with interpolation between censuses
@@ -390,7 +391,9 @@ load_acs_marital_data <- function(cache_dir) {
   cli::cli_alert("Loading ACS PUMS marital status data...")
 
   # Use existing function from acs_pums.R
-  acs_years <- c(2006:2019, 2021:2023)  # Exclude 2020
+  # Build ACS year list excluding config-specified years (e.g., 2020 COVID)
+  acs_excluded <- config$historical_population$acs_excluded_years
+  acs_years <- setdiff(2006:2023, acs_excluded)
 
   acs_data <- fetch_acs_pums_marital_status(
     years = acs_years,

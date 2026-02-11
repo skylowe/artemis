@@ -379,7 +379,7 @@ build_o_stock_from_flows <- function(o_flows,
 #' Fetches all data needed for the O population calculation.
 #'
 #' @keywords internal
-gather_o_components <- function(years, ages, cache_dir) {
+gather_o_components <- function(years, ages, cache_dir, config = NULL) {
   components <- list()
 
   # 1. Mortality data (qx)
@@ -392,11 +392,11 @@ gather_o_components <- function(years, ages, cache_dir) {
 
   # 3. Legal emigration
   cli::cli_alert("  Loading legal emigration data...")
-  components$emigration <- load_emigration_for_o(years, ages)
+  components$emigration <- load_emigration_for_o(years, ages, config = config)
 
   # 4. Adjustments of Status (AOS)
   cli::cli_alert("  Loading adjustments of status data...")
-  components$aos <- load_aos_for_o(years, ages)
+  components$aos <- load_aos_for_o(years, ages, config = config)
 
   # 5. Births
   cli::cli_alert("  Loading births data...")
@@ -521,10 +521,10 @@ load_lpr_immigration_for_o <- function(years, ages) {
 #'
 #' @param years Integer vector: years to load
 #' @param ages Integer vector: ages to load
-#' @param emigration_ratio Numeric: ratio of emigration to LPR immigration (default: 0.25)
+#' @param config List: configuration with emigration_ratio
 #'
 #' @keywords internal
-load_emigration_for_o <- function(years, ages, emigration_ratio = 0.25, config = NULL) {
+load_emigration_for_o <- function(years, ages, config = NULL) {
   # Read emigration ratio from config
   if (is.null(config$historical_population$o_population$emigration_ratio)) {
     cli::cli_abort("Config missing {.field historical_population.o_population.emigration_ratio}")
@@ -583,24 +583,10 @@ load_births_for_o <- function(years) {
     return(readRDS(births_file))
   }
 
-  # Generate estimates based on historical birth rates
-  cli::cli_alert_info("Births cache not found, generating estimates")
-
-  # Historical US births (approximate)
-  births_totals <- data.table::data.table(
-    year = c(1940, 1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020, 2022),
-    total = c(2559000, 3632000, 4258000, 3731000, 3612000, 4158000, 4059000, 3999000, 3614000, 3662000)
-  )
-
-  all_years <- data.table::data.table(year = years)
-  births_interp <- merge(all_years, births_totals, by = "year", all.x = TRUE)
-  births_interp[, total := approx(births_totals$year, births_totals$total, xout = year, rule = 2)$y]
-
-  # Split by sex (105 males per 100 females at birth)
-  births_interp[, male := total * (105/205)]
-  births_interp[, female := total * (100/205)]
-
-  births_interp[, .(year, male, female)]
+  cli::cli_abort(c(
+    "Births cache not found at {births_file}",
+    "i" = "Run fertility subprocess first: targets::tar_make(names = matches('fertility'))"
+  ))
 }
 
 #' Load DHS Estimates for O Calculation
@@ -679,13 +665,11 @@ calculate_other_residuals <- function(total_pop,
 
     # Get births (age 0 only)
     births_data <- components$births
-    if (!is.null(births_data) && yr %in% births_data$year) {
-      births_male <- births_data[year == yr, male]
-      births_female <- births_data[year == yr, female]
-    } else {
-      births_male <- 1800000
-      births_female <- 1700000
+    if (is.null(births_data) || !yr %in% births_data$year) {
+      cli::cli_abort("Births data missing for year {yr} in residual calculation")
     }
+    births_male <- births_data[year == yr, male]
+    births_female <- births_data[year == yr, female]
 
     # Get mortality
     mortality <- components$mortality
@@ -699,39 +683,24 @@ calculate_other_residuals <- function(total_pop,
 
     # Get LPR immigration
     lpr <- components$lpr_immigration
-    if (!is.null(lpr) && yr %in% lpr$year) {
-      lpr_yr <- lpr[year == yr]
-    } else {
-      lpr_yr <- data.table::data.table(age = ages, sex = "male", immigration = 0)
-      lpr_yr <- data.table::rbindlist(list(
-        lpr_yr,
-        data.table::data.table(age = ages, sex = "female", immigration = 0)
-      ))
+    if (is.null(lpr) || !yr %in% lpr$year) {
+      cli::cli_abort("LPR immigration data missing for year {yr} in residual calculation")
     }
+    lpr_yr <- lpr[year == yr]
 
     # Get emigration
     emig <- components$emigration
-    if (!is.null(emig) && yr %in% emig$year) {
-      emig_yr <- emig[year == yr]
-    } else {
-      emig_yr <- data.table::data.table(age = ages, sex = "male", emigration = 0)
-      emig_yr <- data.table::rbindlist(list(
-        emig_yr,
-        data.table::data.table(age = ages, sex = "female", emigration = 0)
-      ))
+    if (is.null(emig) || !yr %in% emig$year) {
+      cli::cli_abort("Emigration data missing for year {yr} in residual calculation")
     }
+    emig_yr <- emig[year == yr]
 
     # Get AOS
     aos <- components$aos
-    if (!is.null(aos) && yr %in% aos$year) {
-      aos_yr <- aos[year == yr]
-    } else {
-      aos_yr <- data.table::data.table(age = ages, sex = "male", aos = 0)
-      aos_yr <- data.table::rbindlist(list(
-        aos_yr,
-        data.table::data.table(age = ages, sex = "female", aos = 0)
-      ))
+    if (is.null(aos) || !yr %in% aos$year) {
+      cli::cli_abort("AOS data missing for year {yr} in residual calculation")
     }
+    aos_yr <- aos[year == yr]
 
     # Calculate expected deaths
     # Deaths = begin_pop * qx (approximately)
@@ -741,7 +710,10 @@ calculate_other_residuals <- function(total_pop,
       by = c("age", "sex"),
       all.x = TRUE
     )
-    pop_qx[is.na(qx), qx := 0.01]
+    na_qx <- pop_qx[is.na(qx)]
+    if (nrow(na_qx) > 0) {
+      cli::cli_abort("Missing qx for {nrow(na_qx)} age-sex cells in year {yr} residual calculation")
+    }
     pop_qx[, deaths := begin_pop * qx]
 
     # Merge all components

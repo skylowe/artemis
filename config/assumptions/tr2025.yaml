@@ -579,6 +579,20 @@ data_sources:
 # All constants previously hardcoded in historical population R files.
 
 historical_population:
+  # Historical period boundaries
+  # start_year: First year of historical population estimates
+  # end_year: Last year before projection starts (= last year with Census/ACS data)
+  # These change with each Trustees Report year
+  start_year: 1940
+  end_year: 2022
+
+  # Civilian noninstitutionalized population start year
+  # ACS PUMS data is available from 2005+, but TR2025 uses 2010+ for CNI
+  cni_start_year: 2010
+
+  # ACS survey years excluded from data (e.g., 2020 ACS was not conducted due to COVID)
+  acs_excluded_years: [2020]
+
   # Maximum single year of age tracked (100 represents 100+)
   max_age: 100
 

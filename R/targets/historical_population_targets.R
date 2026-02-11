@@ -25,9 +25,9 @@ create_historical_population_targets <- function() {
     targets::tar_target(
       historical_population,
       calculate_historical_population(
-        start_year = 1940,
-        end_year = 2022,
-        ages = 0:100,
+        start_year = config_assumptions$historical_population$start_year,
+        end_year = config_assumptions$historical_population$end_year,
+        ages = 0:config_assumptions$historical_population$max_age,
         config = config_assumptions,
         use_cache = TRUE
       )
@@ -38,9 +38,9 @@ create_historical_population_targets <- function() {
       historical_population_marital,
       calculate_historical_population_marital(
         total_pop = historical_population,
-        start_year = 1940,
-        end_year = 2022,
-        ages = 14:100,
+        start_year = config_assumptions$historical_population$start_year,
+        end_year = config_assumptions$historical_population$end_year,
+        ages = 14:config_assumptions$historical_population$max_age,
         config = config_assumptions,
         use_cache = TRUE,
         include_same_sex = TRUE
@@ -51,9 +51,9 @@ create_historical_population_targets <- function() {
     targets::tar_target(
       historical_temp_unlawful,
       calculate_historical_temp_unlawful(
-        start_year = 1940,
-        end_year = 2022,
-        ages = 0:100,
+        start_year = config_assumptions$historical_population$start_year,
+        end_year = config_assumptions$historical_population$end_year,
+        ages = 0:config_assumptions$historical_population$max_age,
         config = config_assumptions,
         use_cache = TRUE
       )
@@ -63,9 +63,9 @@ create_historical_population_targets <- function() {
     targets::tar_target(
       historical_civilian_noninst,
       calculate_historical_civilian_noninst(
-        start_year = 2010,
-        end_year = 2022,
-        ages = 0:100,
+        start_year = config_assumptions$historical_population$cni_start_year,
+        end_year = config_assumptions$historical_population$end_year,
+        ages = 0:config_assumptions$historical_population$max_age,
         config = config_assumptions,
         include_orientation = TRUE,
         use_cache = TRUE
