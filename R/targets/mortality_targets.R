@@ -200,6 +200,8 @@ create_mortality_targets <- function() {
     # ==========================================================================
 
     # Step 9: Extract projected qx
+    # For regression/capped methods: apply HMD calibration + age-last-birthday conversion
+    # For tr_qx method: TR files already contain age-last-birthday qx
     targets::tar_target(
       mortality_qx_projected,
       {
@@ -209,11 +211,20 @@ create_mortality_targets <- function() {
           default = "regression"
         )
         if (method == "tr_qx") {
-          cli::cli_alert_info("Skipping HMD calibration for tr_qx method")
+          cli::cli_alert_info("Skipping HMD calibration and ALB conversion for tr_qx method")
           qx_proj <- qx_proj[age <= 100]
           return(qx_proj)
         }
-        adjust_qx_with_hmd(qx = qx_proj, transition_age = 85, max_age = 100)
+        qx_adjusted <- adjust_qx_with_hmd(qx = qx_proj, transition_age = 85, max_age = 100)
+
+        # Convert to age-last-birthday qx (TR2025 Section 1.2.c):
+        # qx_alb = 1 - L_{x+1}/L_x for ages 0-99, q100 = 1 - T101/T100
+        cli::cli_alert_info("Applying age-last-birthday qx conversion (regression mode)")
+        lt_temp <- calculate_life_table(qx = qx_adjusted, radix = 100000, max_age = 100)
+        # Add qx_exact column for ALB function compatibility
+        lt_temp[, qx_exact := qx]
+        qx_alb <- calculate_age_last_birthday_qx(lt_temp, min_age = 0, max_age = 99)
+        apply_age_last_birthday_qx(qx_adjusted, qx_alb, min_age = 0)
       }
     ),
 
