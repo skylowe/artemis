@@ -169,7 +169,7 @@ sudo systemctl restart jupyterhub
 ## Known Methodology Deviations from TR2025
 
 1. **Fertility Step 1 (2024):** Uses actual NCHS preliminary data (TFR=1.602) instead of TR estimate (1.62). Configurable via `custom_recent_tfr`.
-2. **Mortality smoothing:** Whittaker-Henderson smoothing parameter 0.5 (vs TR's 0.01) for marital mortality differentials due to sparse data.
+2. **Mortality ages 65+:** Uses NCHS deaths / Census population instead of CMS Medicare data. CMS data is not publicly available in the single-year-of-age form SSA uses (requires ResDAC/CCW restricted access). HMD calibration at ages 85+ partially compensates (configurable via `hmd_calibration.enabled`).
 3. **Immigration distribution:** TR-derived age-sex distribution back-calculated from TR2025 projections instead of unpublished Census data.
 4. **Immigration totals:** V.A2 net immigration totals (~1.3M/yr) are lower than what TR2025 population projections imply (~2.0M/yr), causing ~1.2% population divergence.
 5. **Marriage:** Same-sex separation uses ACS PUMS prevalence (2015-2022) instead of state-level data (2004-2012).
