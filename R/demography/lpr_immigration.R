@@ -495,7 +495,8 @@ load_dhs_lpr_data <- function(file_path = "data/cache/dhs_immigration/dhs_lpr_al
 #' @return data.table with columns: age, sex, distribution
 #' @export
 calculate_lpr_distribution_dhs <- function(dhs_data,
-                                           reference_years = 2016:2020) {
+                                           reference_years = 2016:2020,
+                                           interpolation_method = "uniform") {
   dhs_data <- data.table::as.data.table(dhs_data)
 
   # Filter to reference years (combine AOS and new arrivals for total LPR)
@@ -518,13 +519,18 @@ calculate_lpr_distribution_dhs <- function(dhs_data,
     "DHS 5-year distribution ({min(reference_years)}-{max(reference_years)}): {round(by_sex[sex=='female', pct], 1)}% female, {round(by_sex[sex=='male', pct], 1)}% male"
   )
 
-  # Interpolate to single years (uniform distribution within each group)
-  dist_single <- uniform_interpolate_dhs(dist_5yr)
+  # Interpolate to single years
+  interpolate_fn <- if (interpolation_method == "beers") {
+    beers_interpolate_immigration
+  } else {
+    uniform_interpolate_dhs
+  }
+  dist_single <- interpolate_fn(dist_5yr)
 
   # Report single-year summary
   by_sex_single <- dist_single[, .(pct = sum(distribution) * 100), by = sex]
   cli::cli_alert_info(
-    "LPR distribution (single-year): {round(by_sex_single[sex=='female', pct], 1)}% female, {round(by_sex_single[sex=='male', pct], 1)}% male"
+    "LPR distribution (single-year, {interpolation_method}): {round(by_sex_single[sex=='female', pct], 1)}% female, {round(by_sex_single[sex=='male', pct], 1)}% male"
   )
 
   dist_single
@@ -654,6 +660,222 @@ calculate_emigration_distribution_dhs <- function(dhs_data,
   calculate_lpr_distribution_dhs(dhs_data, reference_years)
 }
 
+# ===========================================================================
+# FISCAL-YEAR TO CALENDAR-YEAR CONVERSION
+# ===========================================================================
+
+#' Convert DHS fiscal-year data to calendar-year data
+#'
+#' @description
+#' Per TR2025 Section 1.3, DHS data reported by federal fiscal year
+#' (Oct 1 - Sep 30) is converted to calendar year:
+#'
+#'   CY_z = 0.75 * FY_z + 0.25 * FY_{z+1}
+#'
+#' This reflects that 75% of a fiscal year (Oct-Jun) falls in the calendar
+#' year, and 25% (Jul-Sep of FY_{z+1}) also falls in the calendar year.
+#'
+#' @param dhs_data data.table with fiscal_year, age_min, age_max, sex,
+#'   admission_type, count columns
+#'
+#' @return data.table with calendar_year replacing fiscal_year,
+#'   counts weighted by FY-CY overlap. Last available CY = max(FY) - 1.
+#'
+#' @export
+convert_fy_to_cy <- function(dhs_data) {
+  dhs_data <- data.table::as.data.table(dhs_data)
+
+  if (!"fiscal_year" %in% names(dhs_data)) {
+    cli::cli_abort("dhs_data must have 'fiscal_year' column")
+  }
+
+  fy_range <- range(dhs_data$fiscal_year)
+  cli::cli_alert_info("Converting FY{fy_range[1]}-FY{fy_range[2]} to calendar years")
+
+  # Group columns for merging
+  group_cols <- intersect(
+    c("age_min", "age_max", "sex", "admission_type", "age_group"),
+    names(dhs_data)
+  )
+
+  # For each CY_z, we need FY_z and FY_{z+1}
+  # CY_z = 0.75 * FY_z + 0.25 * FY_{z+1}
+  # Available CY range: min(FY) to max(FY) - 1
+  cy_range <- fy_range[1]:(fy_range[2] - 1)
+
+  result_list <- list()
+
+  for (cy in cy_range) {
+    fy_current <- dhs_data[fiscal_year == cy]
+    fy_next <- dhs_data[fiscal_year == cy + 1]
+
+    if (nrow(fy_current) == 0 || nrow(fy_next) == 0) next
+
+    # Merge the two fiscal years on group columns
+    merged <- merge(
+      fy_current[, c(group_cols, "count"), with = FALSE],
+      fy_next[, c(group_cols, "count"), with = FALSE],
+      by = group_cols,
+      suffixes = c("_fy", "_fy_next"),
+      all = TRUE
+    )
+
+    # Fill NAs with 0
+    merged[is.na(count_fy), count_fy := 0]
+    merged[is.na(count_fy_next), count_fy_next := 0]
+
+    # Apply CY conversion formula
+    merged[, count := 0.75 * count_fy + 0.25 * count_fy_next]
+    merged[, calendar_year := cy]
+    merged[, c("count_fy", "count_fy_next") := NULL]
+
+    result_list[[length(result_list) + 1]] <- merged
+  }
+
+  result <- data.table::rbindlist(result_list, use.names = TRUE)
+
+  cli::cli_alert_success(
+    "Converted to CY{min(cy_range)}-CY{max(cy_range)} ({length(cy_range)} calendar years)"
+  )
+
+  result
+}
+
+# ===========================================================================
+# H.S. BEERS INTERPOLATION FOR IMMIGRATION
+# ===========================================================================
+
+#' Apply H.S. Beers ordinary interpolation to immigration age groups
+#'
+#' @description
+#' Converts DHS 5-year age group distributions to single-year-of-age using
+#' the H.S. Beers ordinary interpolation method. This is the standard
+#' demographic technique referenced in TR2025 Section 1.3 for emigration
+#' and used by SSA for immigration data processing.
+#'
+#' Handles DHS-specific irregular age groups:
+#' - "Under 1" (1 year) + "1-4" (4 years) combined into "0-4" (5 years)
+#' - Standard 5-year groups: 5-9, 10-14, ..., 80-84
+#' - Open-ended "85+" distributed uniformly (Beers can't extrapolate)
+#'
+#' Reuses \code{\link[=get_beers_coefficients]{get_beers_coefficients()}} and
+#' \code{\link[=beers_interpolate]{beers_interpolate()}} from historical_marital_status.R.
+#'
+#' @param dist data.table with columns: age_min, age_max, sex, distribution
+#' @param max_age Integer: maximum single-year age (default: 100, representing 100+)
+#'
+#' @return data.table with columns: age (0 to max_age), sex, distribution
+#'   normalized to sum to 1.0
+#'
+#' @export
+beers_interpolate_immigration <- function(dist, max_age = 100) {
+  results <- list()
+
+  for (s in c("male", "female")) {
+    sex_dist <- dist[tolower(sex) == s]
+    data.table::setorder(sex_dist, age_min)
+
+    # Step 1: Combine irregular first groups into standard 5-year groups
+    # DHS has: Under 1 (0-0), 1-4, 5-9, 10-14, ..., 80-84, 85+
+    # Need: 0-4, 5-9, 10-14, ..., 80-84 (standard 5-year), plus 85+ separate
+
+    # Separate open-ended group (85+) from regular groups
+    open_ended <- sex_dist[age_max >= 85 | age_min >= 85]
+    regular <- sex_dist[age_max < 85]
+
+    # Combine "Under 1" (0-0) and "1-4" into "0-4"
+    group_0 <- regular[age_min == 0 & age_max == 0]
+    group_1_4 <- regular[age_min == 1 & age_max == 4]
+
+    if (nrow(group_0) > 0 && nrow(group_1_4) > 0) {
+      # Combine into 0-4
+      combined_0_4 <- data.table::data.table(
+        age_min = 0L, age_max = 4L, sex = s,
+        distribution = group_0$distribution + group_1_4$distribution
+      )
+      # Replace the two groups
+      regular <- regular[!(age_min == 0 & age_max == 0) & !(age_min == 1 & age_max == 4)]
+      regular <- rbind(combined_0_4, regular)
+      data.table::setorder(regular, age_min)
+    } else if (nrow(group_0) == 0 && nrow(group_1_4) == 0) {
+      # Already has 0-4 combined, or starts at 0-4
+      # Check if first group is 0-4
+      if (nrow(regular) > 0 && regular$age_min[1] == 0 && regular$age_max[1] == 4) {
+        # Already standard format
+      }
+    }
+
+    # Verify we have standard 5-year groups
+    n_regular <- nrow(regular)
+    if (n_regular < 6) {
+      cli::cli_alert_warning(
+        "Only {n_regular} regular age groups for {s}, falling back to uniform interpolation"
+      )
+      # Fall back to uniform
+      return(uniform_interpolate_dhs(dist, max_age))
+    }
+
+    # Step 2: Apply Beers interpolation to standard groups (0-84)
+    grouped_values <- regular$distribution
+    n_groups <- length(grouped_values)
+
+    # Use beers_interpolate from historical_marital_status.R
+    single_year_values <- beers_interpolate(
+      grouped_values = grouped_values,
+      min_age = 0,
+      max_age = n_groups * 5 - 1
+    )
+
+    # Create data.table for regular ages (0-84)
+    regular_ages <- as.integer(names(single_year_values))
+    regular_result <- data.table::data.table(
+      age = regular_ages,
+      distribution = as.numeric(single_year_values)
+    )
+
+    # Step 3: Handle open-ended 85+ group (distribute uniformly)
+    open_ended_total <- sum(open_ended$distribution)
+    if (open_ended_total > 0 && max_age >= 85) {
+      n_open_ages <- max_age - 85 + 1  # ages 85 to max_age
+      per_age <- open_ended_total / n_open_ages
+
+      open_result <- data.table::data.table(
+        age = 85:max_age,
+        distribution = per_age
+      )
+
+      regular_result <- rbind(regular_result, open_result)
+    }
+
+    # Pad any missing ages with 0
+    all_ages <- 0:max_age
+    missing_ages <- setdiff(all_ages, regular_result$age)
+    if (length(missing_ages) > 0) {
+      regular_result <- rbind(regular_result, data.table::data.table(
+        age = missing_ages,
+        distribution = 0
+      ))
+    }
+
+    regular_result[, sex := s]
+    data.table::setorder(regular_result, age)
+
+    results[[s]] <- regular_result
+  }
+
+  result <- data.table::rbindlist(results)
+
+  # Ensure non-negative
+  result[distribution < 0, distribution := 0]
+
+  # Normalize to sum to 1
+  result[, distribution := distribution / sum(distribution)]
+
+  data.table::setorder(result, sex, age)
+
+  result
+}
+
 #' Interpolate age groups to single years (uniform method)
 #'
 #' @description
@@ -662,8 +884,8 @@ calculate_emigration_distribution_dhs <- function(dhs_data,
 #' distribution for each age group while providing single-year granularity.
 #'
 #' Note: Despite the original name "beers_interpolate_dhs", this function
-#' uses uniform distribution, not H.S. Beers interpolation. Renamed in Phase 3
-#' to accurately reflect the method. For real Beers interpolation, see
+#' uses uniform distribution, not H.S. Beers interpolation. Renamed to
+#' accurately reflect the method. For real Beers interpolation, see
 #' \code{\link{beers_interpolate_immigration}}.
 #'
 #' @param dist data.table with columns: age_min, age_max, sex, distribution
