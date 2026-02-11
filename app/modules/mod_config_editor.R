@@ -128,6 +128,12 @@ mod_config_editor_ui <- function(id) {
           ns("apply_covid_adjustments"),
           "Apply COVID-19 Adjustments",
           value = TRUE
+        ),
+
+        checkboxInput(
+          ns("use_wonder_provisional"),
+          "Use CDC WONDER Provisional Data",
+          value = TRUE
         )
       ),
 
@@ -258,6 +264,9 @@ mod_config_editor_server <- function(id, rv) {
       updateSelectInput(session, "starting_aax_method",
         selected = config$mortality$starting_aax_method %||% "tr_qx")
 
+      updateCheckboxInput(session, "use_wonder_provisional",
+        value = config$mortality$use_wonder_provisional %||% TRUE)
+
       updateSelectInput(session, "distribution_method",
         selected = config$immigration$lpr$distribution_method %||% "tr_derived")
 
@@ -324,6 +333,7 @@ mod_config_editor_server <- function(id, rv) {
 
       config$mortality$ultimate_year <- input$mortality_ultimate_year
       config$mortality$starting_aax_method <- input$starting_aax_method
+      config$mortality$use_wonder_provisional <- input$use_wonder_provisional
 
       config$immigration$va2_alternative <- input$immigration_scenario
       config$immigration$lpr$distribution_method <- input$distribution_method
