@@ -428,9 +428,14 @@ estimate_pre1980_population <- function(years, ages) {
   # Get 1980 July 1 population from Census data for 1979 Dec 31 interpolation
   pop_1980 <- NULL
   if (1979 %in% years) {
-    pop_1980 <- tryCatch({
-      get_census_population_totals(1980)
-    }, error = function(e) NULL)
+    pop_1980 <- get_census_population_totals(1980)
+    if (is.null(pop_1980) || nrow(pop_1980) == 0) {
+      cli::cli_abort(c(
+        "Failed to fetch 1980 Census population for Dec 31, 1979 interpolation",
+        "i" = "Census PEP data for 1980 is required to interpolate Dec 31, 1979",
+        "i" = "Check Census API key and network connectivity"
+      ))
+    }
   }
 
   # Get age distributions from decennial censuses
@@ -468,13 +473,19 @@ estimate_pre1980_population <- function(years, ages) {
       male_total <- total_dec31 * male_ratio
       female_total <- total_dec31 * (1 - male_ratio)
     } else {
-      # Fallback: use ~1% annual growth to estimate Dec 31
-      male_total <- male_jul1 * 1.005
-      female_total <- female_jul1 * 1.005
+      cli::cli_abort(c(
+        "Cannot interpolate Dec 31 population for year {yr}",
+        "i" = "Need July 1 population for year {yr + 1} or 1980 Census data (for 1979)",
+        "i" = "Ensure pre-1980 static data covers all requested years"
+      ))
     }
 
-    if (length(male_total) == 0) male_total <- NA_real_
-    if (length(female_total) == 0) female_total <- NA_real_
+    if (length(male_total) == 0 || is.na(male_total)) {
+      cli::cli_abort("Empty male population total for year {yr}")
+    }
+    if (length(female_total) == 0 || is.na(female_total)) {
+      cli::cli_abort("Empty female population total for year {yr}")
+    }
 
     # Apply distribution to totals
     pop <- year_dist[, .(
@@ -577,7 +588,13 @@ get_historical_age_distribution <- function(census_year, ages) {
   )
 
   p <- params[[as.character(census_year)]]
-  if (is.null(p)) p <- params[["1960"]]
+  if (is.null(p)) {
+    cli::cli_abort(c(
+      "No demographic parameters for census year {census_year}",
+      "i" = "Parameters are available for years: {paste(names(params), collapse = ', ')}",
+      "i" = "Pre-1970 age distributions should come from TR2025 SSPopDec, not synthetic generation"
+    ))
+  }
 
   # Generate smooth age distribution using demographic model
   # This is a simplified approximation - real data would be better
@@ -678,42 +695,34 @@ fetch_territory_for_historical <- function(years, ages, cache_dir) {
       }
     }
 
-    # IDB-covered years: Use IDB API with fallback to interpolation
+    # IDB-covered years: Use IDB API (no silent fallback)
     if (length(idb_years) > 0) {
-      idb_pop <- tryCatch({
-        fetch_territory_populations_by_age_sex(
-          years = idb_years,
-          territories = terr,
-          cache_dir = cache_dir
-        )
-      }, error = function(e) {
-        cli::cli_alert_warning("Territory {terr} IDB error: {conditionMessage(e)}")
-        NULL
-      })
+      idb_pop <- fetch_territory_populations_by_age_sex(
+        years = idb_years,
+        territories = terr,
+        cache_dir = cache_dir
+      )
 
-      if (!is.null(idb_pop) && nrow(idb_pop) > 0) {
-        idb_pop[, territory := terr]
-        result_list[[paste0(terr, "_idb")]] <- idb_pop
+      if (is.null(idb_pop) || nrow(idb_pop) == 0) {
+        cli::cli_abort(c(
+          "IDB API returned no data for territory {terr}",
+          "i" = "Requested years: {paste(range(idb_years), collapse = '-')}",
+          "i" = "Check Census API key and IDB API availability"
+        ))
+      }
 
-        # Check for missing years and use fallback
-        years_with_data <- unique(idb_pop$year)
-        missing_years <- setdiff(idb_years, years_with_data)
-        if (length(missing_years) > 0) {
-          cli::cli_alert_info("Territory {terr}: Interpolating {length(missing_years)} years missing from IDB")
-          fallback_pop <- get_territory_population_interpolated(terr, missing_years, ages)
-          if (!is.null(fallback_pop) && nrow(fallback_pop) > 0) {
-            fallback_pop[, territory := terr]
-            result_list[[paste0(terr, "_fallback")]] <- fallback_pop
-          }
-        }
-      } else {
-        # IDB returned nothing, use interpolation for all
-        cli::cli_alert_info("Territory {terr}: Using interpolation (no IDB data)")
-        fallback_pop <- get_territory_population_interpolated(terr, idb_years, ages)
-        if (!is.null(fallback_pop) && nrow(fallback_pop) > 0) {
-          fallback_pop[, territory := terr]
-          result_list[[paste0(terr, "_fallback")]] <- fallback_pop
-        }
+      idb_pop[, territory := terr]
+      result_list[[paste0(terr, "_idb")]] <- idb_pop
+
+      # Check for missing years
+      years_with_data <- unique(idb_pop$year)
+      missing_years <- setdiff(idb_years, years_with_data)
+      if (length(missing_years) > 0) {
+        cli::cli_abort(c(
+          "IDB data incomplete for territory {terr}",
+          "i" = "Missing years: {paste(missing_years, collapse = ', ')}",
+          "i" = "IDB API must provide data for all requested years"
+        ))
       }
     }
   }
@@ -896,28 +905,32 @@ get_undercount_for_years <- function(years, ages, config = NULL) {
 #'
 #' @keywords internal
 fetch_fed_employees_for_historical <- function(years) {
-  tryCatch({
-    fed <- fetch_opm_federal_employees_overseas(include_dependents = FALSE)
-    fed <- fed[year %in% years]
-    fed
-  }, error = function(e) {
-    cli::cli_alert_warning("Federal employees data error: {conditionMessage(e)}")
-    data.table::data.table(year = years, employees = 0)
-  })
+  fed <- fetch_opm_federal_employees_overseas(include_dependents = FALSE)
+  if (is.null(fed) || nrow(fed) == 0) {
+    cli::cli_abort(c(
+      "Failed to fetch federal employees overseas data",
+      "i" = "OPM federal employees data is required for SS area population",
+      "i" = "Check that opm_federal_employees.R is available and data sources are accessible"
+    ))
+  }
+  fed <- fed[year %in% years]
+  fed
 }
 
 #' Fetch SSA Beneficiaries Abroad
 #'
 #' @keywords internal
 fetch_beneficiaries_for_historical <- function(years) {
-  tryCatch({
-    ben <- fetch_ssa_beneficiaries_abroad()
-    ben <- ben[year %in% years]
-    ben
-  }, error = function(e) {
-    cli::cli_alert_warning("Beneficiaries data error: {conditionMessage(e)}")
-    data.table::data.table(year = years, total_beneficiaries = 0)
-  })
+  ben <- fetch_ssa_beneficiaries_abroad()
+  if (is.null(ben) || nrow(ben) == 0) {
+    cli::cli_abort(c(
+      "Failed to fetch SSA beneficiaries abroad data",
+      "i" = "SSA beneficiaries data is required for SS area population",
+      "i" = "Check that ssa_beneficiaries_abroad.R is available and data sources are accessible"
+    ))
+  }
+  ben <- ben[year %in% years]
+  ben
 }
 
 #' Get Other Citizens Overseas Estimate
@@ -1081,14 +1094,17 @@ load_mortality_data <- function() {
     return(readRDS(qx_file))
   }
 
-  # Fallback: Try to calculate from mortality.R
-  cli::cli_alert_info("Mortality cache not found, using TR2025 mortality data")
-  tryCatch({
-    load_tr_mortality()
-  }, error = function(e) {
-    cli::cli_alert_warning("Could not load mortality data: {conditionMessage(e)}")
-    NULL
-  })
+  # Fallback: Load from TR2025 raw files
+  cli::cli_alert_info("Mortality cache not found, loading from TR2025 qx files")
+  result <- load_tr_mortality()
+  if (is.null(result) || nrow(result) == 0) {
+    cli::cli_abort(c(
+      "Mortality data unavailable",
+      "i" = "Neither cache ({qx_file}) nor TR2025 qx files found",
+      "i" = "Run mortality subprocess first, or ensure TR2025 qxprd files are in data/raw/SSA_TR2025/"
+    ))
+  }
+  result
 }
 
 #' Load TR2025 Mortality Data
@@ -1100,7 +1116,12 @@ load_tr_mortality <- function() {
   female_file <- here::here("data/raw/SSA_TR2025/qxprdF_Alt2_TR2025.csv")
 
   if (!file.exists(male_file) || !file.exists(female_file)) {
-    return(NULL)
+    cli::cli_abort(c(
+      "TR2025 mortality qx files not found",
+      "x" = "Male file: {male_file}",
+      "x" = "Female file: {female_file}",
+      "i" = "Place TR2025 qx files in data/raw/SSA_TR2025/"
+    ))
   }
 
   male_qx <- data.table::fread(male_file)
@@ -1144,8 +1165,10 @@ load_immigration_data <- function() {
     return(readRDS(lpr_file))
   }
 
-  cli::cli_alert_info("Immigration cache not found")
-  NULL
+  cli::cli_abort(c(
+    "Immigration cache not found at {lpr_file}",
+    "i" = "Run LPR immigration subprocess first: targets::tar_make(names = matches('lpr_immigration'))"
+  ))
 }
 
 #' Load Emigration Data
@@ -1159,8 +1182,10 @@ load_emigration_data <- function() {
     return(readRDS(emig_file))
   }
 
-  cli::cli_alert_info("Emigration cache not found")
-  NULL
+  cli::cli_abort(c(
+    "Emigration cache not found at {emig_file}",
+    "i" = "Run legal emigration subprocess first: targets::tar_make(names = matches('legal_emigration'))"
+  ))
 }
 
 #' Load Births Data
@@ -1174,14 +1199,17 @@ load_births_data <- function() {
     return(readRDS(births_file))
   }
 
-  # Fallback to NCHS births
-  cli::cli_alert_info("Births cache not found, using NCHS data")
-  tryCatch({
-    fetch_nchs_births_by_sex()
-  }, error = function(e) {
-    cli::cli_alert_warning("Could not load births data: {conditionMessage(e)}")
-    NULL
-  })
+  # Try NCHS births directly
+  cli::cli_alert_info("Births cache not found, fetching from NCHS")
+  result <- fetch_nchs_births_by_sex()
+  if (is.null(result) || nrow(result) == 0) {
+    cli::cli_abort(c(
+      "Births data unavailable",
+      "i" = "Neither cache ({births_file}) nor NCHS API returned data",
+      "i" = "Run fertility subprocess first: targets::tar_make(names = matches('fertility'))"
+    ))
+  }
+  result
 }
 
 # =============================================================================
@@ -1252,12 +1280,16 @@ calculate_tab_year_populations <- function(tab_years,
 
     # Add beneficiaries abroad
     ben_total <- components$beneficiaries[year == yr, total_beneficiaries]
-    if (length(ben_total) == 0) ben_total <- 0
+    if (length(ben_total) == 0) {
+      cli::cli_abort("SSA beneficiaries data missing for year {yr}")
+    }
     pop[, beneficiaries := distribute_overseas_by_age(ben_total, age, sex, "beneficiaries")]
 
     # Add other citizens overseas
     oth_total <- components$other_overseas[year == yr, other_overseas]
-    if (length(oth_total) == 0) oth_total <- 0
+    if (length(oth_total) == 0) {
+      cli::cli_abort("Other overseas citizens estimate missing for year {yr}")
+    }
     pop[, other_overseas := distribute_overseas_by_age(oth_total, age, sex, "other")]
 
     # Calculate total population (Eq 1.4.1)
@@ -1352,9 +1384,11 @@ build_up_ages_85_plus <- function(tab_years,
     usaf_85plus <- components$census_usaf[year == yr & age >= 85]
 
     if (nrow(usaf_85plus) == 0) {
-      # No Census data - estimate from 1940 distribution
-      dist_1940 <- get_1940_85plus_distribution()
-      return(estimate_85plus_from_1940(yr, dist_1940, max_age))
+      cli::cli_abort(c(
+        "No Census 85+ data for year {yr}",
+        "i" = "Census USAF data must include ages 85+ for all tab years",
+        "i" = "For pre-1980, use TR2025 SSPopDec as source for 85+ populations"
+      ))
     }
 
     # Check if Census provides single-year-of-age data (1980+)
@@ -1387,18 +1421,13 @@ build_up_ages_85_plus <- function(tab_years,
     # Get mortality rates for ages 85+
     qx <- components$mortality
     if (is.null(qx)) {
-      # Use simplified mortality decline
-      qx_85plus <- data.table::data.table(
-        age = rep(85:max_age, 2),
-        sex = c(rep("male", length(85:max_age)), rep("female", length(85:max_age))),
-        qx = c(
-          0.10 + 0.03 * (0:(max_age - 85)),  # Male: starts at 10%, increases
-          0.08 + 0.025 * (0:(max_age - 85))  # Female: starts at 8%, increases
-        )
-      )
-    } else {
-      qx_85plus <- qx[year == yr & age >= 85 & age <= max_age]
+      cli::cli_abort(c(
+        "Mortality data unavailable for ages 85+",
+        "i" = "qx data is required for survival-based 85+ distribution",
+        "i" = "Ensure mortality subprocess has been run or TR2025 qx files are present"
+      ))
     }
+    qx_85plus <- qx[year == yr & age >= 85 & age <= max_age]
 
     # Calculate survival proportions
     survival <- calculate_survival_proportions(qx_85plus, 85:max_age)
@@ -1437,7 +1466,9 @@ calculate_survival_proportions <- function(qx, ages) {
     for (i in 2:length(ages)) {
       age_prev <- ages[i - 1]
       q <- qx_sex[age == age_prev, qx]
-      if (length(q) == 0) q <- 0.15  # Default high mortality
+      if (length(q) == 0) {
+        cli::cli_abort("qx not found for age {age_prev}, sex {s}")
+      }
       lx[i] <- lx[i - 1] * (1 - q)
     }
 
@@ -1566,12 +1597,16 @@ interpolate_populations <- function(tab_year_pops,
 
         # Add beneficiaries abroad
         ben_total <- components$beneficiaries[year == yr, total_beneficiaries]
-        if (length(ben_total) == 0) ben_total <- 0
+        if (length(ben_total) == 0) {
+          cli::cli_abort("SSA beneficiaries data missing for year {yr}")
+        }
         pop[, beneficiaries := distribute_overseas_by_age(ben_total, age, sex, "beneficiaries")]
 
         # Add other citizens overseas
         oth_total <- components$other_overseas[year == yr, other_overseas]
-        if (length(oth_total) == 0) oth_total <- 0
+        if (length(oth_total) == 0) {
+          cli::cli_abort("Other overseas citizens estimate missing for year {yr}")
+        }
         pop[, other_overseas := distribute_overseas_by_age(oth_total, age, sex, "other")]
 
         # Calculate total population (Eq 1.4.1) - same as tab year

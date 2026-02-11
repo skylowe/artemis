@@ -205,17 +205,18 @@ fetch_resident_usaf_population <- function(years, ages, reference_date, cache_di
   # Military ages typically 17-65, but we filter to requested ages
   mil_ages <- intersect(ages, 17:65)
 
-  usaf_data <- tryCatch({
-    fetch_armed_forces_overseas(
-      years = years,
-      ages = mil_ages,
-      cache_dir = file.path(cache_dir, "..", "dmdc")
-    )
-  }, error = function(e) {
-    cli::cli_alert_warning("Could not fetch armed forces overseas: {conditionMessage(e)}")
-    cli::cli_alert_info("Using resident only (armed forces overseas ~0.1% of population)")
-    NULL
-  })
+  usaf_data <- fetch_armed_forces_overseas(
+    years = years,
+    ages = mil_ages,
+    cache_dir = file.path(cache_dir, "..", "dmdc")
+  )
+  if (is.null(usaf_data) || nrow(usaf_data) == 0) {
+    cli::cli_abort(c(
+      "Failed to fetch armed forces overseas data",
+      "i" = "Armed forces data is required for resident+USAF population concept",
+      "i" = "Check troopdata package and DMDC data availability"
+    ))
+  }
 
   # Step 3: Combine resident + armed forces overseas
   if (!is.null(usaf_data) && nrow(usaf_data) > 0) {
@@ -393,16 +394,18 @@ fetch_civilian_population <- function(years, ages, reference_date, cache_dir) {
       acs_years_needed <- years_acs
     }
 
-    acs_data <- tryCatch({
-      fetch_acs_pums_civilian(
-        years = acs_years_needed,
-        ages = ages,
-        cache_dir = here::here("data/cache/acs_pums")
-      )
-    }, error = function(e) {
-      cli::cli_alert_warning("ACS PUMS civilian fetch failed: {conditionMessage(e)}")
-      NULL
-    })
+    acs_data <- fetch_acs_pums_civilian(
+      years = acs_years_needed,
+      ages = ages,
+      cache_dir = here::here("data/cache/acs_pums")
+    )
+    if (is.null(acs_data) || nrow(acs_data) == 0) {
+      cli::cli_abort(c(
+        "Failed to fetch ACS civilian population for years {paste(range(acs_years_needed), collapse = '-')}",
+        "i" = "ACS PUMS data is required for civilian population concept",
+        "i" = "Check Census API key and ACS PUMS data availability"
+      ))
+    }
 
     if (!is.null(acs_data) && nrow(acs_data) > 0) {
       # ACS is annual; treat as mid-year (July 1) for interpolation purposes
@@ -493,16 +496,18 @@ fetch_civilian_noninst_population <- function(years, ages, reference_date, cache
       acs_years_needed <- years_acs
     }
 
-    acs_data <- tryCatch({
-      fetch_acs_pums_civilian_noninst(
-        years = acs_years_needed,
-        ages = ages,
-        cache_dir = here::here("data/cache/acs_pums")
-      )
-    }, error = function(e) {
-      cli::cli_alert_warning("ACS PUMS civilian noninst fetch failed: {conditionMessage(e)}")
-      NULL
-    })
+    acs_data <- fetch_acs_pums_civilian_noninst(
+      years = acs_years_needed,
+      ages = ages,
+      cache_dir = here::here("data/cache/acs_pums")
+    )
+    if (is.null(acs_data) || nrow(acs_data) == 0) {
+      cli::cli_abort(c(
+        "Failed to fetch ACS CNI population for years {paste(range(acs_years_needed), collapse = '-')}",
+        "i" = "ACS PUMS data is required for civilian noninstitutionalized population concept",
+        "i" = "Check Census API key and ACS PUMS data availability"
+      ))
+    }
 
     if (!is.null(acs_data) && nrow(acs_data) > 0) {
       # ACS is annual; treat as mid-year (July 1) for interpolation purposes
@@ -1348,9 +1353,11 @@ fetch_2020_census_april1 <- function(ages, concept, cache_dir) {
     result[age %in% target_ages]
 
   }, error = function(e) {
-    cli::cli_alert_warning("DHC fetch failed: {conditionMessage(e)}")
-    cli::cli_alert_info("Falling back to historical data generator")
-    fetch_decennial_census_historical(2020, ages, concept)
+    cli::cli_abort(c(
+      "2020 Census DHC fetch failed: {conditionMessage(e)}",
+      "i" = "Census 2020 DHC API must be accessible for April 1, 2020 population",
+      "i" = "Check Census API key and network connectivity"
+    ))
   })
 }
 
@@ -1454,55 +1461,11 @@ fetch_decennial_census_historical <- function(census_year, ages, concept) {
     return(NULL)
   }
 
-  # Generate standard US age-sex distribution using demographic model
-  # This is used as a proxy when we can't get direct age-sex detail from API
-  # Distribution is based on typical US patterns for the given era
-  generate_age_sex_distribution <- function(census_year, ages, total) {
-    # Create age distribution using approximate US pattern
-    # Working-age bulge (baby boom effect varies by year)
-    peak_age <- if (census_year <= 1960) 35 else if (census_year <= 1990) 30 else 40
-    sd_age <- if (census_year <= 1960) 20 else 22
-
-    age_weights <- dnorm(ages, mean = peak_age, sd = sd_age)
-    # Add elderly tail
-    age_weights <- age_weights + 0.2 * dnorm(ages, mean = 70, sd = 15)
-    # Add children
-    age_weights <- age_weights + 0.3 * dnorm(ages, mean = 10, sd = 8)
-    age_weights <- age_weights / sum(age_weights)
-
-    # Sex ratio: slightly more females overall (sex_ratio ~0.97 male per female)
-    # But more males at young ages, more females at old ages
-    sex_ratio_by_age <- 1.05 - (ages / 200)  # ~1.05 at age 0, ~0.55 at age 100
-    sex_ratio_by_age <- pmax(0.4, pmin(1.1, sex_ratio_by_age))
-
-    male_frac <- sex_ratio_by_age / (1 + sex_ratio_by_age)
-
-    male_pop <- round(total * age_weights * male_frac)
-    female_pop <- round(total * age_weights * (1 - male_frac))
-
-    # Adjust to match total exactly
-    diff <- total - sum(male_pop) - sum(female_pop)
-    if (diff != 0) {
-      # Distribute adjustment across peak ages
-      adj_ages <- which(ages >= 25 & ages <= 50)
-      male_pop[adj_ages[1]] <- male_pop[adj_ages[1]] + round(diff / 2)
-      female_pop[adj_ages[1]] <- female_pop[adj_ages[1]] + diff - round(diff / 2)
-    }
-
-    data.table::data.table(
-      census_year = census_year,
-      reference_date = "apr1",
-      age = rep(ages, 2),
-      sex = c(rep("male", length(ages)), rep("female", length(ages))),
-      population = c(male_pop, female_pop),
-      source = "Census Bureau Decennial Census (age distribution estimated)"
-    )
-  }
-
-  result <- generate_age_sex_distribution(census_year, ages, total_pop)
-  cli::cli_alert_success("Generated {census_year} Census with total {format(sum(result$population), big.mark=',')}")
-
-  result
+  cli::cli_abort(c(
+    "Cannot generate synthetic age distributions for decennial census year {census_year}",
+    "i" = "Use TR2025 SSPopDec file for pre-1980 age-sex distributions instead",
+    "i" = "Place SSPopDec_Alt2_TR2025.csv in data/raw/SSA_TR2025/"
+  ))
 }
 
 #' Get January decennial populations (Input #9)
