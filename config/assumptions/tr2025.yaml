@@ -56,17 +56,19 @@ mortality:
   regression_end_year: 2019
 
   # =========================================================================
-  # Starting AAx Method Configuration
+  # Mortality Projection Source
   # =========================================================================
-  # Controls how starting values are determined for the mortality projection.
+  # Controls the overall mortality projection methodology.
   #
   # Options:
-  #   "regression" - TR2025 official methodology. Calculates starting AAx from
-  #                  weighted regression on 2008-2019 data. Use with by_cause: true.
-  #   "tr_qx"      - Use TR2025's actual qx values as starting point.
-  #                  Both starting qx AND starting AAx come from TR2025 files.
-  #                  Ensures exact alignment with TR2025 mortality outputs.
-  #                  Incompatible with by_cause: true.
+  #   "regression" - ARTEMIS independent projection. Calculates AAx from weighted
+  #                  regression on 2008-2019 NCHS data, projects mx forward by
+  #                  cause, converts to qx, applies HMD calibration and ALB.
+  #                  Use with by_cause: true.
+  #   "tr_qx"     - Uses TR2025's published death probabilities directly for all
+  #                  projection years (2023-2099). Bypasses the entire projection
+  #                  pipeline (AAx trajectory, mx projection, smoothing, COVID
+  #                  adjustments). Ensures exact alignment with TR2025 mortality.
   # =========================================================================
   starting_aax_method: "regression"  # Options: "regression", "tr_qx"
 

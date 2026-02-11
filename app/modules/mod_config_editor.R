@@ -116,10 +116,10 @@ mod_config_editor_ui <- function(id) {
 
         selectInput(
           ns("starting_aax_method"),
-          "Starting AAx Method",
+          "Mortality Projection Source",
           choices = c(
-            "Regression-based (TR2025)" = "regression",
-            "TR2025 qx Values" = "tr_qx"
+            "ARTEMIS (Regression)" = "regression",
+            "TR2025 Official" = "tr_qx"
           ),
           selected = "regression"
         ),
