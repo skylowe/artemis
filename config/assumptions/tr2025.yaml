@@ -109,6 +109,18 @@ mortality:
   # Set to false if final NCHS microdata is available for that year.
   use_wonder_provisional: true
 
+  # Elderly AAx cap (ages 85+)
+  # Caps the projected annual reduction rate (AAx) for ages above start_age.
+  # ARTEMIS regression-derived AAx rises with age above 85, reaching ~0.75% at
+  # age 99 — 43% faster than TR2025's flat ~0.55%. This compounds over the 75-year
+  # projection to produce 30-50% divergence. Enabling this cap flattens the AAx
+  # at elderly ages to match TR2025's observed pattern.
+  # Only applies in regression mode; tr_qx mode uses TR2025 values directly.
+  elderly_aax_cap:
+    enabled: false
+    start_age: 85          # Age above which AAx is capped
+    max_aax: 0.0055        # Maximum total AAx (~0.55%, matching TR2025 pattern)
+
   # HMD calibration for elderly mortality (ages 85+)
   # Adjusts qx at ages 85-99 using Human Mortality Database mortality ratios
   # anchored at age 84. This compensates for unreliable NCHS/Census data at

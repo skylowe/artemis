@@ -1192,7 +1192,8 @@ calculate_aax_trajectory <- function(starting_aax,
                                       base_year = 2019,
                                       ultimate_year = 2043,
                                       projection_years = 2020:2100,
-                                      transition_rate = 0.80) {
+                                      transition_rate = 0.80,
+                                      elderly_aax_cap = NULL) {
   checkmate::assert_data_table(starting_aax)
   checkmate::assert_int(base_year)
   checkmate::assert_integerish(projection_years)
@@ -1284,6 +1285,35 @@ calculate_aax_trajectory <- function(starting_aax,
   }
 
   result <- data.table::rbindlist(result_list)
+
+  # Apply elderly AAx cap if configured
+  if (!is.null(elderly_aax_cap) && isTRUE(elderly_aax_cap$enabled)) {
+    cap_start_age <- elderly_aax_cap$start_age %||% 85L
+    cap_max_aax <- elderly_aax_cap$max_aax %||% 0.0055
+
+    if (has_cause) {
+      # For cause-specific: cap the TOTAL AAx across causes, then scale each cause proportionally
+      total_aax <- result[age >= cap_start_age, .(total_aax = sum(aax_projected)),
+                          by = .(year, age, sex)]
+      over_cap <- total_aax[total_aax > cap_max_aax]
+      if (nrow(over_cap) > 0) {
+        over_cap[, scale_factor := cap_max_aax / total_aax]
+        result <- merge(result, over_cap[, .(year, age, sex, scale_factor)],
+                        by = c("year", "age", "sex"), all.x = TRUE)
+        result[!is.na(scale_factor), aax_projected := aax_projected * scale_factor]
+        result[, scale_factor := NULL]
+        n_capped <- nrow(over_cap)
+        cli::cli_alert_info("Elderly AAx cap: scaled {n_capped} age/year/sex groups (ages {cap_start_age}+, max total AAx = {cap_max_aax})")
+      }
+    } else {
+      # For total AAx: direct cap
+      n_before <- result[age >= cap_start_age & aax_projected > cap_max_aax, .N]
+      result[age >= cap_start_age & aax_projected > cap_max_aax, aax_projected := cap_max_aax]
+      if (n_before > 0) {
+        cli::cli_alert_info("Elderly AAx cap: capped {n_before} values (ages {cap_start_age}+, max AAx = {cap_max_aax})")
+      }
+    }
+  }
 
   # Select output columns
   if (has_cause) {
@@ -1703,7 +1733,8 @@ run_mortality_projection <- function(deaths,
     starting_aax = starting_aax,
     base_year = effective_base_year,
     ultimate_year = config_ultimate_year,
-    projection_years = projection_years
+    projection_years = projection_years,
+    elderly_aax_cap = mortality_config$elderly_aax_cap
   )
 
   # Step 7: Project mx forward

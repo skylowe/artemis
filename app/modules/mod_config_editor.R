@@ -140,6 +140,24 @@ mod_config_editor_ui <- function(id) {
           ns("hmd_calibration_enabled"),
           "Apply HMD Calibration for Ages 85+",
           value = TRUE
+        ),
+
+        checkboxInput(
+          ns("elderly_aax_cap_enabled"),
+          "Cap AAx at Ages 85+ (~0.55%)",
+          value = FALSE
+        ),
+
+        conditionalPanel(
+          condition = sprintf("input['%s']", ns("elderly_aax_cap_enabled")),
+          sliderInput(
+            ns("elderly_aax_cap_value"),
+            "Max AAx (Ages 85+)",
+            min = 0.003, max = 0.010,
+            value = 0.0055,
+            step = 0.0005,
+            post = " /yr"
+          )
         )
       ),
 
@@ -276,6 +294,12 @@ mod_config_editor_server <- function(id, rv) {
       updateCheckboxInput(session, "hmd_calibration_enabled",
         value = config$mortality$hmd_calibration$enabled %||% TRUE)
 
+      updateCheckboxInput(session, "elderly_aax_cap_enabled",
+        value = config$mortality$elderly_aax_cap$enabled %||% FALSE)
+
+      updateSliderInput(session, "elderly_aax_cap_value",
+        value = config$mortality$elderly_aax_cap$max_aax %||% 0.0055)
+
       updateSelectInput(session, "distribution_method",
         selected = config$immigration$lpr$distribution_method %||% "tr_derived")
 
@@ -348,6 +372,12 @@ mod_config_editor_server <- function(id, rv) {
         config$mortality$hmd_calibration <- list()
       }
       config$mortality$hmd_calibration$enabled <- input$hmd_calibration_enabled
+
+      if (is.null(config$mortality$elderly_aax_cap)) {
+        config$mortality$elderly_aax_cap <- list()
+      }
+      config$mortality$elderly_aax_cap$enabled <- input$elderly_aax_cap_enabled
+      config$mortality$elderly_aax_cap$max_aax <- input$elderly_aax_cap_value
 
       config$immigration$va2_alternative <- input$immigration_scenario
       config$immigration$lpr$distribution_method <- input$distribution_method

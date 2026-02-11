@@ -94,6 +94,16 @@ validate_config <- function(config) {
     if (!is.null(hmd_cfg$enabled) && !is.logical(hmd_cfg$enabled)) {
       errors <- c(errors, "hmd_calibration.enabled must be TRUE or FALSE")
     }
+
+    aax_cap <- config$mortality$elderly_aax_cap
+    if (!is.null(aax_cap)) {
+      if (!is.null(aax_cap$enabled) && !is.logical(aax_cap$enabled)) {
+        errors <- c(errors, "elderly_aax_cap.enabled must be TRUE or FALSE")
+      }
+      if (!is.null(aax_cap$max_aax) && (aax_cap$max_aax < 0.001 || aax_cap$max_aax > 0.02)) {
+        errors <- c(errors, "elderly_aax_cap.max_aax must be between 0.001 and 0.02")
+      }
+    }
   }
 
   # Validate immigration
