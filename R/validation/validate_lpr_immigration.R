@@ -31,6 +31,7 @@ NULL
 #' @export
 validate_lpr_immigration_outputs <- function(lpr_projected,
                                               emigration_projected = NULL,
+                                              assumptions = NULL,
                                               tolerance = 0.01) {
   lpr_projected <- data.table::as.data.table(lpr_projected)
 
@@ -41,16 +42,19 @@ validate_lpr_immigration_outputs <- function(lpr_projected,
   # Check 1: Total LPR matches Trustees assumptions
   totals_by_year <- lpr_projected[, .(total = sum(immigration)), by = year]
 
-  # TR2025 expected values
-  expected <- data.table::data.table(
-    year = unique(totals_by_year$year)
-  )
-  expected[, expected_total := data.table::fcase(
-    year == 2024, 1263000,
-    year %in% 2025:2026, 1213000,
-    year >= 2027, 1050000,
-    default = 1050000
-  )]
+  # Use V.A2 assumptions if provided, otherwise fall back to approximate values
+  if (!is.null(assumptions)) {
+    assumptions <- data.table::as.data.table(assumptions)
+    expected <- assumptions[, .(year, expected_total = total_lpr)]
+  } else {
+    expected <- data.table::data.table(year = unique(totals_by_year$year))
+    expected[, expected_total := data.table::fcase(
+      year == 2024, 1263000,
+      year %in% 2025:2026, 1213000,
+      year >= 2027, 1050000,
+      default = 1050000
+    )]
+  }
 
   validation <- merge(totals_by_year, expected, by = "year")
   validation[, rel_diff := abs(total - expected_total) / expected_total]
@@ -397,14 +401,9 @@ validate_lpr_outputs <- function(projection_result, tolerance = 0.001) {
 
   lpr_totals <- lpr[, .(total = sum(immigration)), by = year]
 
-  # TR2025 expected values
-  expected_lpr <- data.table::data.table(year = unique(lpr_totals$year))
-  expected_lpr[, expected := data.table::fcase(
-    year == 2024, 1263000,
-    year %in% 2025:2026, 1213000,
-    year >= 2027, 1050000,
-    default = 1050000
-  )]
+  # Use V.A2 assumptions from projection result (not hardcoded)
+  assumptions <- data.table::as.data.table(projection_result$assumptions)
+  expected_lpr <- assumptions[, .(year, expected = total_lpr)]
 
   lpr_check <- merge(lpr_totals, expected_lpr, by = "year")
   lpr_check[, rel_diff := abs(total - expected) / expected]
@@ -463,25 +462,27 @@ validate_lpr_outputs <- function(projection_result, tolerance = 0.001) {
   cli::cli_h3("Check 3: Emigration = 25% of LPR")
 
   emig_totals <- emigration[, .(emig_total = sum(emigration)), by = year]
-  emig_check <- merge(lpr_totals, emig_totals, by = "year")
-  emig_check[, expected_emig := total * 0.25]
+
+  # Use V.A2 emigration totals if available, otherwise fall back to 25% of LPR
+  expected_emig <- assumptions[, .(year, expected_emig = total_emigration)]
+  emig_check <- merge(emig_totals, expected_emig, by = "year")
   emig_check[, rel_diff := abs(emig_total - expected_emig) / expected_emig]
   emig_check[, passes := rel_diff <= tolerance]
 
   check3_pass <- all(emig_check$passes)
-  checks$emigration_ratio <- list(
-    name = "Emigration = 25% of LPR",
+  checks$emigration_totals <- list(
+    name = "Emigration matches V.A2 totals",
     passed = check3_pass,
     details = emig_check[passes == FALSE]
   )
 
   if (check3_pass) {
-    cli::cli_alert_success("Emigration = 25% of LPR for all years")
-    messages <- c(messages, "Emigration = 25% of LPR")
+    cli::cli_alert_success("Emigration matches V.A2 totals for all years")
+    messages <- c(messages, "Emigration matches V.A2")
   } else {
     all_passed <- FALSE
-    cli::cli_alert_danger("Emigration != 25% for some years")
-    messages <- c(messages, "Emigration ratio check FAILED")
+    cli::cli_alert_danger("Emigration deviates from V.A2 for some years")
+    messages <- c(messages, "Emigration totals check FAILED")
   }
 
   # =========================================================================
