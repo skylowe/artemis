@@ -333,7 +333,8 @@ create_mortality_targets <- function() {
       calculate_marital_mortality_factors(
         nchs_deaths = nchs_deaths_by_marital,
         acs_population = acs_pop_by_marital,
-        reference_years = 2015:2019
+        reference_years = 2015:2019,
+        smoothing_parameter = config_assumptions$mortality$marital_smoothing_parameter
       )
     )
   )

@@ -2860,7 +2860,8 @@ wh_smooth_marital <- function(values, degree = 2, smoothing = 0.01) {
 calculate_marital_mortality_factors <- function(
     nchs_deaths,
     acs_population,
-    reference_years = 2015:2019
+    reference_years = 2015:2019,
+    smoothing_parameter = 0.01
 ) {
   checkmate::assert_data_table(nchs_deaths)
   checkmate::assert_data_table(acs_population)
@@ -2987,7 +2988,7 @@ calculate_marital_mortality_factors <- function(
       }
 
       # Apply smoothing
-      smoothed <- wh_smooth_marital(dr_values, degree = 2, smoothing = 0.01)
+      smoothed <- wh_smooth_marital(dr_values, degree = 2, smoothing = smoothing_parameter)
 
       # Store back - update rates table by age (avoids data.table chained subset bug)
       ages_to_update <- subset_rows$age
