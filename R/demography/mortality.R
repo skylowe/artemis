@@ -1990,11 +1990,9 @@ convert_mx_to_qx <- function(mx, max_age = 100) {
   # Cap qx at 1.0 for very old ages
   dt[qx > 1, qx := 1.0]
 
-  # Female qx capped at male qx if crossover occurs
-  # Only apply for ages < 85 where crossover would be truly anomalous
-
-  # At ages 85+, small populations can cause random crossovers that should
-  # be handled by HMD calibration instead of this simple cap
+  # Female qx capped at male qx if crossover occurs (TR2025 Eq 1.2.3):
+  # "At the point where this crossover would occur, female mortality is set
+  # equal to male mortality." Applied at ALL ages per documentation.
   # Must merge by age AND year (if present) to avoid cartesian join
   if (has_year) {
     male_qx_lookup <- dt[sex == "male", .(year, age, male_qx = qx)]
@@ -2006,8 +2004,7 @@ convert_mx_to_qx <- function(mx, max_age = 100) {
 
   if (nrow(male_qx_lookup) > 0 && any(dt$sex == "female")) {
     dt <- merge(dt, male_qx_lookup, by = merge_keys, all.x = TRUE)
-    # Only cap female qx at male qx for ages < 85
-    dt[sex == "female" & age < 85 & !is.na(male_qx) & !is.na(qx), qx := pmin(qx, male_qx)]
+    dt[sex == "female" & !is.na(male_qx) & !is.na(qx), qx := pmin(qx, male_qx)]
     dt[, male_qx := NULL]
   }
 
@@ -2231,8 +2228,8 @@ adjust_qx_with_hmd <- function(qx,
     male_lookup <- result[sex == "male", .(age, male_qx = qx)]
     result <- merge(result, male_lookup, by = "age", all.x = TRUE)
   }
-  # Only cap female qx at male qx for ages < 85
-  result[sex == "female" & age < 85 & !is.na(male_qx), qx := pmin(qx, male_qx)]
+  # Cap female qx at male qx at all ages per TR2025 Eq 1.2.3
+  result[sex == "female" & !is.na(male_qx), qx := pmin(qx, male_qx)]
   result[, male_qx := NULL]
 
   # Recalculate q100+ if max_age == 100
@@ -4396,7 +4393,15 @@ calculate_tr_q100_plus <- function(qx_data) {
     }
   }
 
-  data.table::rbindlist(results)
+  result <- data.table::rbindlist(results)
+
+  # Apply female qx crossover cap at age 100+ (TR2025 Eq 1.2.3)
+  male_q100 <- result[sex == "male", .(year, male_qx = qx)]
+  result <- merge(result, male_q100, by = "year", all.x = TRUE)
+  result[sex == "female" & !is.na(male_qx), qx := pmin(qx, male_qx)]
+  result[, male_qx := NULL]
+
+  result
 }
 
 #' Calculate qx with proper infant mortality (q0), q1 TR method, and TR 100+ method
