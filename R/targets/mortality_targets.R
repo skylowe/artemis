@@ -316,14 +316,19 @@ create_mortality_targets <- function() {
     # NCHS deaths by marital status
     targets::tar_target(
       nchs_deaths_by_marital,
-      fetch_nchs_deaths_by_marital_status(years = 2015:2019),
+      fetch_nchs_deaths_by_marital_status(
+        years = config_assumptions$mortality$marital_reference_years
+      ),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
     # ACS PUMS population by marital status
     targets::tar_target(
       acs_pop_by_marital,
-      fetch_acs_pums_marital_status(years = 2015:2019, ages = 0:99),
+      fetch_acs_pums_marital_status(
+        years = config_assumptions$mortality$marital_reference_years,
+        ages = 0:99
+      ),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
@@ -333,7 +338,7 @@ create_mortality_targets <- function() {
       calculate_marital_mortality_factors(
         nchs_deaths = nchs_deaths_by_marital,
         acs_population = acs_pop_by_marital,
-        reference_years = 2015:2019,
+        reference_years = config_assumptions$mortality$marital_reference_years,
         smoothing_parameter = config_assumptions$mortality$marital_smoothing_parameter
       )
     )

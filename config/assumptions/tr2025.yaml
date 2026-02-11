@@ -105,7 +105,9 @@ mortality:
       age_65_84: 1.00
       age_85_plus: 1.00
 
-  # Marital mortality differential smoothing parameter
+  # Marital mortality differentials
+  # TR2025 Section 1.2.c: reference years for calculating marital mortality factors
+  marital_reference_years: [2015, 2016, 2017, 2018, 2019]
   # TR2025 Section 1.2.c Step 5: WH smoothing with degree=2, smoothing=0.01
   marital_smoothing_parameter: 0.01
 
