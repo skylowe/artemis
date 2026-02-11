@@ -133,7 +133,7 @@ create_mortality_targets <- function() {
         population = census_population_both,
         base_year = config_assumptions$mortality$base_year,
         projection_end = config_assumptions$metadata$projection_period$end_year,
-        by_cause = FALSE,
+        by_cause = if (is.null(config_assumptions$mortality$by_cause)) FALSE else config_assumptions$mortality$by_cause,
         starting_aax_method = if (is.null(config_assumptions$mortality$starting_aax_method)) "regression" else config_assumptions$mortality$starting_aax_method,
         mortality_config = config_assumptions$mortality
       )

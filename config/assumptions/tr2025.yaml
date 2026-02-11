@@ -105,6 +105,11 @@ mortality:
       age_65_84: 1.00
       age_85_plus: 1.00
 
+  # Project mortality rates by cause of death (6 categories), then sum to total.
+  # Per TR2025 Eq 1.2.1-1.2.2, mx is projected separately for each cause.
+  # Only applies to regression/capped methods; tr_qx method ignores this setting.
+  by_cause: false
+
   # Use CDC WONDER provisional data for the most recent death year.
   # The provisional year is auto-derived as trustees_report_year - 2.
   # Set to false if final NCHS microdata is available for that year.

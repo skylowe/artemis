@@ -765,10 +765,14 @@ apply_starting_aax_method <- function(regression_aax,
   # Start with regression-based AAx
   dt <- data.table::copy(regression_aax)
 
+  # Determine output columns: preserve cause column if present
+  has_cause <- "cause" %in% names(dt)
+  aax_cols <- intersect(c("age", "sex", "cause", "starting_aax"), names(dt))
+
   if (method == "regression") {
     # Original method: use regression-based starting_aax as-is
     cli::cli_alert_info("Using regression-based starting AAx (original method)")
-    return(dt[, .(age, sex, starting_aax)])
+    return(dt[, ..aax_cols])
   }
 
   if (method == "capped") {
@@ -779,13 +783,21 @@ apply_starting_aax_method <- function(regression_aax,
     }
 
     result <- apply_capped_starting_aax(
-      starting_aax = dt[, .(age, sex, starting_aax)],
+      starting_aax = dt[, ..aax_cols],
       cap_multiplier = cap_multiplier
     )
     return(result)
   }
 
   if (method == "tr_qx") {
+    # TR files have no cause dimension — incompatible with cause-specific projection
+    if (has_cause) {
+      cli::cli_abort(c(
+        "tr_qx method is incompatible with cause-specific projection (by_cause = TRUE)",
+        "i" = "TR2025 qx files contain total qx only, not cause-specific values",
+        "i" = "Use starting_aax_method = 'regression' or 'capped' with by_cause = TRUE"
+      ))
+    }
     # TR_QX method: use TR2025's actual qx as starting point
     # Returns both starting_mx AND starting_aax from TR2025 files
     male_file <- "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
@@ -1823,6 +1835,8 @@ run_mortality_projection <- function(deaths,
 
   # Step 8: Apply WH smoothing to projected mx
   cli::cli_h2("Step 8: Apply WH smoothing to projections")
+  # Group by cause as well when doing cause-specific projection
+  smooth_group_cols <- if ("cause" %in% names(projected_mx)) c("year", "sex", "cause") else c("year", "sex")
   projected_mx_smooth <- projected_mx[, {
     if (.N >= 3) {
       mx_vals <- mx[order(age)]
@@ -1837,7 +1851,17 @@ run_mortality_projection <- function(deaths,
     } else {
       .(age = age, mx_smooth = mx)
     }
-  }, by = .(year, sex)]
+  }, by = smooth_group_cols]
+
+  # Step 8b: Sum cause-specific mx to total for qx conversion
+  # TR methodology projects causes independently but converts the total to qx
+  projected_mx_by_cause <- NULL
+  if ("cause" %in% names(projected_mx_smooth)) {
+    projected_mx_by_cause <- data.table::copy(projected_mx_smooth)
+    projected_mx_smooth <- projected_mx_smooth[,
+      .(mx_smooth = sum(mx_smooth)), by = .(year, age, sex)]
+    cli::cli_alert_info("Summed {length(unique(projected_mx_by_cause$cause))} causes to total mx for qx conversion")
+  }
 
   # Step 9: Convert to qx with TR q1 method
   cli::cli_h2("Step 9: Convert mx to qx (with TR q1 method)")
@@ -1891,13 +1915,17 @@ run_mortality_projection <- function(deaths,
 
   cli::cli_h1("Projection complete")
 
-  list(
+  result <- list(
     projected_mx = projected_mx_smooth,
     projected_qx = projected_qx,
     aax_trajectory = aax_trajectory,
     starting_mx = starting_mx,
     historical_aax = aax
   )
+  if (!is.null(projected_mx_by_cause)) {
+    result$projected_mx_by_cause <- projected_mx_by_cause
+  }
+  result
 }
 
 #' Calculate starting mx values from regression fitted values
