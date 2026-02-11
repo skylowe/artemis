@@ -288,6 +288,9 @@ mod_config_editor_server <- function(id, rv) {
       updateSelectInput(session, "starting_aax_method",
         selected = config$mortality$starting_aax_method %||% "tr_qx")
 
+      updateCheckboxInput(session, "apply_covid_adjustments",
+        value = config$mortality$apply_covid_adjustments %||% TRUE)
+
       updateCheckboxInput(session, "use_wonder_provisional",
         value = config$mortality$use_wonder_provisional %||% TRUE)
 
@@ -366,6 +369,7 @@ mod_config_editor_server <- function(id, rv) {
 
       config$mortality$ultimate_year <- input$mortality_ultimate_year
       config$mortality$starting_aax_method <- input$starting_aax_method
+      config$mortality$apply_covid_adjustments <- input$apply_covid_adjustments
       config$mortality$use_wonder_provisional <- input$use_wonder_provisional
 
       if (is.null(config$mortality$hmd_calibration)) {

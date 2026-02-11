@@ -84,6 +84,11 @@ mortality:
     # Years to use for calculating implied AAx (2024-2025 gives first year improvement)
     aax_reference_years: [2024, 2025]
 
+  # Apply COVID-19 adjustment factors to projected qx (TR2025 Eq 1.2.3)
+  # Multiplies qx by age-group-specific factors for 2024-2025.
+  # Set to false to project from pure pre-COVID trends.
+  apply_covid_adjustments: true
+
   # COVID-19 adjustment factors (applied to qx in 2024-2025)
   covid_adjustments:
     2024:

@@ -1829,9 +1829,19 @@ run_mortality_projection <- function(deaths,
     projected_qx <- integrate_q1(projected_qx, q1_tr)
   }
 
-  # Step 10: Apply COVID adjustments
-  cli::cli_h2("Step 10: Apply COVID-19 adjustments")
-  projected_qx <- apply_covid_adjustments(projected_qx)
+  # Step 10: Apply COVID adjustments (configurable)
+  apply_covid <- if (!is.null(mortality_config$apply_covid_adjustments)) {
+    mortality_config$apply_covid_adjustments
+  } else {
+    TRUE  # default: apply
+  }
+  if (isTRUE(apply_covid)) {
+    cli::cli_h2("Step 10: Apply COVID-19 adjustments")
+    covid_factors <- get_covid_adjustment_factors(config = mortality_config)
+    projected_qx <- apply_covid_adjustments(projected_qx, covid_factors)
+  } else {
+    cli::cli_h2("Step 10: COVID-19 adjustments SKIPPED (disabled in config)")
+  }
 
   cli::cli_h1("Projection complete")
 
