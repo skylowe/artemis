@@ -3447,27 +3447,43 @@ calculate_ssa_separation_factors <- function(monthly_births_current, monthly_bir
   sep_3_6_days <- 0.995     # Very few from previous year (only late Dec births dying in Jan)
   sep_7_27_days <- 0.98     # Slightly more from previous year
 
-  # Post-neonatal separation factors by month of age
+  # Post-neonatal separation factors by month of age, weighted by actual births
   # Logic: death at age M months in calendar month C means birth in month (C - M)
   # If C - M <= 0, birth was in previous year
-  # Averaging across the year:
-  # - 1 month old: births from (C-1), so Jan deaths = Dec prev year births
-  #   Fraction from current year = 11/12 ≈ 0.917
-  # - 2 months old: Jan-Feb deaths from prev year births = 2/12 from prev year
-  #   Fraction from current year = 10/12 ≈ 0.833
-  # And so on...
+  # Weight by actual monthly birth counts instead of assuming uniform 1/12
 
-  sep_1_month <- 11/12   # ~0.917
-  sep_2_months <- 10/12  # ~0.833
-  sep_3_months <- 9/12   # 0.75
-  sep_4_months <- 8/12   # ~0.667
-  sep_5_months <- 7/12   # ~0.583
-  sep_6_months <- 6/12   # 0.5
-  sep_7_months <- 5/12   # ~0.417
-  sep_8_months <- 4/12   # ~0.333
-  sep_9_months <- 3/12   # 0.25
-  sep_10_months <- 2/12  # ~0.167
-  sep_11_months <- 1/12  # ~0.083
+  # Extract monthly birth vectors (months 1-12)
+  births_curr <- rep(0, 12)
+  births_prev <- rep(0, 12)
+
+  for (m in 1:12) {
+    val <- monthly_births_current[month == m, births]
+    if (length(val) > 0) births_curr[m] <- val[1]
+    val <- monthly_births_prev[month == m, births]
+    if (length(val) > 0) births_prev[m] <- val[1]
+  }
+
+  # Calculate birth-weighted separation factors for each month of age
+  month_sep <- numeric(11)
+  for (age_months in 1:11) {
+    # For each calendar month C, deaths at age_months were born in month (C - age_months)
+    total_births <- 0
+    current_year_births <- 0
+    for (C in 1:12) {
+      birth_month <- C - age_months
+      if (birth_month >= 1) {
+        # Born in current year
+        b <- births_curr[birth_month]
+        total_births <- total_births + b
+        current_year_births <- current_year_births + b
+      } else {
+        # Born in previous year (month maps to 12 + birth_month)
+        b <- births_prev[12 + birth_month]
+        total_births <- total_births + b
+      }
+    }
+    month_sep[age_months] <- if (total_births > 0) current_year_births / total_births else (12 - age_months) / 12
+  }
 
   data.table::data.table(
     ssa_age_group = c("under_1_day", "1-2_days", "3-6_days", "7-27_days",
@@ -3475,9 +3491,9 @@ calculate_ssa_separation_factors <- function(monthly_births_current, monthly_bir
                       "5_months", "6_months", "7_months", "8_months",
                       "9_months", "10_months", "11_months"),
     sep_factor = c(sep_under_1_day, sep_1_2_days, sep_3_6_days, sep_7_27_days,
-                   sep_1_month, sep_2_months, sep_3_months, sep_4_months,
-                   sep_5_months, sep_6_months, sep_7_months, sep_8_months,
-                   sep_9_months, sep_10_months, sep_11_months)
+                   month_sep[1], month_sep[2], month_sep[3], month_sep[4],
+                   month_sep[5], month_sep[6], month_sep[7], month_sep[8],
+                   month_sep[9], month_sep[10], month_sep[11])
   )
 }
 
