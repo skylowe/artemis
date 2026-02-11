@@ -1233,7 +1233,10 @@ fetch_decennial_census_api <- function(census_year, ages, concept, cache_dir) {
     return(fetch_decennial_census_vintage(2020, ages, concept, cache_dir))
   }
 
-  NULL
+  cli::cli_abort(c(
+    "No Census API strategy for decennial year {census_year}",
+    "i" = "Supported years: 2010, 2020"
+  ))
 }
 
 #' Fetch decennial census from vintage files (1970-2020)
@@ -1262,7 +1265,10 @@ fetch_decennial_census_vintage <- function(census_year, ages, concept, cache_dir
     return(fetch_decennial_census_historical(census_year, ages, concept))
   }
 
-  NULL
+  cli::cli_abort(c(
+    "No vintage data strategy for decennial year {census_year}",
+    "i" = "Supported years: 1970, 1980, 1990, 2000, 2010, 2020"
+  ))
 }
 
 #' Fetch 2020 Census April 1 population
@@ -1433,38 +1439,10 @@ fetch_2010_census_april1 <- function(ages, concept, cache_dir) {
 #'
 #' @keywords internal
 fetch_decennial_census_historical <- function(census_year, ages, concept) {
-  cli::cli_alert("Using historical static data for {census_year} Census...")
-
-  # Get official census totals from historical_static
-  benchmarks <- get_population_benchmarks()
-  target_year <- census_year
-  benchmark <- benchmarks[census_year == target_year]
-
-  # Official April 1 census totals (resident population)
-  # Source: Census Bureau Decennial Census counts
-  census_totals <- c(
-    `1940` = 132164569,
-    `1950` = 151325798,
-    `1960` = 179323175,
-    `1970` = 203211926,
-    `1980` = 226545805,
-    `1990` = 248709873,
-    `2000` = 281421906,
-    `2010` = 308745538,
-    `2020` = 331449281
-  )
-
-  total_pop <- census_totals[as.character(census_year)]
-
-  if (is.na(total_pop)) {
-    cli::cli_alert_warning("No benchmark available for {census_year}")
-    return(NULL)
-  }
-
   cli::cli_abort(c(
     "Cannot generate synthetic age distributions for decennial census year {census_year}",
-    "i" = "Use TR2025 SSPopDec file for pre-1980 age-sex distributions instead",
-    "i" = "Place SSPopDec_Alt2_TR2025.csv in data/raw/SSA_TR2025/"
+    "i" = "Use SSPopDec file via load_tr_population_by_year() instead",
+    "i" = "Place SSPopDec file in the appropriate data/raw/SSA_TR*/ directory"
   ))
 }
 
@@ -1485,35 +1463,41 @@ fetch_decennial_census_historical <- function(census_year, ages, concept) {
 #'
 #' @export
 get_january_decennial_totals <- function(census_years = c(1990, 2000, 2010, 2020)) {
-  # ============================================================================
-  # JANUARY DECENNIAL YEAR TOTALS
-  # ============================================================================
-  # Source: Census Bureau Population Estimates Program
-  # These are used to adjust April 1 census counts to January 1 reference date
-  # ============================================================================
+  # Read from structured data file instead of hardcoding
+  filepath <- file.path("data", "processed", "census_jan1_decennial.csv")
 
-  data.table::data.table(
-    census_year = rep(c(1990, 2000, 2010, 2020), each = 2),
-    concept = rep(c("resident", "resident_usaf"), 4),
-    january_total = c(
-      # January 1990 (Source: Census PE estimates)
-      246819230,  # resident
-      247342000,  # resident + USAF (estimated ~520K overseas)
+  if (!file.exists(filepath)) {
+    cli::cli_abort(c(
+      "January decennial totals file not found",
+      "x" = "Expected: {filepath}",
+      "i" = "File should contain census_year, concept, january_total, source columns"
+    ))
+  }
 
-      # January 2000 (Source: Census PE estimates)
-      280849847,  # resident
-      281081000,  # resident + USAF (estimated ~230K overseas)
+  jan_data <- data.table::fread(filepath)
 
-      # January 2010 (Source: Census Vintage 2010 estimates)
-      308401808,  # resident
-      308615000,  # resident + USAF (estimated ~210K overseas)
+  required_cols <- c("census_year", "concept", "january_total", "source")
+  missing_cols <- setdiff(required_cols, names(jan_data))
+  if (length(missing_cols) > 0) {
+    cli::cli_abort(c(
+      "January decennial totals file missing required columns",
+      "x" = "Missing: {paste(missing_cols, collapse = ', ')}",
+      "i" = "File: {filepath}"
+    ))
+  }
 
-      # January 2020 (Source: Census Vintage 2020 estimates)
-      329484123,  # resident
-      329690000   # resident + USAF (estimated ~210K overseas)
-    ),
-    source = "Census Bureau Population Estimates Program"
-  )
+  result <- jan_data[census_year %in% census_years]
+
+  missing_years <- setdiff(census_years, result$census_year)
+  if (length(missing_years) > 0) {
+    cli::cli_abort(c(
+      "January decennial totals missing for requested years",
+      "x" = "Missing years: {paste(missing_years, collapse = ', ')}",
+      "i" = "File: {filepath}"
+    ))
+  }
+
+  result
 }
 
 # =============================================================================

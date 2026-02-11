@@ -147,12 +147,13 @@ calculate_historical_population <- function(start_year = 1940,
     config = config
   )
 
-  # Step 3: Build up ages 85+ for tab years
-  cli::cli_h2("Step 3: Build Up Ages 85+")
+  # Step 3: Build up ages 85+ for tab years (from SSPopDec)
+  cli::cli_h2("Step 3: Ages 85+ from SSPopDec")
   tab_pop_85_plus <- build_up_ages_85_plus(
     tab_years = tab_years,
     components = components,
-    max_age = max(ages)
+    max_age = max(ages),
+    config = config
   )
 
   # Combine tab year populations
@@ -313,7 +314,7 @@ gather_population_components <- function(years,
 
   # 1. Census USAF (resident + armed forces overseas) populations
   cli::cli_alert("Fetching Census USAF populations...")
-  components$census_usaf <- fetch_census_usaf_for_historical(years, ages, cache_dir)
+  components$census_usaf <- fetch_census_usaf_for_historical(years, ages, cache_dir, config)
 
   # 2. Territory populations
   cli::cli_alert("Fetching territory populations...")
@@ -368,7 +369,7 @@ gather_population_components <- function(years,
 #' This is the base population before adjustments.
 #'
 #' @keywords internal
-fetch_census_usaf_for_historical <- function(years, ages, cache_dir) {
+fetch_census_usaf_for_historical <- function(years, ages, cache_dir, config = NULL) {
   # Use the existing census_historical_population.R functions
   # Need different approaches for different year ranges
 
@@ -400,11 +401,11 @@ fetch_census_usaf_for_historical <- function(years, ages, cache_dir) {
     result_list$modern <- modern_pop
   }
 
-  # 2. Early era (1940-1979): Use static pre-1980 data with age estimation
+  # 2. Early era (1940-1979): Use SSPopDec directly
   early_years <- years[years >= 1940 & years < 1980]
   if (length(early_years) > 0) {
-    cli::cli_alert("  Early era (1940-1979): Static estimates + age distribution")
-    early_pop <- estimate_pre1980_population(early_years, ages)
+    cli::cli_alert("  Early era (1940-1979): SSPopDec")
+    early_pop <- estimate_pre1980_population(early_years, ages, config)
     result_list$early <- early_pop
   }
 
@@ -413,250 +414,79 @@ fetch_census_usaf_for_historical <- function(years, ages, cache_dir) {
   result
 }
 
-#' Estimate Pre-1980 Population by Age and Sex
+#' Load Population by Year from SSPopDec
 #'
 #' @description
-#' For years 1940-1979, we have total population by sex but not detailed
-#' age distributions from Census APIs. This function estimates age-sex
-#' distributions using decennial census benchmarks and interpolation.
+#' Reads the official SSPopDec file and returns population by
+#' single year of age (0-100) and sex for the requested years.
+#' This is the authoritative data source for all historical years 1940-2022.
 #'
-#' Adjusts from July 1 reference date to December 31 by interpolating
-#' with the following year's population.
+#' @param years Integer vector: years to load
+#' @param ages Integer vector: ages to include
+#' @param config List: configuration (used to resolve TR file path)
 #'
-#' @keywords internal
-estimate_pre1980_population <- function(years, ages) {
-  # Get pre-1980 totals from historical_static.R (July 1 estimates)
-  # Request years and years+1 for December 31 interpolation
-  all_years_needed <- unique(c(years, years + 1))
-  all_years_needed <- all_years_needed[all_years_needed <= 1979]
-  totals <- get_pre1980_usaf_population(years = all_years_needed, by_age = FALSE)
-
-  # Get 1980 July 1 population from Census data for 1979 Dec 31 interpolation
-  pop_1980 <- NULL
-  if (1979 %in% years) {
-    pop_1980 <- get_census_population_totals(1980)
-    if (is.null(pop_1980) || nrow(pop_1980) == 0) {
-      cli::cli_abort(c(
-        "Failed to fetch 1980 Census population for Dec 31, 1979 interpolation",
-        "i" = "Census PEP data for 1980 is required to interpolate Dec 31, 1979",
-        "i" = "Check Census API key and network connectivity"
-      ))
-    }
-  }
-
-  # Get age distributions from decennial censuses
-  census_years <- c(1940, 1950, 1960, 1970)
-  census_years <- census_years[census_years >= min(years) - 10 &
-                                 census_years <= max(years) + 10]
-
-  # Fetch decennial census age distributions
-  decennial_dist <- fetch_decennial_age_distributions(census_years, ages)
-
-  # Interpolate age distributions for each year
-  result_list <- lapply(years, function(yr) {
-    year_dist <- interpolate_age_distribution(yr, decennial_dist)
-
-    # Get July 1 totals for this year and next year
-    male_jul1 <- totals[year == yr, male]
-    female_jul1 <- totals[year == yr, female]
-
-    # Adjust from July 1 to December 31
-    # Dec 31 of year Y is approximately halfway between July 1 of Y and July 1 of Y+1
-    if (yr < 1979 && (yr + 1) %in% totals$year) {
-      male_jul1_next <- totals[year == yr + 1, male]
-      female_jul1_next <- totals[year == yr + 1, female]
-
-      # Interpolate: Dec 31 = Jul 1 + 0.5 * (next Jul 1 - this Jul 1)
-      male_total <- male_jul1 + 0.5 * (male_jul1_next - male_jul1)
-      female_total <- female_jul1 + 0.5 * (female_jul1_next - female_jul1)
-    } else if (yr == 1979 && !is.null(pop_1980) && nrow(pop_1980) > 0) {
-      # For 1979, use 1980 Census data to interpolate
-      # Assume sex ratio similar to 1979 (slightly more female)
-      total_1980 <- pop_1980[year == 1980, population]
-      male_ratio <- male_jul1 / (male_jul1 + female_jul1)
-
-      total_dec31 <- (male_jul1 + female_jul1) + 0.5 * (total_1980 - (male_jul1 + female_jul1))
-      male_total <- total_dec31 * male_ratio
-      female_total <- total_dec31 * (1 - male_ratio)
-    } else {
-      cli::cli_abort(c(
-        "Cannot interpolate Dec 31 population for year {yr}",
-        "i" = "Need July 1 population for year {yr + 1} or 1980 Census data (for 1979)",
-        "i" = "Ensure pre-1980 static data covers all requested years"
-      ))
-    }
-
-    if (length(male_total) == 0 || is.na(male_total)) {
-      cli::cli_abort("Empty male population total for year {yr}")
-    }
-    if (length(female_total) == 0 || is.na(female_total)) {
-      cli::cli_abort("Empty female population total for year {yr}")
-    }
-
-    # Apply distribution to totals
-    pop <- year_dist[, .(
-      year = yr,
-      age = age,
-      sex = sex,
-      population = data.table::fifelse(
-        sex == "male",
-        proportion * male_total,
-        proportion * female_total
-      ),
-      source = "pre1980_estimated"
-    )]
-
-    pop
-  })
-
-  data.table::rbindlist(result_list)
-}
-
-#' Fetch Decennial Census Age Distributions
+#' @return data.table with columns: year, age, sex, population, source
 #'
 #' @keywords internal
-fetch_decennial_age_distributions <- function(census_years, ages) {
-  # Use existing decennial census function or historical static data
-  result_list <- lapply(census_years, function(yr) {
-    if (yr >= 1970) {
-      # Use Census API for 1970+
-      pop <- fetch_decennial_census_population(
-        census_years = yr,
-        ages = ages,
-        concept = "resident"
-      )
-    } else {
-      # For 1940-1960, use hardcoded distributions from historical records
-      pop <- get_historical_age_distribution(yr, ages)
-    }
+load_tr_population_by_year <- function(years, ages, config) {
+  tr_year <- config$metadata$trustees_report_year
+  filepath <- resolve_tr_file(config, "population_dec")
 
-    # Calculate proportions
-    pop[, total := sum(population), by = sex]
-    pop[, proportion := population / total]
-    pop[, census_year := yr]
-
-    pop[, .(census_year, age, sex, proportion)]
-  })
-
-  data.table::rbindlist(result_list)
-}
-
-#' Interpolate Age Distribution for a Given Year
-#'
-#' @keywords internal
-interpolate_age_distribution <- function(year, decennial_dist) {
-  census_years <- sort(unique(decennial_dist$census_year))
-
-  # Find bracketing census years
-  lower_year <- max(census_years[census_years <= year])
-  upper_year <- min(census_years[census_years >= year])
-
-  if (is.na(lower_year) || is.infinite(lower_year)) lower_year <- min(census_years)
-  if (is.na(upper_year) || is.infinite(upper_year)) upper_year <- max(census_years)
-
-  if (lower_year == upper_year) {
-    # Exact match or extrapolation
-    return(decennial_dist[census_year == lower_year, .(age, sex, proportion)])
-  }
-
-  # Linear interpolation
-  weight <- (year - lower_year) / (upper_year - lower_year)
-
-  lower_dist <- decennial_dist[census_year == lower_year]
-  upper_dist <- decennial_dist[census_year == upper_year]
-
-  merged <- merge(
-    lower_dist[, .(age, sex, prop_lower = proportion)],
-    upper_dist[, .(age, sex, prop_upper = proportion)],
-    by = c("age", "sex")
-  )
-
-  merged[, proportion := prop_lower + weight * (prop_upper - prop_lower)]
-  merged[, .(age, sex, proportion)]
-}
-
-#' Get Historical Age Distribution for Pre-1970 Years
-#'
-#' @description
-#' Returns estimated age-sex distributions for 1940-1960 censuses based on
-#' published census reports.
-#'
-#' @keywords internal
-get_historical_age_distribution <- function(census_year, ages) {
-  # Use 1940 85+ distribution function as a starting point
-  # and typical demographic patterns for the era
-
-  # Demographic parameters by year (from census reports)
-  params <- list(
-    "1940" = list(median_age = 29.0, youth_share = 0.34, elderly_share = 0.07),
-    "1950" = list(median_age = 30.2, youth_share = 0.31, elderly_share = 0.08),
-    "1960" = list(median_age = 29.5, youth_share = 0.36, elderly_share = 0.09)  # Baby boom
-  )
-
-  p <- params[[as.character(census_year)]]
-  if (is.null(p)) {
+  if (!file.exists(filepath)) {
     cli::cli_abort(c(
-      "No demographic parameters for census year {census_year}",
-      "i" = "Parameters are available for years: {paste(names(params), collapse = ', ')}",
-      "i" = "Pre-1970 age distributions should come from TR2025 SSPopDec, not synthetic generation"
+      "TR{tr_year} SSPopDec file not found",
+      "x" = "Expected: {filepath}",
+      "i" = "Place SSPopDec file in data/raw/SSA_TR{tr_year}/"
     ))
   }
 
-  # Generate smooth age distribution using demographic model
-  # This is a simplified approximation - real data would be better
-  result <- generate_demographic_age_distribution(ages, p, census_year)
+  raw <- data.table::fread(filepath)
+
+  # Filter to requested years
+  raw <- raw[Year %in% years & Age %in% ages]
+
+  if (nrow(raw) == 0) {
+    cli::cli_abort(c(
+      "No SSPopDec data found for requested years/ages",
+      "i" = "Requested years: {paste(range(years), collapse = '-')}",
+      "i" = "Requested ages: {paste(range(ages), collapse = '-')}"
+    ))
+  }
+
+  # Reshape from wide (M Tot, F Tot) to long (sex, population)
+  source_label <- paste0("tr", tr_year, "_sspop_dec")
+  male <- raw[, .(year = Year, age = Age, sex = "male", population = `M Tot`, source = source_label)]
+  female <- raw[, .(year = Year, age = Age, sex = "female", population = `F Tot`, source = source_label)]
+
+  result <- data.table::rbindlist(list(male, female))
+  data.table::setorder(result, year, sex, age)
+
+  # Validate completeness
+  expected_rows <- length(years) * length(ages) * 2
+  if (nrow(result) != expected_rows) {
+    actual_years <- unique(result$year)
+    missing_years <- setdiff(years, actual_years)
+    if (length(missing_years) > 0) {
+      cli::cli_abort(c(
+        "SSPopDec missing data for years: {paste(missing_years, collapse = ', ')}",
+        "i" = "SSPopDec covers 1940-2100; requested years outside this range?"
+      ))
+    }
+  }
 
   result
 }
 
-#' Generate Demographic Age Distribution
+#' Estimate Pre-1980 Population by Age and Sex
 #'
 #' @description
-#' Creates a smooth age distribution based on demographic parameters.
-#' Uses a combination of Gompertz mortality curve and historical birth patterns.
+#' For years 1940-1979, reads population directly from SSPopDec file
+#' which provides December 31 populations by single year of age (0-100) and sex.
+#' SSPopDec is the authoritative source — no synthetic generation or interpolation.
 #'
 #' @keywords internal
-generate_demographic_age_distribution <- function(ages, params, census_year) {
-  # Use a gamma-like distribution for working ages,
-  # declining survivorship for older ages
-
-  pop_male <- numeric(length(ages))
-  pop_female <- numeric(length(ages))
-
-  for (i in seq_along(ages)) {
-    a <- ages[i]
-
-    # Base population (birth cohort survival)
-    if (a < 20) {
-      # Children/youth - affected by recent birth rates
-      base <- exp(-0.01 * a) * (1 + params$youth_share * 0.5)
-    } else if (a < 65) {
-      # Working age - stable with slight decline
-      base <- exp(-0.015 * (a - 20)) * 0.95
-    } else {
-      # Elderly - faster mortality decline
-      base <- exp(-0.015 * 45) * exp(-0.05 * (a - 65))
-    }
-
-    # Sex ratio (males slightly higher at birth, lower at older ages)
-    sex_ratio <- 1.05 * exp(-0.005 * a)
-    male_share <- sex_ratio / (1 + sex_ratio)
-
-    total <- base * 1e6  # Scale factor
-    pop_male[i] <- total * male_share
-    pop_female[i] <- total * (1 - male_share)
-  }
-
-  # Normalize to sum to 1 within each sex
-  pop_male <- pop_male / sum(pop_male)
-  pop_female <- pop_female / sum(pop_female)
-
-  data.table::data.table(
-    age = rep(ages, 2),
-    sex = c(rep("male", length(ages)), rep("female", length(ages))),
-    population = c(pop_male, pop_female),
-    proportion = c(pop_male, pop_female)
-  )
+estimate_pre1980_population <- function(years, ages, config) {
+  load_tr_population_by_year(years, ages, config)
 }
 
 # =============================================================================
@@ -1431,157 +1261,39 @@ distribute_overseas_by_age <- function(total, age, sex, pop_type, overseas_cfg =
 #' Build Up Ages 85+ for Tab Years
 #'
 #' @description
-#' For ages 85+, this function uses Census single-year-of-age data when
-#' available (1980+), or falls back to survival-based distribution for
-#' earlier years (pre-1980) where Census only provides aggregate 85+ counts.
+#' Reads ages 85-100 directly from SSPopDec for all tab years.
+#' SSPopDec provides single-year-of-age populations for 1940-2100, so
+#' no survival-based estimation or synthetic generation is needed.
 #'
 #' @param tab_years Integer vector of tab years
-#' @param components List of component data
-#' @param max_age Maximum age to estimate (default: 100)
+#' @param components List of component data (unused, kept for interface compat)
+#' @param max_age Maximum age to include (default: 100)
+#' @param config List: configuration (required for TR file resolution)
 #'
 #' @return data.table with 85+ population by year, age, sex
 #'
 #' @keywords internal
 build_up_ages_85_plus <- function(tab_years,
                                    components,
-                                   max_age = 100) {
+                                   max_age = 100,
+                                   config = NULL) {
+  if (is.null(config)) {
+    cli::cli_abort("Config required for build_up_ages_85_plus (SSPopDec file resolution)")
+  }
 
-  result_list <- lapply(tab_years, function(yr) {
-    cli::cli_alert("  Building 85+ for {yr}...")
+  # Read 85+ directly from SSPopDec for ALL tab years
+  tr_85plus <- load_tr_population_by_year(tab_years, 85:max_age, config)
 
-    # Get Census data for ages 85+
-    usaf_85plus <- components$census_usaf[year == yr & age >= 85]
+  cli::cli_alert_info("  Loaded 85+ from SSPopDec for {length(tab_years)} tab years")
 
-    if (nrow(usaf_85plus) == 0) {
-      cli::cli_abort(c(
-        "No Census 85+ data for year {yr}",
-        "i" = "Census USAF data must include ages 85+ for all tab years",
-        "i" = "For pre-1980, use TR2025 SSPopDec as source for 85+ populations"
-      ))
-    }
+  # Validate each tab year has data
+  years_with_data <- unique(tr_85plus$year)
+  missing <- setdiff(tab_years, years_with_data)
+  if (length(missing) > 0) {
+    cli::cli_abort("SSPopDec missing 85+ data for tab years: {paste(missing, collapse = ', ')}")
+  }
 
-    # Check if Census provides single-year-of-age data (1980+)
-    # by looking for multiple distinct ages in the 85+ range
-    census_ages <- sort(unique(usaf_85plus$age))
-    has_single_year_data <- length(census_ages) >= 10 && max(census_ages) >= 100
-
-    if (has_single_year_data) {
-      # Use Census single-year-of-age data directly (1980+)
-      cli::cli_alert_info("    Using Census single-year-of-age data for {yr}")
-
-      result <- usaf_85plus[age >= 85 & age <= max_age, .(
-        year = yr,
-        age = age,
-        sex = sex,
-        population = population,
-        source = "census_direct"
-      )]
-
-      return(result)
-    }
-
-    # Fall back to survival-based distribution for pre-1980 years
-    # where Census only provides aggregate 85+ totals
-    cli::cli_alert_info("    Using survival distribution for {yr} (pre-1980 data)")
-
-    # Sum to get 85+ totals by sex
-    totals_85plus <- usaf_85plus[, .(total_85plus = sum(population)), by = sex]
-
-    # Get mortality rates for ages 85+
-    qx <- components$mortality
-    if (is.null(qx)) {
-      cli::cli_abort(c(
-        "Mortality data unavailable for ages 85+",
-        "i" = "qx data is required for survival-based 85+ distribution",
-        "i" = "Ensure mortality subprocess has been run or TR2025 qx files are present"
-      ))
-    }
-    qx_85plus <- qx[year == yr & age >= 85 & age <= max_age]
-
-    # Calculate survival proportions
-    survival <- calculate_survival_proportions(qx_85plus, 85:max_age)
-
-    # Distribute 85+ total using survival proportions
-    result <- survival[, .(
-      year = yr,
-      age = age,
-      sex = sex,
-      population = data.table::fifelse(
-        sex == "male",
-        prop * totals_85plus[sex == "male", total_85plus],
-        prop * totals_85plus[sex == "female", total_85plus]
-      ),
-      source = "buildup_85plus"
-    )]
-
-    result
-  })
-
-  data.table::rbindlist(result_list)
-}
-
-#' Calculate Survival Proportions for 85+ Distribution
-#'
-#' @keywords internal
-calculate_survival_proportions <- function(qx, ages) {
-  # For each sex, calculate proportion surviving to each age
-  result_list <- lapply(c("male", "female"), function(s) {
-    qx_sex <- qx[sex == s]
-
-    # Calculate lx (survival to age x) starting at l85 = 1
-    lx <- numeric(length(ages))
-    lx[1] <- 1.0
-
-    for (i in 2:length(ages)) {
-      age_prev <- ages[i - 1]
-      q <- qx_sex[age == age_prev, qx]
-      if (length(q) == 0) {
-        cli::cli_abort("qx not found for age {age_prev}, sex {s}")
-      }
-      lx[i] <- lx[i - 1] * (1 - q)
-    }
-
-    # Convert to proportions
-    props <- lx / sum(lx)
-
-    data.table::data.table(
-      age = ages,
-      sex = s,
-      prop = props
-    )
-  })
-
-  data.table::rbindlist(result_list)
-}
-
-#' Estimate 85+ from 1940 Distribution
-#'
-#' @keywords internal
-estimate_85plus_from_1940 <- function(year, dist_1940, max_age) {
-  # Scale 1940 distribution to estimated 85+ total
-  # Use rough population estimates
-
-  # Rough 85+ population growth
-  pop_85plus_1940 <- 830000
-  growth_rate <- 0.025  # ~2.5% annual growth in 85+ population
-
-  pop_85plus <- pop_85plus_1940 * exp(growth_rate * (year - 1940))
-
-  # Split by sex (more females at older ages)
-  male_share <- 0.35
-  male_total <- pop_85plus * male_share
-  female_total <- pop_85plus * (1 - male_share)
-
-  data.table::data.table(
-    year = year,
-    age = c(dist_1940$age, dist_1940$age),
-    sex = c(rep("male", nrow(dist_1940)), rep("female", nrow(dist_1940))),
-    population = c(
-      dist_1940$proportion * male_total,
-      dist_1940$proportion * female_total
-    ),
-    source = "buildup_85plus"
-  )
+  tr_85plus
 }
 
 # =============================================================================

@@ -1,0 +1,9 @@
+census_year,concept,january_total,source
+1990,resident,246819230,Census Bureau Population Estimates Program
+1990,resident_usaf,247342000,Census Bureau Population Estimates Program
+2000,resident,280849847,Census Bureau Population Estimates Program
+2000,resident_usaf,281081000,Census Bureau Population Estimates Program
+2010,resident,308401808,Census Bureau Vintage 2010 estimates
+2010,resident_usaf,308615000,Census Bureau Vintage 2010 estimates
+2020,resident,329484123,Census Bureau Vintage 2020 estimates
+2020,resident_usaf,329690000,Census Bureau Vintage 2020 estimates

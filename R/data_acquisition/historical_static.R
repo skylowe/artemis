@@ -195,67 +195,13 @@ get_pre1980_usaf_population <- function(years = 1940:1979, by_age = FALSE) {
     return(result[, .(year, male, female, total, source)])
   }
 
-  # If by_age = TRUE, expand to age detail using standard age distribution
-  # from decennial census benchmark years
-  cli::cli_alert_info("Expanding to age detail using decennial benchmarks...")
-
-  expanded <- expand_to_age_detail(result, years)
-  return(expanded)
-}
-
-#' Expand population totals to age detail
-#'
-#' @description
-#' Expands yearly population totals to single year of age using
-#' interpolated age distributions from decennial census benchmarks.
-#'
-#' @param totals data.table with year, male, female columns
-#' @param years Years to expand
-#'
-#' @return data.table with year, age, sex, population
-#'
-#' @keywords internal
-expand_to_age_detail <- function(totals, years) {
-  # Get age distributions from decennial years (benchmark proportions)
-  # For simplicity, use linear interpolation between decennial distributions
-  # Full single-year-of-age data would require PE-11 archive files
-
-  # Return structure for future implementation
-  # This is a placeholder - full implementation requires digitized PE-11 data
-
-  cli::cli_alert_warning(
-    "Full single-year-of-age detail requires PE-11 archive data. ",
-    "Returning totals with placeholder age distribution."
-  )
-
-  # Create placeholder with broad age groups
-  age_groups <- data.table::data.table(
-    age_group = c("0-4", "5-14", "15-24", "25-34", "35-44", "45-54", "55-64", "65-74", "75-84", "85+"),
-    age_start = c(0, 5, 15, 25, 35, 45, 55, 65, 75, 85),
-    age_end = c(4, 14, 24, 34, 44, 54, 64, 74, 84, 119),
-    # Approximate proportions for mid-century (1960)
-    male_pct = c(0.11, 0.18, 0.14, 0.13, 0.13, 0.11, 0.09, 0.06, 0.03, 0.01),
-    female_pct = c(0.10, 0.17, 0.13, 0.13, 0.13, 0.11, 0.10, 0.07, 0.04, 0.02)
-  )
-
-  result_list <- lapply(years, function(yr) {
-    yr_total <- totals[year == yr]
-    if (nrow(yr_total) == 0) return(NULL)
-
-    male_total <- yr_total$male
-    female_total <- yr_total$female
-
-    dt <- data.table::data.table(
-      year = yr,
-      age_group = age_groups$age_group,
-      age_start = age_groups$age_start,
-      male = round(male_total * age_groups$male_pct),
-      female = round(female_total * age_groups$female_pct)
-    )
-    dt
-  })
-
-  data.table::rbindlist(result_list)
+  # by_age = TRUE: use SSPopDec for single-year-of-age data
+  # (This code path is not used by the main pipeline — pre-1980 age detail
+  # comes from load_tr_population_by_year() in historical_population.R)
+  cli::cli_abort(c(
+    "Pre-1980 age detail should be loaded from SSPopDec",
+    "i" = "Use load_tr_population_by_year() instead of get_pre1980_usaf_population(by_age = TRUE)"
+  ))
 }
 
 # =============================================================================
@@ -392,69 +338,9 @@ get_alaska_hawaii_census <- function() {
 # 1940 AGE 85+ DISTRIBUTION (Input #42)
 # =============================================================================
 
-#' Get assumed December 31, 1940 age 85+ distribution
-#'
-#' @description
-#' Returns the assumed distribution of population aged 85+ for
-#' December 31, 1940. This is used as a starting point for building
-#' up older age populations through the historical period.
-#'
-#' @return data.table with age (85-119), sex, proportion
-#'
-#' @details
-#' Per TR2025 documentation: "Using 2015 TR death rates and historical
-#' populations, an assumed December 31, 1940, 85+ distribution."
-#'
-#' The 85+ population in 1940 was approximately 0.4% of total population.
-#' Distribution within 85+ is based on survival curves.
-#'
-#' @section Methodology:
-#' - Total 85+ in 1940: ~800,000 (from Census)
-#' - Distribution based on period life table survival rates
-#' - Higher concentration at ages 85-89 with rapid decline
-#'
-#' @export
-get_1940_85plus_distribution <- function() {
-  # ============================================================================
-  # 1940 AGE 85+ DISTRIBUTION
-  # ============================================================================
-  # Based on 1940 Census 85+ count and period life table survival patterns
-  # Total 85+: approximately 800,000 (0.6% of 132M total)
-  # Male 85+: ~290,000 (36%)
-  # Female 85+: ~510,000 (64%)
-  # ============================================================================
-
-  # Distribution based on survival curves - rapid decline after 85
-  # These proportions sum to 1.0 within each sex
-
-  ages <- 85:119
-
-  # Survival-based proportions (declining exponentially)
-  # Base survival rate per year above 85: ~0.75 for males, ~0.80 for females
-  male_survival_rate <- 0.72
-  female_survival_rate <- 0.78
-
-  male_prop <- male_survival_rate^(0:(length(ages)-1))
-  male_prop <- male_prop / sum(male_prop)
-
-  female_prop <- female_survival_rate^(0:(length(ages)-1))
-  female_prop <- female_prop / sum(female_prop)
-
-  # Total 85+ population (from 1940 Census)
-  total_85plus_male <- 290000
-  total_85plus_female <- 510000
-
-  data.table::data.table(
-    age = rep(ages, 2),
-    sex = c(rep("male", length(ages)), rep("female", length(ages))),
-    proportion = c(male_prop, female_prop),
-    population = c(
-      round(male_prop * total_85plus_male),
-      round(female_prop * total_85plus_female)
-    ),
-    source = "1940 Census with survival-based distribution"
-  )
-}
+# get_1940_85plus_distribution() — REMOVED in Phase 3
+# 1940 85+ populations now read directly from SSPopDec via
+# load_tr_population_by_year() in historical_population.R
 
 # =============================================================================
 # DOD ARMED FORCES IN TERRITORIES (Input #41)
