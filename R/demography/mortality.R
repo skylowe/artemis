@@ -2393,7 +2393,7 @@ calculate_life_table <- function(qx, radix = 100000, max_age = 100, f0 = NULL) {
           f0_row <- f0[sex == current_sex]
         }
         if (nrow(f0_row) == 0) {
-          cli::cli_abort("No f0 value found for year={.BY$year}, sex={current_sex}")
+          cli::cli_abort("No f0 value found for year={(.BY$year)}, sex={current_sex}")
         }
         f0_val <- f0_row$f0[1]
       } else if (is.numeric(f0)) {
