@@ -74,7 +74,10 @@ create_immigration_targets <- function() {
     # LPR IMMIGRATION SUBPROCESS
     # ==========================================================================
 
-    # Step 1: LPR distribution
+    # Step 1: LPR distribution(s)
+    # Returns either:
+    #   - list(new_distribution, aos_distribution, combined_distribution) for separate mode
+    #   - data.table(age, sex, distribution) for combined/tr_derived mode
     targets::tar_target(
       lpr_distribution,
       get_lpr_distribution_for_projection(
@@ -84,15 +87,37 @@ create_immigration_targets <- function() {
     ),
 
     # Step 2: Emigration distribution
+    # Source determined by config: "cbo" (default) or "dhs" (legacy)
     targets::tar_target(
       emigration_distribution,
-      calculate_emigration_distribution_dhs(
-        dhs_data = load_dhs_lpr_data(),
-        reference_years = config_assumptions$immigration$emigration$distribution_years
-      )
+      {
+        source <- get_config_with_default(
+          config_assumptions, "immigration", "emigration", "distribution_source",
+          default = "cbo"
+        )
+        if (source == "cbo") {
+          cbo_data <- load_cbo_migration(
+            file_path = here::here("data/raw/cbo/grossMigration_byYearAgeSexStatusFlow.csv")
+          )
+          ref_years <- get_config_with_default(
+            config_assumptions, "immigration", "emigration", "cbo_reference_years",
+            default = 2021:2024
+          )
+          calculate_cbo_emigration_distribution(cbo_data, ref_years)
+        } else {
+          ref_years <- get_config_with_default(
+            config_assumptions, "immigration", "emigration", "distribution_years",
+            default = 2016:2020
+          )
+          calculate_emigration_distribution_dhs(
+            dhs_data = load_dhs_lpr_data(),
+            reference_years = ref_years
+          )
+        }
+      }
     ),
 
-    # Step 3: NEW/AOS ratio
+    # Step 3: NEW/AOS ratio (used only for combined mode / ratio split)
     targets::tar_target(
       new_aos_ratio,
       calculate_new_aos_ratio(
@@ -111,51 +136,89 @@ create_immigration_targets <- function() {
     ),
 
     # Step 5: Project LPR immigration
+    # Conditional: uses separate distributions (TR2025) or combined (legacy)
     targets::tar_target(
-      lpr_immigration_projected,
-      project_lpr_immigration(
-        assumptions = lpr_assumptions,
-        distribution = lpr_distribution
-      )
-    ),
-
-    # Step 6: Split LPR into NEW and AOS
-    targets::tar_target(
-      lpr_new_aos_split,
+      lpr_projection_result,
       {
-        method <- get_config_with_default(
-          config_assumptions, "immigration", "lpr", "new_aos_split_method",
-          default = "assumption"
+        dist_method <- get_config_with_default(
+          config_assumptions, "immigration", "lpr", "distribution_method",
+          default = "dhs"
         )
-        if (method == "assumption") {
-          split_lpr_new_aos(
-            lpr_immigration = lpr_immigration_projected,
+        dhs_mode <- get_config_with_default(
+          config_assumptions, "immigration", "lpr", "dhs_distribution_mode",
+          default = "separate"
+        )
+
+        use_separate <- (dist_method == "dhs" && dhs_mode == "separate" &&
+                          is.list(lpr_distribution) && "new_distribution" %in% names(lpr_distribution))
+
+        if (use_separate) {
+          # TR2025 Section 1.3: Separate NEW/AOS distributions
+          cli::cli_alert_info("Projecting LPR with separate NEW/AOS distributions")
+          result <- project_lpr_immigration_separate(
             assumptions = lpr_assumptions,
-            method = "assumption"
+            new_distribution = lpr_distribution$new_distribution,
+            aos_distribution = lpr_distribution$aos_distribution
           )
+          result
         } else {
-          split_lpr_new_aos(
-            lpr_immigration = lpr_immigration_projected,
-            new_ratio = new_aos_ratio$new_ratio,
-            method = "ratio"
+          # Combined distribution mode (legacy or tr_derived)
+          dist <- if (is.list(lpr_distribution) && "combined_distribution" %in% names(lpr_distribution)) {
+            lpr_distribution$combined_distribution
+          } else {
+            lpr_distribution
+          }
+
+          lpr_imm <- project_lpr_immigration(
+            assumptions = lpr_assumptions,
+            distribution = dist
+          )
+
+          # Split into NEW/AOS using assumptions or ratio
+          split_method <- get_config_with_default(
+            config_assumptions, "immigration", "lpr", "new_aos_split_method",
+            default = "assumption"
+          )
+          if (split_method == "assumption") {
+            split_result <- split_lpr_new_aos(
+              lpr_immigration = lpr_imm,
+              assumptions = lpr_assumptions,
+              method = "assumption"
+            )
+          } else {
+            split_result <- split_lpr_new_aos(
+              lpr_immigration = lpr_imm,
+              new_ratio = new_aos_ratio$new_ratio,
+              method = "ratio"
+            )
+          }
+
+          list(
+            lpr_immigration = lpr_imm,
+            new_arrivals = split_result$new_arrivals,
+            aos = split_result$aos
           )
         }
       }
     ),
 
-    # Extract NEW arrivals
+    # Extract targets from projection result (preserves downstream names)
+    targets::tar_target(
+      lpr_immigration_projected,
+      lpr_projection_result$lpr_immigration
+    ),
+
     targets::tar_target(
       new_arrivals_projected,
-      lpr_new_aos_split$new_arrivals
+      lpr_projection_result$new_arrivals
     ),
 
-    # Extract AOS
     targets::tar_target(
       aos_projected,
-      lpr_new_aos_split$aos
+      lpr_projection_result$aos
     ),
 
-    # Step 7: Project emigration
+    # Step 6: Project emigration
     targets::tar_target(
       legal_emigration_projected,
       project_legal_emigration(
@@ -164,7 +227,7 @@ create_immigration_targets <- function() {
       )
     ),
 
-    # Step 8: Calculate net LPR
+    # Step 7: Calculate net LPR
     targets::tar_target(
       net_lpr_immigration,
       calculate_net_lpr(
@@ -314,13 +377,20 @@ create_immigration_targets <- function() {
     targets::tar_target(
       lpr_immigration_validation,
       {
+        # Handle both separate (list) and combined (data.table) distribution formats
+        lpr_dist_for_val <- if (is.list(lpr_distribution) && "combined_distribution" %in% names(lpr_distribution)) {
+          lpr_distribution$combined_distribution
+        } else {
+          lpr_distribution
+        }
+
         projection_result <- list(
           lpr_immigration = lpr_immigration_projected,
           new_arrivals = new_arrivals_projected,
           aos = aos_projected,
           emigration = legal_emigration_projected,
           net_lpr = net_lpr_immigration,
-          distributions = list(lpr = lpr_distribution, emigration = emigration_distribution),
+          distributions = list(lpr = lpr_dist_for_val, emigration = emigration_distribution),
           new_aos_ratio = new_aos_ratio,
           assumptions = lpr_assumptions
         )

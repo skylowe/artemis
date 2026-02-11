@@ -518,8 +518,8 @@ calculate_lpr_distribution_dhs <- function(dhs_data,
     "DHS 5-year distribution ({min(reference_years)}-{max(reference_years)}): {round(by_sex[sex=='female', pct], 1)}% female, {round(by_sex[sex=='male', pct], 1)}% male"
   )
 
-  # Interpolate to single years using Beers
-  dist_single <- beers_interpolate_dhs(dist_5yr)
+  # Interpolate to single years (uniform distribution within each group)
+  dist_single <- uniform_interpolate_dhs(dist_5yr)
 
   # Report single-year summary
   by_sex_single <- dist_single[, .(pct = sum(distribution) * 100), by = sex]
@@ -530,36 +530,147 @@ calculate_lpr_distribution_dhs <- function(dhs_data,
   dist_single
 }
 
+#' Calculate separate NEW and AOS distributions from DHS data
+#'
+#' @description
+#' Per TR2025 Section 1.3, creates separate age-sex distributions for
+#' new arrivals and adjustments of status. NEW and AOS have meaningfully
+#' different age-sex profiles (AOS skews older since they're already in the US).
+#'
+#' Steps (per Section 1.3.c):
+#' 1. Optionally convert FY to CY
+#' 2. Filter DHS data by admission_type, aggregate by age/sex
+#' 3. Interpolate each to single years (Beers or uniform)
+#' 4. Normalize each to sum to 1.0
+#'
+#' @param dhs_data data.table from load_dhs_lpr_data() with admission_type column
+#' @param reference_years Integer vector: years for averaging (default: 2016:2020)
+#' @param convert_fy_cy Logical: apply FY-to-CY conversion (default: FALSE)
+#' @param interpolation_method Character: "beers" or "uniform" (default: "uniform")
+#'
+#' @return list with:
+#'   - new_distribution: data.table with age, sex, distribution (sums to 1.0)
+#'   - aos_distribution: data.table with age, sex, distribution (sums to 1.0)
+#'   - combined_distribution: data.table with age, sex, distribution (for backward compat)
+#'
+#' @export
+calculate_lpr_distributions_separate <- function(dhs_data,
+                                                  reference_years = 2016:2020,
+                                                  convert_fy_cy = FALSE,
+                                                  interpolation_method = "uniform") {
+  dhs_data <- data.table::as.data.table(dhs_data)
+
+  # Step 1: Optionally convert FY to CY
+  if (convert_fy_cy) {
+    dhs_data <- convert_fy_to_cy(dhs_data)
+  }
+
+  # Determine year column name (fiscal_year or calendar_year after conversion)
+  year_col <- if ("calendar_year" %in% names(dhs_data)) "calendar_year" else "fiscal_year"
+
+  # Filter to reference years
+  ref_data <- dhs_data[get(year_col) %in% reference_years]
+  if (nrow(ref_data) == 0) {
+    cli::cli_abort("No DHS data found for {year_col} {paste(reference_years, collapse=', ')}")
+  }
+
+  # Verify admission_type column exists
+  if (!"admission_type" %in% names(ref_data)) {
+    cli::cli_abort("DHS data must have 'admission_type' column with 'new_arrival' and 'aos' values")
+  }
+
+  # Choose interpolation function
+  interpolate_fn <- if (interpolation_method == "beers") {
+    beers_interpolate_immigration
+  } else {
+    uniform_interpolate_dhs
+  }
+
+  # Step 2: Calculate NEW distribution
+  new_data <- ref_data[admission_type == "new_arrival"]
+  new_5yr <- new_data[, .(count = sum(count, na.rm = TRUE)), by = .(age_min, age_max, sex)]
+  new_total <- sum(new_5yr$count)
+  new_5yr[, distribution := count / new_total]
+
+  new_dist <- interpolate_fn(new_5yr)
+
+  cli::cli_alert_info(
+    "NEW distribution ({min(reference_years)}-{max(reference_years)}): {format(round(new_total), big.mark=',')} total admissions"
+  )
+
+  # Step 3: Calculate AOS distribution
+  aos_data <- ref_data[admission_type == "aos"]
+  aos_5yr <- aos_data[, .(count = sum(count, na.rm = TRUE)), by = .(age_min, age_max, sex)]
+  aos_total <- sum(aos_5yr$count)
+  aos_5yr[, distribution := count / aos_total]
+
+  aos_dist <- interpolate_fn(aos_5yr)
+
+  cli::cli_alert_info(
+    "AOS distribution ({min(reference_years)}-{max(reference_years)}): {format(round(aos_total), big.mark=',')} total admissions"
+  )
+
+  # Also compute combined distribution for backward compatibility
+  combined_5yr <- ref_data[, .(count = sum(count, na.rm = TRUE)), by = .(age_min, age_max, sex)]
+  combined_total <- sum(combined_5yr$count)
+  combined_5yr[, distribution := count / combined_total]
+  combined_dist <- interpolate_fn(combined_5yr)
+
+  # Report age profile differences
+  new_25_44 <- new_dist[age >= 25 & age <= 44, sum(distribution)] * 100
+  aos_25_44 <- aos_dist[age >= 25 & age <= 44, sum(distribution)] * 100
+  new_45_64 <- new_dist[age >= 45 & age <= 64, sum(distribution)] * 100
+  aos_45_64 <- aos_dist[age >= 45 & age <= 64, sum(distribution)] * 100
+
+  cli::cli_alert_info(
+    "Age 25-44: NEW={round(new_25_44, 1)}% vs AOS={round(aos_25_44, 1)}%"
+  )
+  cli::cli_alert_info(
+    "Age 45-64: NEW={round(new_45_64, 1)}% vs AOS={round(aos_45_64, 1)}%"
+  )
+
+  list(
+    new_distribution = new_dist,
+    aos_distribution = aos_dist,
+    combined_distribution = combined_dist
+  )
+}
+
 #' Calculate emigration distribution from DHS data
 #'
 #' @description
 #' Uses the same age-sex distribution as immigration since DHS does not
 #' provide emigration-specific data. This assumes emigrants have a similar
-#' age-sex profile to immigrants.
+#' age-sex profile to immigrants. This is a legacy fallback; prefer CBO
+#' emigration distribution (see config immigration.emigration.distribution_source).
 #'
 #' @param dhs_data data.table from load_dhs_lpr_data()
-#' @param reference_years Years to average for distribution (default: 2018:2023)
+#' @param reference_years Years to average for distribution (default: 2016:2020)
 #' @return data.table with columns: age, sex, distribution
 #' @export
 calculate_emigration_distribution_dhs <- function(dhs_data,
                                                    reference_years = 2016:2020) {
-  # Use same distribution as immigration (DHS doesn't have emigration data)
-  cli::cli_alert_info("Using DHS immigration distribution for emigration (no emigration-specific data)")
+  cli::cli_alert_info("Using DHS immigration distribution for emigration (legacy fallback)")
   calculate_lpr_distribution_dhs(dhs_data, reference_years)
 }
 
-#' Interpolate age groups to single years
+#' Interpolate age groups to single years (uniform method)
 #'
 #' @description
 #' Converts 5-year age group distributions to single-year-of-age distributions
 #' using uniform distribution within each group. This preserves the total
 #' distribution for each age group while providing single-year granularity.
 #'
+#' Note: Despite the original name "beers_interpolate_dhs", this function
+#' uses uniform distribution, not H.S. Beers interpolation. Renamed in Phase 3
+#' to accurately reflect the method. For real Beers interpolation, see
+#' \code{\link{beers_interpolate_immigration}}.
+#'
 #' @param dist data.table with columns: age_min, age_max, sex, distribution
 #' @param max_age Integer: maximum single-year age (default: 100, representing 100+)
 #' @return data.table with columns: age (0 to max_age), sex, distribution
 #' @keywords internal
-beers_interpolate_dhs <- function(dist, max_age = 100) {
+uniform_interpolate_dhs <- function(dist, max_age = 100) {
   results <- list()
 
   for (s in c("male", "female")) {
@@ -611,6 +722,10 @@ beers_interpolate_dhs <- function(dist, max_age = 100) {
 
   result
 }
+
+#' @rdname uniform_interpolate_dhs
+#' @keywords internal
+beers_interpolate_dhs <- uniform_interpolate_dhs
 
 # ===========================================================================
 # NEW/AOS RATIO CALCULATION
@@ -846,6 +961,102 @@ project_lpr_immigration <- function(assumptions, distribution) {
   result
 }
 
+#' Project LPR immigration with separate NEW/AOS distributions
+#'
+#' @description
+#' Per TR2025 Eqs 1.3.1-1.3.3, applies separate age-sex distributions
+#' to NEW arrivals and AOS totals, then sums to get total LPR immigration.
+#'
+#'   NEW_x,s = lpr_new_total * new_dist_x,s
+#'   AOS_x,s = lpr_aos_total * aos_dist_x,s
+#'   L_x,s   = NEW_x,s + AOS_x,s
+#'
+#' @param assumptions data.table with columns: year, total_lpr, lpr_new, lpr_aos
+#' @param new_distribution data.table with columns: age, sex, distribution (sums to 1.0)
+#' @param aos_distribution data.table with columns: age, sex, distribution (sums to 1.0)
+#'
+#' @return list with:
+#'   - lpr_immigration: data.table (year, age, sex, immigration) - total L
+#'   - new_arrivals: data.table (year, age, sex, new_arrivals) - NEW component
+#'   - aos: data.table (year, age, sex, aos) - AOS component
+#'
+#' @export
+project_lpr_immigration_separate <- function(assumptions, new_distribution, aos_distribution) {
+  assumptions <- data.table::as.data.table(assumptions)
+  new_distribution <- data.table::as.data.table(new_distribution)
+  aos_distribution <- data.table::as.data.table(aos_distribution)
+
+  # Validate distributions sum to 1
+  for (dist_info in list(
+    list(dist = new_distribution, name = "NEW"),
+    list(dist = aos_distribution, name = "AOS")
+  )) {
+    dist_sum <- sum(dist_info$dist$distribution)
+    if (abs(dist_sum - 1.0) > 0.001) {
+      cli::cli_alert_warning("{dist_info$name} distribution sums to {round(dist_sum, 6)}, normalizing")
+      dist_info$dist[, distribution := distribution / dist_sum]
+    }
+  }
+
+  # Validate assumptions have lpr_new and lpr_aos columns
+  if (!all(c("lpr_new", "lpr_aos") %in% names(assumptions))) {
+    cli::cli_abort("assumptions must have 'lpr_new' and 'lpr_aos' columns (from V.A2)")
+  }
+
+  ages <- unique(new_distribution$age)
+  sexes <- unique(new_distribution$sex)
+
+  # Project NEW arrivals: NEW_x,s = lpr_new * new_dist_x,s
+  new_result <- data.table::CJ(year = assumptions$year, age = ages, sex = sexes, sorted = FALSE)
+  new_result <- merge(new_result, new_distribution[, .(age, sex, distribution)], by = c("age", "sex"), all.x = TRUE)
+  new_result <- merge(new_result, assumptions[, .(year, lpr_new)], by = "year", all.x = TRUE)
+  new_result[, new_arrivals := lpr_new * distribution]
+  new_result[, c("distribution", "lpr_new") := NULL]
+  data.table::setorder(new_result, year, age, sex)
+
+  # Project AOS: AOS_x,s = lpr_aos * aos_dist_x,s
+  aos_result <- data.table::CJ(year = assumptions$year, age = ages, sex = sexes, sorted = FALSE)
+  aos_result <- merge(aos_result, aos_distribution[, .(age, sex, distribution)], by = c("age", "sex"), all.x = TRUE)
+  aos_result <- merge(aos_result, assumptions[, .(year, lpr_aos)], by = "year", all.x = TRUE)
+  aos_result[, aos := lpr_aos * distribution]
+  aos_result[, c("distribution", "lpr_aos") := NULL]
+  data.table::setorder(aos_result, year, age, sex)
+
+  # Total LPR: L_x,s = NEW_x,s + AOS_x,s (Eq 1.3.3)
+  lpr_result <- merge(
+    new_result[, .(year, age, sex, new_arrivals)],
+    aos_result[, .(year, age, sex, aos)],
+    by = c("year", "age", "sex")
+  )
+  lpr_result[, immigration := new_arrivals + aos]
+  lpr_immigration <- lpr_result[, .(year, age, sex, immigration)]
+  data.table::setorder(lpr_immigration, year, age, sex)
+
+  # Verify totals match assumptions
+  check <- lpr_immigration[, .(projected = sum(immigration)), by = year]
+  check <- merge(check, assumptions[, .(year, expected = total_lpr)], by = "year")
+  max_diff <- max(abs(check$projected - check$expected))
+  if (max_diff > 1) {
+    cli::cli_alert_warning("Total LPR differs from assumptions by up to {round(max_diff)} (rounding)")
+  } else {
+    cli::cli_alert_success("NEW + AOS = L verified for all years")
+  }
+
+  # Report sample year
+  sample_yr <- if (2030 %in% assumptions$year) 2030 else min(assumptions$year)
+  new_total <- new_result[year == sample_yr, sum(new_arrivals)]
+  aos_total <- aos_result[year == sample_yr, sum(aos)]
+  cli::cli_alert_info(
+    "Sample {sample_yr}: NEW={format(round(new_total), big.mark=',')} + AOS={format(round(aos_total), big.mark=',')} = L={format(round(new_total + aos_total), big.mark=',')}"
+  )
+
+  list(
+    lpr_immigration = lpr_immigration,
+    new_arrivals = new_result[, .(year, age, sex, new_arrivals)],
+    aos = aos_result[, .(year, age, sex, aos)]
+  )
+}
+
 #' Project legal emigration by age and sex
 #'
 #' @param assumptions TR2025 assumptions data.table
@@ -1025,16 +1236,23 @@ calculate_net_lpr <- function(lpr_immigration, emigration) {
 #' Helper function for the lpr_distribution target. Selects the appropriate
 #' distribution method based on config and applies elderly overrides.
 #'
+#' When distribution_method = "dhs" and dhs_distribution_mode = "separate",
+#' returns a list with separate NEW and AOS distributions per TR2025 Section 1.3.
+#' Otherwise returns a single combined distribution.
+#'
 #' @param config List: config_assumptions containing immigration settings
 #' @param tr_derived_dist data.table: TR-derived distribution from
 #'   calculate_tr_derived_distribution() (for "tr_derived" method)
 #'
-#' @return data.table with columns: age, sex, distribution
+#' @return Either:
+#'   - list with new_distribution, aos_distribution, combined_distribution
+#'     (when dhs + separate mode)
+#'   - data.table with columns: age, sex, distribution (otherwise)
 #'
 #' @export
 get_lpr_distribution_for_projection <- function(config, tr_derived_dist = NULL) {
   method <- config$immigration$lpr$distribution_method
-  if (is.null(method)) method <- "tr_derived"
+  if (is.null(method)) method <- "dhs"
 
   # Calculate approximate total net immigration for override proportions
   # Using ultimate values: net LPR (~788K) + net O (~750K) = ~1.54M
@@ -1042,14 +1260,46 @@ get_lpr_distribution_for_projection <- function(config, tr_derived_dist = NULL) 
                    (config$immigration$o_immigration$ultimate_gross_o * 0.5)
 
   if (method == "dhs") {
-    # DHS-based distribution with elderly override for ages 85+
-    get_immigration_distribution(
-      method = "dhs",
-      dhs_data = load_dhs_lpr_data(),
-      dhs_years = config$immigration$lpr$distribution_years,
-      elderly_override = config$immigration$lpr$elderly_override,
-      total_net_immigration = total_net_imm
-    )
+    dhs_mode <- config$immigration$lpr$dhs_distribution_mode
+    if (is.null(dhs_mode)) dhs_mode <- "separate"
+
+    ref_years <- config$immigration$lpr$distribution_years
+    interp_method <- config$immigration$lpr$interpolation_method
+    if (is.null(interp_method)) interp_method <- "uniform"
+    convert_fy_cy <- isTRUE(config$immigration$lpr$convert_fy_to_cy)
+
+    dhs_data <- load_dhs_lpr_data()
+
+    if (dhs_mode == "separate") {
+      # TR2025 Section 1.3: Separate NEW/AOS distributions
+      cli::cli_alert_info("Using separate NEW/AOS distributions (TR2025 Section 1.3)")
+      result <- calculate_lpr_distributions_separate(
+        dhs_data = dhs_data,
+        reference_years = ref_years,
+        convert_fy_cy = convert_fy_cy,
+        interpolation_method = interp_method
+      )
+
+      # Apply elderly override to combined distribution (for backward compat targets)
+      elderly_override <- config$immigration$lpr$elderly_override
+      if (!is.null(elderly_override) && isTRUE(elderly_override$enabled)) {
+        result$combined_distribution <- apply_elderly_override(
+          result$combined_distribution, elderly_override, total_net_imm
+        )
+      }
+
+      result
+    } else {
+      # Legacy combined mode
+      dist <- get_immigration_distribution(
+        method = "dhs",
+        dhs_data = dhs_data,
+        dhs_years = ref_years,
+        elderly_override = config$immigration$lpr$elderly_override,
+        total_net_immigration = total_net_imm
+      )
+      dist
+    }
   } else {
     # TR2025-derived distribution with elderly override for ages 85+
     get_immigration_distribution(
