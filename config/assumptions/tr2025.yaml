@@ -230,34 +230,38 @@ immigration:
 
   lpr:
     # =========================================================================
-    # Age-Sex Distribution Method
+    # Age-Sex Distribution Method (TR2025 Section 1.3)
     # =========================================================================
     # Controls the source of the immigration age-sex distribution.
     #
     # Options:
-    #   "dhs" - Use DHS expanded tables (2018-2023) with Beers interpolation
-    #           Represents actual LPR admission patterns by age and sex.
-    #           Note: DHS shows different age pattern than TR2025 population implies.
+    #   "dhs" - DHS expanded tables with Beers interpolation (TR2025 methodology)
+    #           Uses separate NEW/AOS distributions per Section 1.3.
+    #           Note: Public DHS data is in 5-year age groups; SSA receives
+    #           non-public single-year data. Beers interpolation compensates.
     #
-    #   "tr_derived" - Use distribution back-calculated from TR2025 population
-    #           projections. Computed by target `tr_derived_immigration_dist` using:
-    #             implied_NI = P(x,z) - P(x-1,z-1) * (1 - qx)
-    #           Averaged over years 2023-2030.
+    #   "tr_derived" - Back-calculated from TR2025 population projections
+    #           (ARTEMIS-specific). Computed by target `tr_derived_immigration_dist`.
     #           Ensures population projection aligns with TR2025.
-    #
-    # Key differences between methods:
-    #   Age Group   DHS%    TR-Derived%   DHS shows less at young ages
-    #   0-17        16.0    24.0          (39% lower)
-    #   18-24       10.2    16.1          (37% lower)
-    #   25-44       43.7    37.1          (18% higher)
-    #   45-64       21.0    11.7          (80% higher)
-    #   65-84        4.5     7.5          (40% lower)
-    #   85-99        4.7     3.6          (31% higher)
     # =========================================================================
-    distribution_method: "tr_derived"  # Options: "dhs", "tr_derived"
+    distribution_method: "dhs"  # Options: "dhs", "tr_derived"
 
-    # DHS distribution years (used when distribution_method = "dhs")
-    distribution_years: [2018, 2019, 2020, 2021, 2022, 2023]
+    # When distribution_method = "dhs":
+    # - "separate": Separate NEW/AOS distributions per TR2025 Section 1.3
+    # - "combined": Single combined distribution, split by ratio (legacy)
+    dhs_distribution_mode: "separate"
+
+    # DHS distribution reference years (TR2025 Section 1.3: 2016-2020)
+    distribution_years: [2016, 2017, 2018, 2019, 2020]
+
+    # Interpolation method for converting DHS 5-year age groups to single years
+    # - "beers": H.S. Beers ordinary interpolation (TR2025 methodology)
+    # - "uniform": Uniform distribution within each group (legacy)
+    interpolation_method: "beers"
+
+    # Fiscal-year to calendar-year conversion (TR2025 Section 1.3 step 2)
+    # CY_z = 0.75 * FY_z + 0.25 * FY_{z+1}
+    convert_fy_to_cy: true
 
     # TR-derived distribution years (averaged over these years)
     tr_derived_years: [2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030]
@@ -325,8 +329,8 @@ immigration:
 
     # NEW/AOS ratio reference years (DHS aggregate data)
     # Only used when new_aos_split_method = "ratio"
-    # Ratio calculated from DHS 2016-2019 (excluding COVID-affected 2020)
-    new_aos_ratio_years: [2016, 2017, 2018, 2019]
+    # TR2025 Section 1.3 uses 2016-2020
+    new_aos_ratio_years: [2016, 2017, 2018, 2019, 2020]
 
   # =========================================================================
   # Legal Emigration Configuration
@@ -334,13 +338,21 @@ immigration:
 
   emigration:
     # Emigration ratio (fraction of LPR immigration that emigrates)
-    # TR2025 uses 25% (0.25) for legal emigration
+    # TR2025 Section 1.3: 25% (0.25) for legal emigration
     ratio: 0.25
 
-    # Distribution years for emigration age-sex distribution
-    # Uses same DHS age-sex distribution as immigration since DHS does not
-    # provide emigration-specific data. TR uses Census 1980-1990 estimates.
-    distribution_years: [2018, 2019, 2020, 2021, 2022, 2023]
+    # Distribution source for emigration age-sex pattern:
+    # - "cbo": CBO LPR+ emigration data (best available public approximation
+    #          of TR2025's Census 1980-1990 estimates)
+    # - "dhs": Same distribution as immigration (legacy, methodologically incorrect)
+    distribution_source: "cbo"
+
+    # CBO emigration reference years (recent historical CBO estimates)
+    cbo_reference_years: [2021, 2022, 2023, 2024]
+
+    # DHS fallback distribution years (only used when distribution_source = "dhs")
+    # TR2025 Section 1.3 reference period: 2016-2020
+    distribution_years: [2016, 2017, 2018, 2019, 2020]
 
   # =========================================================================
   # Approximate Net Immigration (for distribution scaling only)

@@ -14,6 +14,34 @@
 #' - NL: Net LPR Immigration
 #'
 #' @name lpr_immigration
+#'
+#' @section Known Methodology Deviations from TR2025 Section 1.3:
+#'
+#' **Deviation 2 (Unfixable): Refugee/Asylee Reclassification**
+#' TR2025 Step 1 reclassifies refugee and asylee LPR admissions from AOS to
+#' NEW arrivals. DHS public Tables 8-11 provide only AOS vs NEW totals by age
+#' group; refugee/asylee class-of-admission detail by age is not available in
+#' public data. DHS provides this to SSA via non-public single-year-of-age data.
+#' Impact is minor: refugees are a small and declining fraction of AOS.
+#'
+#' **Deviation 7 (Unfixable): SS Area Conversion Factors for Emigration**
+#' TR2025 Section 1.3.c applies internal OCACT conversion factors to Census
+#' emigration estimates so they correspond to people leaving the Social Security
+#' area (not just the US). These factors are unpublished and unavailable.
+#' CBO emigration data (our Phase 4 fix) is a reasonable approximation since
+#' CBO's estimates are calibrated to residual demographic accounting.
+#'
+#' **Deviation 9 (Unfixable): DHS Single-Year-of-Age Data**
+#' DHS provides SSA with non-public single-year-of-age LPR data. Public DHS
+#' Tables 8-11 use 5-year age groups. We apply H.S. Beers ordinary interpolation
+#' to convert to single years, which is the standard demographic solution and
+#' the same method TR2025 uses for emigration distribution.
+#'
+#' **Deviation 10 (ARTEMIS-Specific): Elderly Override System**
+#' The elderly override (ages 65+/85+/100+) is an ARTEMIS addition that
+#' compensates for data limitations at advanced ages. It adjusts distribution
+#' values for older ages where back-calculated or DHS-derived values are
+#' unreliable. This is not part of TR2025 methodology.
 NULL
 
 # ===========================================================================
@@ -46,9 +74,9 @@ NULL
 #'
 #' @export
 get_immigration_distribution <- function(
-    method = "tr_derived",
+    method = "dhs",
     dhs_data = NULL,
-    dhs_years = 2018:2023,
+    dhs_years = 2016:2020,
     tr_derived_data = NULL,
     tr_derived_file = "data/processed/tr2025_implied_immigration_distribution.csv",
     elderly_override = NULL,
@@ -467,7 +495,7 @@ load_dhs_lpr_data <- function(file_path = "data/cache/dhs_immigration/dhs_lpr_al
 #' @return data.table with columns: age, sex, distribution
 #' @export
 calculate_lpr_distribution_dhs <- function(dhs_data,
-                                           reference_years = 2018:2023) {
+                                           reference_years = 2016:2020) {
   dhs_data <- data.table::as.data.table(dhs_data)
 
   # Filter to reference years (combine AOS and new arrivals for total LPR)
@@ -514,7 +542,7 @@ calculate_lpr_distribution_dhs <- function(dhs_data,
 #' @return data.table with columns: age, sex, distribution
 #' @export
 calculate_emigration_distribution_dhs <- function(dhs_data,
-                                                   reference_years = 2018:2023) {
+                                                   reference_years = 2016:2020) {
   # Use same distribution as immigration (DHS doesn't have emigration data)
   cli::cli_alert_info("Using DHS immigration distribution for emigration (no emigration-specific data)")
   calculate_lpr_distribution_dhs(dhs_data, reference_years)
@@ -595,7 +623,7 @@ beers_interpolate_dhs <- function(dist, max_age = 100) {
 #' @return list with new_ratio, aos_ratio, and details
 #' @export
 calculate_new_aos_ratio <- function(dhs_data,
-                                     reference_years = 2016:2019) {
+                                     reference_years = 2016:2020) {
   dhs_data <- data.table::as.data.table(dhs_data)
 
   # Filter to reference years
@@ -655,8 +683,6 @@ calculate_new_aos_ratio <- function(dhs_data,
 #' @param alternative Character: which alternative to use for projections
 #'   ("intermediate", "low-cost", or "high-cost"). Default: "intermediate"
 #' @param data_dir Character: directory containing TR2025 files
-#' @param emigration_ratio Numeric: ratio of emigration to LPR immigration,
-#'   used only for hardcoded fallback (default: 0.25)
 #'
 #' @return data.table with columns: year, total_lpr, total_emigration, net_lpr_total,
 #'   lpr_aos (if available), data_type
@@ -674,8 +700,7 @@ calculate_new_aos_ratio <- function(dhs_data,
 #' @export
 get_tr_lpr_assumptions <- function(years = 2025:2099,
                                         alternative = c("intermediate", "low-cost", "high-cost"),
-                                        data_dir = "data/raw/SSA_TR2025",
-                                        emigration_ratio = 0.25) {
+                                        data_dir = "data/raw/SSA_TR2025") {
   alternative <- match.arg(alternative)
 
  # Try to load from V.A2
@@ -687,14 +712,15 @@ get_tr_lpr_assumptions <- function(years = 2025:2099,
     TRUE
   }, error = function(e) FALSE)
 
-  if (va2_available) {
-    result <- get_tr_lpr_assumptions_va2(years, alternative, data_dir)
-  } else {
-    # Fallback to hardcoded values
-    cli::cli_alert_warning("V.A2 data not available, using hardcoded assumptions")
-    result <- get_tr_lpr_assumptions_hardcoded(years, emigration_ratio)
+  if (!va2_available) {
+    cli::cli_abort(c(
+      "V.A2 data is required for LPR assumptions",
+      "i" = "Ensure {.file {file.path(data_dir, 'SingleYearTRTables_TR2025.xlsx')}} exists",
+      "i" = "All immigration totals must come from official V.A2 data, not hardcoded values"
+    ))
   }
 
+  result <- get_tr_lpr_assumptions_va2(years, alternative, data_dir)
   result
 }
 
@@ -770,39 +796,9 @@ get_tr_lpr_assumptions_va2 <- function(years,
   result
 }
 
-#' Fallback hardcoded LPR assumptions
-#'
-#' @param years Integer vector: years to get assumptions for
-#' @param emigration_ratio Numeric: ratio of emigration to LPR immigration (default: 0.25)
-#'
-#' @keywords internal
-get_tr_lpr_assumptions_hardcoded <- function(years, emigration_ratio = 0.25) {
-  result <- data.table::data.table(year = years)
-
-  # Set LPR immigration levels per TR2025 intermediate assumptions
-  # Total LPR = NEW + AOS
-  result[, total_lpr := data.table::fcase(
-    year == 2024, 1263000L,
-    year %in% 2025:2026, 1213000L,
-    year >= 2027, 1050000L,
-    default = 1050000L
-  )]
-
-  # Approximate NEW/AOS split (~60% NEW, ~40% AOS based on historical patterns)
-  result[, lpr_new := round(total_lpr * 0.60)]
-  result[, lpr_aos := total_lpr - lpr_new]
-
-  # Emigration = configured ratio of LPR (default 25%)
-  result[, total_emigration := round(total_lpr * emigration_ratio)]
-
-  # Net LPR
-  result[, net_lpr_total := total_lpr - total_emigration]
-
-  # Mark as hardcoded
-  result[, data_type := "hardcoded"]
-
-  result
-}
+# NOTE: get_tr_lpr_assumptions_hardcoded() was removed. All LPR immigration
+# totals must come from official V.A2 data. If V.A2 is unavailable,
+# get_tr_lpr_assumptions() will abort with a clear error message.
 
 # ===========================================================================
 # PROJECTION FUNCTIONS
@@ -1079,8 +1075,8 @@ get_lpr_distribution_for_projection <- function(config, tr_derived_dist = NULL) 
 #' @export
 run_lpr_projection <- function(dhs_data = NULL,
                                 projection_years = 2025:2099,
-                                distribution_years = 2018:2023,
-                                new_aos_ratio_years = 2016:2019) {
+                                distribution_years = 2016:2020,
+                                new_aos_ratio_years = 2016:2020) {
   cli::cli_h2("LPR Immigration Projection")
 
   # Load DHS data if not provided

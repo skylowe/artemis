@@ -101,21 +101,13 @@ create_immigration_targets <- function() {
       )
     ),
 
-    # Step 4: LPR assumptions
+    # Step 4: LPR assumptions (from V.A2)
     targets::tar_target(
       lpr_assumptions,
-      {
-        # Get emigration ratio from config (used for hardcoded fallback)
-        emigration_ratio <- get_config_with_default(
-          config_assumptions, "immigration", "emigration", "ratio",
-          default = 0.25
-        )
-        get_tr_lpr_assumptions(
-          years = config_assumptions$metadata$projection_period$start_year:
-                  config_assumptions$metadata$projection_period$end_year,
-          emigration_ratio = emigration_ratio
-        )
-      }
+      get_tr_lpr_assumptions(
+        years = config_assumptions$metadata$projection_period$start_year:
+                config_assumptions$metadata$projection_period$end_year
+      )
     ),
 
     # Step 5: Project LPR immigration
