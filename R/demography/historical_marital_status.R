@@ -401,7 +401,9 @@ load_acs_marital_data <- function(cache_dir) {
     cache_dir = file.path(cache_dir, "acs_pums")
   )
 
-  # Aggregate separated into divorced (SSA methodology)
+  # Aggregate separated into divorced per Eq 1.4.2 (total population by marital status).
+  # Note: Eq 1.4.4 (CNI population) keeps separated distinct because ACS PUMS
+  # provides married_spouse_present vs separated detail needed for CNI calculations.
   acs_data[marital_status == "separated", marital_status := "divorced"]
   acs_data <- acs_data[, .(population = sum(population)),
                        by = .(year, age, sex, marital_status)]
@@ -435,7 +437,7 @@ load_ipums_marital_data <- function(cache_dir) {
       ipums_data[, year := as.integer(year)]
     }
 
-    # Aggregate separated into divorced
+    # Aggregate separated into divorced per Eq 1.4.2
     ipums_data[marital_status == "separated", marital_status := "divorced"]
     ipums_data <- ipums_data[, .(population = sum(population)),
                              by = .(year, age, sex, marital_status)]
@@ -589,8 +591,11 @@ average_surrounding_years <- function(target_year, acs_data, ages) {
 #' with marriage grids and preserving total population by age and sex.
 #'
 #' @param marital_pop data.table with preliminary marital populations
-#' @param marriage_grid Matrix of marriages by husband age × wife age (optional)
+#' @param marriage_grid Matrix of marriages by husband age × wife age (unused in
+#'   historical pipeline; grid-based balancing applies only in projected
+#'   population via Eq 1.6.2). Kept for interface compatibility.
 #' @param year Integer: year for marriage balancing
+#' @param config List: configuration (required; reads same_sex_start_year)
 #'
 #' @return data.table with balanced marital populations
 #'
@@ -600,15 +605,26 @@ average_surrounding_years <- function(target_year, acs_data, ages) {
 #' 2. Set married population for each age/sex = marginal total of marriage grid
 #' 3. Adjust other marital statuses to maintain total population
 #'
-#' After 2013 (same-sex marriage recognition), the equality constraint
+#' Step 2 (marriage grid) is not applied in the historical pipeline because
+#' the grid is only constructed during projected population (Eq 1.6.2).
+#' In the historical pipeline, only step 1 (married M=F balancing) is used.
+#'
+#' After same_sex_start_year (from config), the equality constraint
 #' is relaxed since same-sex marriages are allowed.
 #'
 #' @export
 balance_married_populations <- function(marital_pop,
                                         marriage_grid = NULL,
-                                        year = 2022) {
+                                        year,
+                                        config) {
 
   result <- data.table::copy(marital_pop)
+
+  # Read same-sex start year from config
+  if (is.null(config$projected_population$population_status$same_sex_start_year)) {
+    cli::cli_abort("Config missing {.field projected_population.population_status.same_sex_start_year}")
+  }
+  ss_start_year <- config$projected_population$population_status$same_sex_start_year
 
   # Get total population by age and sex
   total_by_age_sex <- result[, .(total = sum(population)), by = .(age, sex)]
@@ -621,8 +637,8 @@ balance_married_populations <- function(marital_pop,
 
   cli::cli_alert_info("Pre-balance: Married males = {format(married_males, big.mark = ',')}, Married females = {format(married_females, big.mark = ',')}")
 
-  # Pre-2013: force married males = married females
-  if (year < 2013) {
+  # Pre-same-sex era: force married males = married females
+  if (year < ss_start_year) {
     # Take average of the two
     target_married <- (married_males + married_females) / 2
 
@@ -893,7 +909,7 @@ calculate_historical_population_marital <- function(total_pop,
     yr_pop[, c("total_pop", "proportion") := NULL]
 
     # Balance married populations
-    yr_pop <- balance_married_populations(yr_pop, year = yr)
+    yr_pop <- balance_married_populations(yr_pop, year = yr, config = config)
 
     # Incorporate same-sex marriage for 2013+
     # Read same-sex start year and percentages from config

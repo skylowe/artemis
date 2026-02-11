@@ -12,12 +12,16 @@
 #' - CivNonInst totals: ACS PUMS (2010-2023) via `fetch_acs_pums_civilian_noninst()`
 #' - Marital proportions: ACS PUMS (2006-2023) via `fetch_acs_pums_civilian_noninst_marital()`
 #'
-#' **Marital Status Categories (differs from Eq 1.4.2):**
+#' **Marital Status Categories (intentionally differs from Eq 1.4.2):**
 #' - married_spouse_present: Currently married with spouse in household
 #' - separated: Currently married but separated from spouse (split from "married")
 #' - widowed: Widowed from a previous marriage
 #' - divorced: Divorced from a previous marriage
 #' - single: Never been married
+#'
+#' Eq 1.4.2 aggregates separated into divorced; Eq 1.4.4 keeps separated
+#' distinct because ACS PUMS provides married_spouse_present vs separated
+#' detail needed for CNI household composition calculations.
 #'
 #' **Same-Sex Marriage (2013+):**
 #' - 2.5% of male population assumed gay
@@ -486,6 +490,9 @@ balance_c_married_populations <- function(c_pop, config = NULL) {
   ss_start_year <- config$projected_population$population_status$same_sex_start_year
 
   for (yr in unique(result$year)) {
+    # Post-same-sex era: skip balancing (married M != F due to same-sex marriages)
+    if (yr >= ss_start_year) next
+
     # Get married populations for this year
     married_statuses <- c("married_spouse_present", "married")
 

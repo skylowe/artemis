@@ -1473,74 +1473,9 @@ interpolate_populations <- function(tab_year_pops,
 # VALIDATION
 # =============================================================================
 
-#' Validate Historical Population Against TR2025
-#'
-#' @description
-#' Compares calculated historical population against the official TR2025
-#' population files.
-#'
-#' @param calculated_pop data.table: calculated historical population
-#' @param tolerance Numeric: acceptable relative difference (default: 0.01 = 1%)
-#'
-#' @return data.table with validation results
-#'
-#' @export
-validate_historical_population <- function(calculated_pop, tolerance = 0.01) {
-  cli::cli_h1("Validating Historical Population")
-
-  # Load TR2025 population
-  tr2025_pop <- load_tr_population("dec")
-
-  if (is.null(tr2025_pop)) {
-    cli::cli_alert_warning("TR2025 population file not found")
-    return(NULL)
-  }
-
-  # Compare totals by year
-  calc_totals <- calculated_pop[, .(calc_total = sum(population)), by = year]
-  tr_totals <- tr2025_pop[, .(tr_total = sum(Total)), by = Year]
-  data.table::setnames(tr_totals, "Year", "year")
-
-  comparison <- merge(calc_totals, tr_totals, by = "year")
-  comparison[, diff_pct := (calc_total - tr_total) / tr_total * 100]
-  comparison[, pass := abs(diff_pct) <= tolerance * 100]
-
-  # Summary
-  n_pass <- sum(comparison$pass)
-  n_total <- nrow(comparison)
-
-  cli::cli_alert_info("Total comparison: {n_pass}/{n_total} years within {tolerance * 100}% tolerance")
-
-  # Show worst deviations
-  worst <- comparison[order(-abs(diff_pct))][1:5]
-  cli::cli_alert("Largest deviations:")
-  for (i in 1:nrow(worst)) {
-    cli::cli_alert("  {worst$year[i]}: {round(worst$diff_pct[i], 2)}%")
-  }
-
-  comparison
-}
-
-#' Load TR2025 Population File
-#'
-#' @keywords internal
-load_tr_population <- function(reference_date = "dec") {
-  file_map <- list(
-    dec = "SSPopDec_Alt2_TR2025.csv",
-    jan = "SSPopJan_Alt2_TR2025.csv",
-    jul = "SSPopJul_Alt2_TR2025.csv"
-  )
-
-  filename <- file_map[[reference_date]]
-  filepath <- here::here("data/raw/SSA_TR2025", filename)
-
-  if (!file.exists(filepath)) {
-    cli::cli_alert_warning("TR2025 file not found: {filename}")
-    return(NULL)
-  }
-
-  data.table::fread(filepath)
-}
+# validate_historical_population() and load_tr_population() — REMOVED
+# Validation is now in R/validation/validate_historical_population.R
+# with config-driven file resolution via resolve_tr_file()
 
 # =============================================================================
 # UTILITY FUNCTIONS

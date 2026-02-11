@@ -76,28 +76,84 @@ create_historical_population_targets <- function() {
     # VALIDATION TARGETS
     # ==========================================================================
 
-    # TR2025 December 31 population
+    # Age-sex population vs SSPopDec
     targets::tar_target(
-      tr2025_population_dec,
-      {
-        file_path <- here::here("data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv")
-        if (file.exists(file_path)) {
-          data.table::fread(file_path)
-        } else {
-          cli::cli_warn("TR2025 population file not found: {file_path}")
-          NULL
-        }
-      }
-    ),
-
-    # Validate historical population against TR2025
-    targets::tar_target(
-      historical_population_validation,
-      validate_year_totals_vs_tr(
+      historical_age_sex_validation,
+      validate_age_sex_vs_tr(
         population = historical_population,
-        tr2025_pop = tr2025_population_dec,
+        config = config_assumptions,
         tolerance = 0.02
       )
+    ),
+
+    # Ages 85+ detail vs SSPopDec
+    targets::tar_target(
+      historical_85plus_validation,
+      validate_85plus_vs_tr(
+        population = historical_population,
+        config = config_assumptions
+      )
+    ),
+
+    # Marital proportions vs SSPopDec
+    targets::tar_target(
+      historical_marital_validation,
+      validate_marital_proportions_vs_tr(
+        marital_pop = historical_population_marital,
+        config = config_assumptions
+      )
+    ),
+
+    # Population component accounting (year-over-year plausibility)
+    targets::tar_target(
+      historical_component_validation,
+      validate_population_components(
+        population = historical_population,
+        config = config_assumptions
+      )
+    ),
+
+    # Sex ratio plausibility
+    targets::tar_target(
+      historical_sex_ratio_validation,
+      validate_sex_ratios(
+        population = historical_population
+      )
+    ),
+
+    # O-population distribution validation
+    targets::tar_target(
+      historical_o_pop_validation,
+      validate_o_age_distribution(
+        o_pop = historical_temp_unlawful,
+        config = config_assumptions
+      )
+    ),
+
+    # Combined validation summary
+    targets::tar_target(
+      historical_population_validation,
+      {
+        results <- list(
+          age_sex = historical_age_sex_validation,
+          plus_85 = historical_85plus_validation,
+          marital = historical_marital_validation,
+          components = historical_component_validation,
+          sex_ratios = historical_sex_ratio_validation,
+          o_pop = historical_o_pop_validation
+        )
+
+        all_valid <- all(vapply(results, function(r) isTRUE(r$valid), logical(1)))
+
+        cli::cli_h1("Historical Population Validation Summary")
+        for (nm in names(results)) {
+          status <- if (isTRUE(results[[nm]]$valid)) "PASS" else if (is.na(results[[nm]]$valid)) "SKIP" else "FAIL"
+          icon <- if (status == "PASS") cli::symbol$tick else if (status == "SKIP") "-" else cli::symbol$cross
+          cli::cli_alert("{icon} {nm}: {status}")
+        }
+
+        list(all_valid = all_valid, results = results)
+      }
     )
   )
 }
