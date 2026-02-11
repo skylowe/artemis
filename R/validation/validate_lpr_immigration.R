@@ -518,34 +518,72 @@ validate_lpr_outputs <- function(projection_result, tolerance = 0.001) {
   # =========================================================================
   cli::cli_h3("Check 5: Distribution properties")
 
-  # Check LPR distribution
-  lpr_dist <- projection_result$distributions$lpr
-  dist_sum <- sum(lpr_dist$distribution)
-  ages_present <- length(unique(lpr_dist$age))
-  sexes_present <- unique(lpr_dist$sex)
+  # When separate NEW/AOS distributions are available, validate those
+  # (the combined distribution may have elderly override artifacts)
+  has_separate <- !is.null(projection_result$distributions$new) &&
+                  !is.null(projection_result$distributions$aos)
 
-  dist_checks <- list(
-    sums_to_one = abs(dist_sum - 1.0) <= 0.001,
-    all_ages = ages_present >= 100,
-    both_sexes = all(c("male", "female") %in% sexes_present),
-    no_negative = all(lpr_dist$distribution >= 0)
-  )
+  if (has_separate) {
+    # Validate NEW and AOS distributions separately
+    validate_one_dist <- function(d, label) {
+      list(
+        sums_to_one = abs(sum(d$distribution) - 1.0) <= 0.001,
+        all_ages = length(unique(d$age)) >= 100,
+        both_sexes = all(c("male", "female") %in% unique(d$sex)),
+        no_negative = all(d$distribution >= 0)
+      )
+    }
+    new_checks <- validate_one_dist(projection_result$distributions$new, "NEW")
+    aos_checks <- validate_one_dist(projection_result$distributions$aos, "AOS")
 
-  check5_pass <- all(unlist(dist_checks))
-  checks$distribution <- list(
-    name = "Distribution properties",
-    passed = check5_pass,
-    details = dist_checks
-  )
+    check5_pass <- all(unlist(new_checks)) && all(unlist(aos_checks))
+    checks$distribution <- list(
+      name = "Distribution properties (separate NEW/AOS)",
+      passed = check5_pass,
+      details = list(new = new_checks, aos = aos_checks)
+    )
 
-  if (check5_pass) {
-    cli::cli_alert_success("Distribution valid: sums to 1, all ages 0-99, both sexes")
-    messages <- c(messages, "Distribution properties valid")
+    if (check5_pass) {
+      cli::cli_alert_success("NEW/AOS distributions valid: each sums to 1, all ages, both sexes, no negatives")
+      messages <- c(messages, "Distribution properties valid (separate)")
+    } else {
+      all_passed <- FALSE
+      new_failed <- names(new_checks)[!unlist(new_checks)]
+      aos_failed <- names(aos_checks)[!unlist(aos_checks)]
+      if (length(new_failed) > 0) cli::cli_alert_danger("NEW distribution issues: {paste(new_failed, collapse=', ')}")
+      if (length(aos_failed) > 0) cli::cli_alert_danger("AOS distribution issues: {paste(aos_failed, collapse=', ')}")
+      messages <- c(messages, "Distribution check FAILED")
+    }
   } else {
-    all_passed <- FALSE
-    failed <- names(dist_checks)[!unlist(dist_checks)]
-    cli::cli_alert_danger("Distribution issues: {paste(failed, collapse=', ')}")
-    messages <- c(messages, "Distribution check FAILED")
+    # Combined distribution mode
+    lpr_dist <- projection_result$distributions$lpr
+    dist_sum <- sum(lpr_dist$distribution)
+    ages_present <- length(unique(lpr_dist$age))
+    sexes_present <- unique(lpr_dist$sex)
+
+    dist_checks <- list(
+      sums_to_one = abs(dist_sum - 1.0) <= 0.001,
+      all_ages = ages_present >= 100,
+      both_sexes = all(c("male", "female") %in% sexes_present),
+      no_negative = all(lpr_dist$distribution >= 0)
+    )
+
+    check5_pass <- all(unlist(dist_checks))
+    checks$distribution <- list(
+      name = "Distribution properties",
+      passed = check5_pass,
+      details = dist_checks
+    )
+
+    if (check5_pass) {
+      cli::cli_alert_success("Distribution valid: sums to 1, all ages 0-99, both sexes")
+      messages <- c(messages, "Distribution properties valid")
+    } else {
+      all_passed <- FALSE
+      failed <- names(dist_checks)[!unlist(dist_checks)]
+      cli::cli_alert_danger("Distribution issues: {paste(failed, collapse=', ')}")
+      messages <- c(messages, "Distribution check FAILED")
+    }
   }
 
   # =========================================================================

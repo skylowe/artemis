@@ -377,11 +377,21 @@ create_immigration_targets <- function() {
     targets::tar_target(
       lpr_immigration_validation,
       {
-        # Handle both separate (list) and combined (data.table) distribution formats
-        lpr_dist_for_val <- if (is.list(lpr_distribution) && "combined_distribution" %in% names(lpr_distribution)) {
-          lpr_distribution$combined_distribution
+        # Build distributions list based on mode (separate vs combined)
+        if (is.list(lpr_distribution) && "new_distribution" %in% names(lpr_distribution)) {
+          dist_list <- list(
+            lpr = lpr_distribution$combined_distribution,
+            new = lpr_distribution$new_distribution,
+            aos = lpr_distribution$aos_distribution,
+            emigration = emigration_distribution
+          )
         } else {
-          lpr_distribution
+          lpr_dist_for_val <- if (is.list(lpr_distribution) && "combined_distribution" %in% names(lpr_distribution)) {
+            lpr_distribution$combined_distribution
+          } else {
+            lpr_distribution
+          }
+          dist_list <- list(lpr = lpr_dist_for_val, emigration = emigration_distribution)
         }
 
         projection_result <- list(
@@ -390,7 +400,7 @@ create_immigration_targets <- function() {
           aos = aos_projected,
           emigration = legal_emigration_projected,
           net_lpr = net_lpr_immigration,
-          distributions = list(lpr = lpr_dist_for_val, emigration = emigration_distribution),
+          distributions = dist_list,
           new_aos_ratio = new_aos_ratio,
           assumptions = lpr_assumptions
         )

@@ -788,14 +788,17 @@ beers_interpolate_immigration <- function(dist, max_age = 100) {
     group_1_4 <- regular[age_min == 1 & age_max == 4]
 
     if (nrow(group_0) > 0 && nrow(group_1_4) > 0) {
-      # Combine into 0-4
+      # Combine into 0-4 (include count if present in input)
       combined_0_4 <- data.table::data.table(
         age_min = 0L, age_max = 4L, sex = s,
         distribution = group_0$distribution + group_1_4$distribution
       )
+      if ("count" %in% names(regular)) {
+        combined_0_4[, count := group_0$count + group_1_4$count]
+      }
       # Replace the two groups
       regular <- regular[!(age_min == 0 & age_max == 0) & !(age_min == 1 & age_max == 4)]
-      regular <- rbind(combined_0_4, regular)
+      regular <- rbind(combined_0_4, regular, use.names = TRUE)
       data.table::setorder(regular, age_min)
     } else if (nrow(group_0) == 0 && nrow(group_1_4) == 0) {
       # Already has 0-4 combined, or starts at 0-4
