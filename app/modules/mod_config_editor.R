@@ -134,6 +134,12 @@ mod_config_editor_ui <- function(id) {
           ns("use_wonder_provisional"),
           "Use CDC WONDER Provisional Data",
           value = TRUE
+        ),
+
+        checkboxInput(
+          ns("hmd_calibration_enabled"),
+          "Apply HMD Calibration for Ages 85+",
+          value = TRUE
         )
       ),
 
@@ -267,6 +273,9 @@ mod_config_editor_server <- function(id, rv) {
       updateCheckboxInput(session, "use_wonder_provisional",
         value = config$mortality$use_wonder_provisional %||% TRUE)
 
+      updateCheckboxInput(session, "hmd_calibration_enabled",
+        value = config$mortality$hmd_calibration$enabled %||% TRUE)
+
       updateSelectInput(session, "distribution_method",
         selected = config$immigration$lpr$distribution_method %||% "tr_derived")
 
@@ -334,6 +343,11 @@ mod_config_editor_server <- function(id, rv) {
       config$mortality$ultimate_year <- input$mortality_ultimate_year
       config$mortality$starting_aax_method <- input$starting_aax_method
       config$mortality$use_wonder_provisional <- input$use_wonder_provisional
+
+      if (is.null(config$mortality$hmd_calibration)) {
+        config$mortality$hmd_calibration <- list()
+      }
+      config$mortality$hmd_calibration$enabled <- input$hmd_calibration_enabled
 
       config$immigration$va2_alternative <- input$immigration_scenario
       config$immigration$lpr$distribution_method <- input$distribution_method

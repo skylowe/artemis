@@ -190,14 +190,23 @@ create_mortality_targets <- function() {
       }
     ),
 
-    # Step 6b: Adjust qx for ages 85+ using HMD
+    # Step 6b: Adjust qx for ages 85+ using HMD (configurable)
     targets::tar_target(
       mortality_qx_historical,
-      adjust_qx_with_hmd(
-        qx = mortality_qx_unadjusted,
-        transition_age = 85,
-        max_age = 100
-      )
+      {
+        hmd_cfg <- config_assumptions$mortality$hmd_calibration
+        use_hmd <- hmd_cfg$enabled %||% TRUE
+        if (use_hmd) {
+          adjust_qx_with_hmd(
+            qx = mortality_qx_unadjusted,
+            transition_age = hmd_cfg$transition_age %||% 85L,
+            max_age = 100
+          )
+        } else {
+          cli::cli_alert_info("HMD calibration disabled — using raw qx for all ages")
+          mortality_qx_unadjusted
+        }
+      }
     ),
 
     # Step 6c: Compute infant separation factor (f0) from actual death timing
@@ -246,7 +255,18 @@ create_mortality_targets <- function() {
           qx_proj <- qx_proj[age <= 100]
           return(qx_proj)
         }
-        qx_adjusted <- adjust_qx_with_hmd(qx = qx_proj, transition_age = 85, max_age = 100)
+        hmd_cfg <- config_assumptions$mortality$hmd_calibration
+        use_hmd <- hmd_cfg$enabled %||% TRUE
+        if (use_hmd) {
+          qx_adjusted <- adjust_qx_with_hmd(
+            qx = qx_proj,
+            transition_age = hmd_cfg$transition_age %||% 85L,
+            max_age = 100
+          )
+        } else {
+          cli::cli_alert_info("HMD calibration disabled for projected qx — using raw values")
+          qx_adjusted <- qx_proj
+        }
 
         # Extend f0 to cover projected years using last historical value
         proj_years <- sort(unique(qx_adjusted$year))

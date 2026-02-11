@@ -109,6 +109,16 @@ mortality:
   # Set to false if final NCHS microdata is available for that year.
   use_wonder_provisional: true
 
+  # HMD calibration for elderly mortality (ages 85+)
+  # Adjusts qx at ages 85-99 using Human Mortality Database mortality ratios
+  # anchored at age 84. This compensates for unreliable NCHS/Census data at
+  # advanced ages (CMS Medicare data used by TR2025 is not publicly available).
+  # Set to false to use raw NCHS/Census-derived qx at all ages.
+  hmd_calibration:
+    enabled: true
+    transition_age: 85       # Age at which HMD adjustment begins
+    reference_year: 2019     # HMD reference year for ratio calculation
+
   # Marital mortality differentials
   # TR2025 Section 1.2.c: reference years for calculating marital mortality factors
   marital_reference_years: [2015, 2016, 2017, 2018, 2019]

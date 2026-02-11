@@ -89,6 +89,11 @@ validate_config <- function(config) {
     if (!is.null(method) && !method %in% c("regression", "tr_qx")) {
       errors <- c(errors, paste("Invalid starting_aax_method:", method))
     }
+
+    hmd_cfg <- config$mortality$hmd_calibration
+    if (!is.null(hmd_cfg$enabled) && !is.logical(hmd_cfg$enabled)) {
+      errors <- c(errors, "hmd_calibration.enabled must be TRUE or FALSE")
+    }
   }
 
   # Validate immigration
