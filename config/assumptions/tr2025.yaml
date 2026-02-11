@@ -552,7 +552,7 @@ data_sources:
   #
   # TR2025 appears to use factors closer to PES methodology, resulting in
   # higher population for ages 18-24 than Census DA would suggest.
-  census_undercount_method: "none"
+  census_undercount_method: "DA"
 
   # PES-based undercount factors by age group (used when census_undercount_method = "PES")
   # Source: Census Bureau Post-Enumeration Survey, 2020 Census
@@ -571,3 +571,126 @@ data_sources:
     age_30_49_male: 0.01   # 1.5% undercount (estimated)
     age_30_49_female: 0.005  # 0.5% undercount (estimated)
     age_50_plus: -0.005  # 0.5% overcount (slight overcount for older ages)
+
+# =========================================================================
+# Historical Population Configuration (TR2025 Section 1.4)
+# =========================================================================
+# Source: SSA 2025 Long-Range Model Documentation, Section 1.4
+# All constants previously hardcoded in historical population R files.
+
+historical_population:
+  # Maximum single year of age tracked (100 represents 100+)
+  max_age: 100
+
+  # Tab years: benchmark years with direct population estimates
+  # Inter-tab years are interpolated using component method with closure ratios
+  tab_years:
+    early: [1940, 1950, 1956, 1960]
+    annual_range: [1969, 2009]  # every year from 1969 through 2009
+    final: [2022]              # last historical year for TR2025
+
+  # =========================================================================
+  # Overseas Population Distributions
+  # =========================================================================
+  # Parameters for distributing aggregate overseas population totals
+  # across single years of age and sex using Normal distributions.
+  # Source: TR2025 Section 1.4, Equations 1.4.1
+  overseas_distributions:
+    federal_armed_forces:
+      mean_age: 35
+      sd_age: 12
+      male_share: 0.65
+      min_age: 18
+      max_age_cutoff: 65
+    beneficiaries:
+      mean_age: 72
+      sd_age: 10
+      male_share: 0.45
+      min_age_cutoff: 50
+    dependents:
+      mean_age: 25
+      sd_age: 20
+      male_share: 0.50
+    other_citizens:
+      mean_age: 45
+      sd_age: 18
+      male_share: 0.50
+
+  # =========================================================================
+  # Other Citizens Overseas Estimate
+  # =========================================================================
+  # Source: SSA Actuarial Study No. 112, Table 1
+  # OTH = base_value * (0.5 + growth_dampening * (current_pop / base_pop))
+  other_citizens_overseas:
+    base_year: 1990
+    base_value: 525000
+    growth_dampening: 0.5
+
+  # =========================================================================
+  # Dependent Ratio
+  # =========================================================================
+  # Dependents = dependent_ratio * (armed_forces_overseas + fed_employees_overseas)
+  # Source: TR2025 Section 1.4
+  dependent_ratio: 0.50
+
+  # =========================================================================
+  # O-Population (Temporary/Unlawfully Present) Parameters
+  # =========================================================================
+  # Source: TR2025 Section 1.4, Equation 1.4.3
+  o_population:
+    # Method for computing O-population stock
+    # "va2_flows": Build stock from V.A2 net O flows (current default)
+    # "residual": Back out from population accounting identity (TR2025 methodology)
+    method: "va2_flows"
+
+    # Sex split for O-population (DHS unauthorized estimates)
+    male_share: 0.57
+
+    # Age distribution weights for O-population
+    # Based on DHS/CMS unauthorized population estimates
+    # Each weight applies uniformly to all single-year ages within the group
+    # Weights are raw (not normalized); code normalizes to sum to 1
+    age_distribution:
+      age_0_4: 0.002       # Very few young children
+      age_5_9: 0.005       # Some children
+      age_10_14: 0.008     # Older children
+      age_15_17: 0.015     # Teenagers
+      age_18_19: 0.020     # Young adults
+      age_20_24: 0.025     # 20-24
+      age_25_29: 0.035     # 25-29 peak
+      age_30_34: 0.040     # 30-34 peak
+      age_35_39: 0.035     # 35-39
+      age_40_44: 0.025     # 40-44
+      age_45_49: 0.018     # 45-49
+      age_50_54: 0.012     # 50-54
+      age_55_59: 0.008     # 55-59
+      age_60_64: 0.005     # 60-64
+      age_65_69: 0.003     # 65-69
+      age_70_79: 0.001     # 70-79
+      age_80_plus: 0.0005  # 80+
+
+    # Emigration as fraction of LPR immigration (for O-population calculation)
+    emigration_ratio: 0.25
+
+    # Adjustment of Status as fraction of LPR immigration
+    aos_ratio: 0.40
+
+  # =========================================================================
+  # Territory Age Distribution Parameters
+  # =========================================================================
+  # Used to distribute territory population totals across ages
+  # when single-year-of-age data is not available (pre-IDB years)
+  territory_age_distribution:
+    young_children_weight: 0.07     # age < 5
+    children_weight: 0.065          # age 5-17
+    working_age_base_weight: 0.055  # age 18-64 base
+    working_age_decay: 0.01         # exponential decay rate
+    working_age_center: 30          # center age for decay
+    elderly_base_weight: 0.03       # age 65+ base
+    elderly_decay: 0.03             # exponential decay rate
+    male_share_under_65: 0.51
+    male_share_65_plus: 0.45
+
+  # Per TR2025 documentation: "2020 data is assumed to be the same as 2010
+  # until the data is available to OCACT."
+  armed_forces_territories_2020_equals_2010: true

@@ -122,8 +122,8 @@ calculate_historical_population <- function(start_year = 1940,
     return(result)
   }
 
-  # Get tab years
-  tab_years <- get_tab_years()
+  # Get tab years (from config if available)
+  tab_years <- get_tab_years(config)
   tab_years <- tab_years[tab_years >= start_year & tab_years <= end_year]
 
   cli::cli_alert_info("Estimating population for {start_year}-{end_year}")
@@ -143,7 +143,8 @@ calculate_historical_population <- function(start_year = 1940,
   tab_pop_0_84 <- calculate_tab_year_populations(
     tab_years = tab_years,
     components = components,
-    ages = 0:84
+    ages = 0:84,
+    config = config
   )
 
   # Step 3: Build up ages 85+ for tab years
@@ -164,7 +165,8 @@ calculate_historical_population <- function(start_year = 1940,
     tab_year_pops = tab_pop,
     tab_years = tab_years,
     target_years = start_year:end_year,
-    components = components
+    components = components,
+    config = config
   )
 
   # Summary statistics
@@ -175,7 +177,7 @@ calculate_historical_population <- function(start_year = 1940,
   cli::cli_alert_info("{end_year} total: {format(total_by_year[year == max(year), total], big.mark = ',', scientific = FALSE)}")
 
   # Compute component totals by year for analysis
-  component_totals <- compute_component_totals(components)
+  component_totals <- compute_component_totals(components, config)
 
   # Save to cache (both population and components)
   cache_data <- list(
@@ -233,7 +235,7 @@ get_cached_components <- function(start_year = 1940,
 #' @return data.table with component totals by year
 #'
 #' @keywords internal
-compute_component_totals <- function(components) {
+compute_component_totals <- function(components, config = NULL) {
   # Census USAF totals
   usaf <- components$census_usaf[, .(census_usaf = sum(population)), by = year]
 
@@ -259,11 +261,15 @@ compute_component_totals <- function(components) {
   # Armed forces
   af <- components$armed_forces[, .(armed_forces = sum(population)), by = year]
 
-  # Dependents = 0.5 * (armed_forces + fed_employees)
+  # Dependents = dependent_ratio * (armed_forces + fed_employees)
+  if (is.null(config$historical_population$dependent_ratio)) {
+    cli::cli_abort("Config missing {.field historical_population.dependent_ratio}")
+  }
+  dep_ratio <- config$historical_population$dependent_ratio
   deps <- merge(af, fed, by = "year", all = TRUE)
   deps[is.na(fed_employees), fed_employees := 0]
   deps[is.na(armed_forces), armed_forces := 0]
-  deps[, dependents := 0.5 * (armed_forces + fed_employees)]
+  deps[, dependents := dep_ratio * (armed_forces + fed_employees)]
 
   # Combine all
   all_comp <- Reduce(function(x, y) merge(x, y, by = "year", all = TRUE),
@@ -311,7 +317,7 @@ gather_population_components <- function(years,
 
   # 2. Territory populations
   cli::cli_alert("Fetching territory populations...")
-  components$territories <- fetch_territory_for_historical(years, ages, cache_dir)
+  components$territories <- fetch_territory_for_historical(years, ages, cache_dir, config)
 
   # 3. Census undercount factors
   cli::cli_alert("Fetching census undercount factors...")
@@ -327,7 +333,7 @@ gather_population_components <- function(years,
 
   # 6. Other citizens overseas (Americans abroad estimate)
   cli::cli_alert("Fetching other citizens overseas estimate...")
-  components$other_overseas <- get_other_citizens_overseas(years)
+  components$other_overseas <- get_other_citizens_overseas(years, config)
 
   # 7. Armed forces overseas (for dependents calculation)
   cli::cli_alert("Fetching armed forces overseas data...")
@@ -664,7 +670,7 @@ generate_demographic_age_distribution <- function(ages, params, census_year) {
 #' historical decennial census data with interpolation for pre-1990.
 #'
 #' @keywords internal
-fetch_territory_for_historical <- function(years, ages, cache_dir) {
+fetch_territory_for_historical <- function(years, ages, cache_dir, config = NULL) {
   territories <- c("PR", "VI", "GU", "MP", "AS")
   ss_start_years <- sapply(territories, get_territory_ss_start_year)
 
@@ -688,7 +694,7 @@ fetch_territory_for_historical <- function(years, ages, cache_dir) {
 
     # Pre-IDB: Use historical decennial data with interpolation
     if (length(interpolation_years) > 0) {
-      interp_pop <- get_territory_population_interpolated(terr, interpolation_years, ages)
+      interp_pop <- get_territory_population_interpolated(terr, interpolation_years, ages, config)
       if (!is.null(interp_pop) && nrow(interp_pop) > 0) {
         interp_pop[, territory := terr]
         result_list[[paste0(terr, "_interp")]] <- interp_pop
@@ -753,7 +759,7 @@ fetch_territory_for_historical <- function(years, ages, cache_dir) {
 #' Used as fallback when IDB API doesn't have data for a territory/year.
 #'
 #' @keywords internal
-get_territory_population_interpolated <- function(territory, years, ages) {
+get_territory_population_interpolated <- function(territory, years, ages, config = NULL) {
   # Get historical territory data (decennial census totals)
   hist_data <- get_territory_historical_population()
   target_terr <- territory
@@ -784,7 +790,7 @@ get_territory_population_interpolated <- function(territory, years, ages) {
     }
 
     # Distribute across ages using standard age distribution
-    distribute_population_by_age(total_pop, yr, ages)
+    distribute_population_by_age(total_pop, yr, ages, config)
   })
 
   data.table::rbindlist(result_list)
@@ -797,20 +803,41 @@ get_territory_population_interpolated <- function(territory, years, ages) {
 #' demographic age distribution typical for the era.
 #'
 #' @keywords internal
-distribute_population_by_age <- function(total_pop, year, ages) {
-  # Use a typical demographic age distribution
-  # Younger populations in earlier years, aging over time
+distribute_population_by_age <- function(total_pop, year, ages, config = NULL) {
+  # Read territory age distribution parameters from config
+  terr_cfg <- config$historical_population$territory_age_distribution
+  if (is.null(terr_cfg)) {
+    cli::cli_abort("Config missing {.field historical_population.territory_age_distribution}")
+  }
 
-  # Create age weights based on a modified Gompertz-like curve
+  required_terr_fields <- c("young_children_weight", "children_weight",
+    "working_age_base_weight", "working_age_decay", "working_age_center",
+    "elderly_base_weight", "elderly_decay", "male_share_under_65", "male_share_65_plus")
+  missing <- setdiff(required_terr_fields, names(terr_cfg))
+  if (length(missing) > 0) {
+    cli::cli_abort("Config missing territory_age_distribution fields: {.field {missing}}")
+  }
+
+  young_wt <- terr_cfg$young_children_weight
+  child_wt <- terr_cfg$children_weight
+  work_base <- terr_cfg$working_age_base_weight
+  work_decay <- terr_cfg$working_age_decay
+  work_center <- terr_cfg$working_age_center
+  eld_base <- terr_cfg$elderly_base_weight
+  eld_decay <- terr_cfg$elderly_decay
+  male_u65 <- terr_cfg$male_share_under_65
+  male_65p <- terr_cfg$male_share_65_plus
+
+  # Create age weights based on demographic age distribution
   age_weights <- sapply(ages, function(a) {
     if (a < 5) {
-      0.07  # Young children
+      young_wt
     } else if (a < 18) {
-      0.065  # Children/teens
+      child_wt
     } else if (a < 65) {
-      0.055 * exp(-0.01 * (a - 30))  # Working age
+      work_base * exp(-work_decay * (a - work_center))
     } else {
-      0.03 * exp(-0.03 * (a - 65))  # Elderly
+      eld_base * exp(-eld_decay * (a - 65))
     }
   })
 
@@ -818,7 +845,7 @@ distribute_population_by_age <- function(total_pop, year, ages) {
   age_weights <- age_weights / sum(age_weights)
 
   # Split by sex (roughly equal with slight female majority at older ages)
-  male_share <- ifelse(ages < 65, 0.51, 0.45)
+  male_share <- ifelse(ages < 65, male_u65, male_65p)
 
   data.table::data.table(
     year = year,
@@ -954,27 +981,35 @@ fetch_beneficiaries_for_historical <- function(years) {
 #' US resident population growth.
 #'
 #' @keywords internal
-get_other_citizens_overseas <- function(years) {
+get_other_citizens_overseas <- function(years, config = NULL) {
   # Most Americans abroad are NOT part of the SS Area population
   # The "OTH" component is a small residual, not the full 9M Americans abroad
 
-  # Base: 525,000 in 1990, scaled by US resident population growth
-  # Source: SSA Actuarial Study No. 112, Table 1
-  # https://www.ssa.gov/oact/NOTES/AS112/as112.html
-  # "Other U.S. citizens abroad" = 525,000 for 1990
-  base_1990 <- 525000
+  # Read from config
+  oth_cfg <- config$historical_population$other_citizens_overseas
+  if (is.null(oth_cfg)) {
+    cli::cli_abort("Config missing {.field historical_population.other_citizens_overseas}")
+  }
+  required_oth_fields <- c("base_year", "base_value", "growth_dampening")
+  missing <- setdiff(required_oth_fields, names(oth_cfg))
+  if (length(missing) > 0) {
+    cli::cli_abort("Config missing other_citizens_overseas fields: {.field {missing}}")
+  }
+  base_year <- oth_cfg$base_year
+  base_value <- oth_cfg$base_value
+  growth_dampening <- oth_cfg$growth_dampening
 
   # Get US resident population for every year
   yearly_pop <- get_us_resident_population_by_year(years)
-  pop_1990 <- get_us_resident_population_by_year(1990)[, population]
+  pop_base <- get_us_resident_population_by_year(base_year)[, population]
 
-  # Scale OTH at HALF the rate of population growth vs 1990
-  # Formula: OTH = base * (1 + 0.5 * (pop_ratio - 1))
-  #        = base * (0.5 + 0.5 * pop_ratio)
-  # This means if population grows 10%, OTH grows only 5%
+  # Scale OTH at dampened rate of population growth vs base year
+  # Formula: OTH = base_value * (growth_dampening + growth_dampening * pop_ratio)
+  #        = base_value * growth_dampening * (1 + pop_ratio)
+  # Default: OTH = 525K * (0.5 + 0.5 * pop/pop_1990)
   result <- yearly_pop[, .(
     year = year,
-    other_overseas = base_1990 * (0.5 + 0.5 * (population / pop_1990))
+    other_overseas = base_value * (growth_dampening + growth_dampening * (population / pop_base))
   )]
 
   result
@@ -1231,7 +1266,18 @@ load_births_data <- function() {
 #' @keywords internal
 calculate_tab_year_populations <- function(tab_years,
                                             components,
-                                            ages = 0:84) {
+                                            ages = 0:84,
+                                            config = NULL) {
+  # Read parameters from config
+  if (is.null(config$historical_population$dependent_ratio)) {
+    cli::cli_abort("Config missing {.field historical_population.dependent_ratio}")
+  }
+  dep_ratio <- config$historical_population$dependent_ratio
+  overseas_cfg <- config$historical_population$overseas_distributions
+  if (is.null(overseas_cfg)) {
+    cli::cli_abort("Config missing {.field historical_population.overseas_distributions}")
+  }
+
   result_list <- lapply(tab_years, function(yr) {
     cli::cli_alert("  Tab year {yr}...")
 
@@ -1269,28 +1315,28 @@ calculate_tab_year_populations <- function(tab_years,
     # Add federal employees (distributed by age using armed forces distribution)
     fed_total <- components$fed_employees[year == yr, employees_overseas]
     if (length(fed_total) == 0 || is.na(fed_total)) fed_total <- 0
-    pop[, fed_emp := distribute_overseas_by_age(fed_total, age, sex, "federal")]
+    pop[, fed_emp := distribute_overseas_by_age(fed_total, age, sex, "federal", overseas_cfg)]
 
-    # Calculate dependents (50% of armed forces + federal employees)
+    # Calculate dependents (dependent_ratio * (armed forces + federal employees))
     # Armed forces data is already by age/sex, sum to get total
     af_total <- components$armed_forces[year == yr, sum(population, na.rm = TRUE)]
     if (length(af_total) == 0 || is.na(af_total)) af_total <- 0
-    dep_total <- 0.5 * (af_total + fed_total)
-    pop[, dependents := distribute_overseas_by_age(dep_total, age, sex, "dependents")]
+    dep_total <- dep_ratio * (af_total + fed_total)
+    pop[, dependents := distribute_overseas_by_age(dep_total, age, sex, "dependents", overseas_cfg)]
 
     # Add beneficiaries abroad
     ben_total <- components$beneficiaries[year == yr, total_beneficiaries]
     if (length(ben_total) == 0) {
       cli::cli_abort("SSA beneficiaries data missing for year {yr}")
     }
-    pop[, beneficiaries := distribute_overseas_by_age(ben_total, age, sex, "beneficiaries")]
+    pop[, beneficiaries := distribute_overseas_by_age(ben_total, age, sex, "beneficiaries", overseas_cfg)]
 
     # Add other citizens overseas
     oth_total <- components$other_overseas[year == yr, other_overseas]
     if (length(oth_total) == 0) {
       cli::cli_abort("Other overseas citizens estimate missing for year {yr}")
     }
-    pop[, other_overseas := distribute_overseas_by_age(oth_total, age, sex, "other")]
+    pop[, other_overseas := distribute_overseas_by_age(oth_total, age, sex, "other", overseas_cfg)]
 
     # Calculate total population (Eq 1.4.1)
     pop[, population := usaf_pop + uc_adjustment + territory_pop +
@@ -1316,39 +1362,60 @@ calculate_tab_year_populations <- function(tab_years,
 #' typical age distributions for different overseas populations.
 #'
 #' @keywords internal
-distribute_overseas_by_age <- function(total, age, sex, pop_type) {
+distribute_overseas_by_age <- function(total, age, sex, pop_type, overseas_cfg = NULL) {
   if (total == 0) return(rep(0, length(age)))
 
-  # Age distribution depends on population type
-  if (pop_type == "federal" || pop_type == "armed_forces") {
-    # Working age concentration (20-60)
-    props <- dnorm(age, mean = 35, sd = 12)
-    props[age < 18] <- 0
-    props[age > 65] <- props[age > 65] * 0.1  # Few retirees overseas
+  # Map pop_type to config key
+  cfg_key <- switch(pop_type,
+    "federal" = "federal_armed_forces",
+    "armed_forces" = "federal_armed_forces",
+    "beneficiaries" = "beneficiaries",
+    "dependents" = "dependents",
+    "other" = "other_citizens",
+    NULL
+  )
+
+  # Read parameters from config — no fallback defaults
+  if (is.null(overseas_cfg) || is.null(cfg_key) || is.null(overseas_cfg[[cfg_key]])) {
+    cli::cli_abort(c(
+      "Config missing overseas distribution for {.val {pop_type}}",
+      "i" = "Expected config at {.field historical_population.overseas_distributions.{cfg_key}}"
+    ))
+  }
+  cfg <- overseas_cfg[[cfg_key]]
+  required_fields <- c("mean_age", "sd_age", "male_share")
+  missing <- setdiff(required_fields, names(cfg))
+  if (length(missing) > 0) {
+    cli::cli_abort("Config missing {.field {cfg_key}} fields: {.field {missing}}")
+  }
+  mean_age <- cfg$mean_age
+  sd_age <- cfg$sd_age
+  male_share <- cfg$male_share
+
+  # Age distribution using Normal curve
+  props <- dnorm(age, mean = mean_age, sd = sd_age)
+
+  # Apply cutoffs for specific population types
+  if (pop_type %in% c("federal", "armed_forces")) {
+    min_age_cut <- cfg$min_age
+    max_age_cut <- cfg$max_age_cutoff
+    if (is.null(min_age_cut) || is.null(max_age_cut)) {
+      cli::cli_abort("Config missing {.field federal_armed_forces.min_age} or {.field max_age_cutoff}")
+    }
+    props[age < min_age_cut] <- 0
+    props[age > max_age_cut] <- props[age > max_age_cut] * 0.1
   } else if (pop_type == "beneficiaries") {
-    # Elderly concentration (mostly 62+)
-    props <- dnorm(age, mean = 72, sd = 10)
-    props[age < 50] <- props[age < 50] * 0.1
+    min_age_cut <- cfg$min_age_cutoff
+    if (is.null(min_age_cut)) {
+      cli::cli_abort("Config missing {.field beneficiaries.min_age_cutoff}")
+    }
+    props[age < min_age_cut] <- props[age < min_age_cut] * 0.1
   } else if (pop_type == "dependents") {
-    # Mix of children and spouses
-    props <- dnorm(age, mean = 25, sd = 20)
     props[age < 0] <- 0
-  } else {
-    # Other (expats) - broad distribution
-    props <- dnorm(age, mean = 45, sd = 18)
   }
 
   # Normalize and apply
   props <- props / sum(props)
-
-  # Split by sex (slightly more male for working-age groups)
-  if (pop_type %in% c("federal", "armed_forces")) {
-    male_share <- 0.65
-  } else if (pop_type == "beneficiaries") {
-    male_share <- 0.45  # More female beneficiaries
-  } else {
-    male_share <- 0.50
-  }
 
   sex_adj <- ifelse(sex == "male", male_share, 1 - male_share) * 2
 
@@ -1536,7 +1603,8 @@ estimate_85plus_from_1940 <- function(year, dist_1940, max_age) {
 interpolate_populations <- function(tab_year_pops,
                                      tab_years,
                                      target_years,
-                                     components) {
+                                     components,
+                                     config = NULL) {
   # Identify which years are tab years vs need interpolation
   non_tab_years <- target_years[!target_years %in% tab_years]
 
@@ -1584,30 +1652,40 @@ interpolate_populations <- function(tab_year_pops,
           pop[, territory_pop := 0]
         }
 
+        # Read config parameters for overseas distributions
+        if (is.null(config$historical_population$dependent_ratio)) {
+          cli::cli_abort("Config missing {.field historical_population.dependent_ratio}")
+        }
+        dep_ratio <- config$historical_population$dependent_ratio
+        overseas_cfg <- config$historical_population$overseas_distributions
+        if (is.null(overseas_cfg)) {
+          cli::cli_abort("Config missing {.field historical_population.overseas_distributions}")
+        }
+
         # Add federal employees (distributed by age using armed forces distribution)
         fed_total <- components$fed_employees[year == yr, employees_overseas]
         if (length(fed_total) == 0 || is.na(fed_total)) fed_total <- 0
-        pop[, fed_emp := distribute_overseas_by_age(fed_total, age, sex, "federal")]
+        pop[, fed_emp := distribute_overseas_by_age(fed_total, age, sex, "federal", overseas_cfg)]
 
-        # Calculate dependents (50% of armed forces + federal employees)
+        # Calculate dependents (dependent_ratio * (armed forces + federal employees))
         af_total <- components$armed_forces[year == yr, sum(population, na.rm = TRUE)]
         if (length(af_total) == 0 || is.na(af_total)) af_total <- 0
-        dep_total <- 0.5 * (af_total + fed_total)
-        pop[, dependents := distribute_overseas_by_age(dep_total, age, sex, "dependents")]
+        dep_total <- dep_ratio * (af_total + fed_total)
+        pop[, dependents := distribute_overseas_by_age(dep_total, age, sex, "dependents", overseas_cfg)]
 
         # Add beneficiaries abroad
         ben_total <- components$beneficiaries[year == yr, total_beneficiaries]
         if (length(ben_total) == 0) {
           cli::cli_abort("SSA beneficiaries data missing for year {yr}")
         }
-        pop[, beneficiaries := distribute_overseas_by_age(ben_total, age, sex, "beneficiaries")]
+        pop[, beneficiaries := distribute_overseas_by_age(ben_total, age, sex, "beneficiaries", overseas_cfg)]
 
         # Add other citizens overseas
         oth_total <- components$other_overseas[year == yr, other_overseas]
         if (length(oth_total) == 0) {
           cli::cli_abort("Other overseas citizens estimate missing for year {yr}")
         }
-        pop[, other_overseas := distribute_overseas_by_age(oth_total, age, sex, "other")]
+        pop[, other_overseas := distribute_overseas_by_age(oth_total, age, sex, "other", overseas_cfg)]
 
         # Calculate total population (Eq 1.4.1) - same as tab year
         pop[, population := usaf_pop + uc_adjustment + territory_pop +

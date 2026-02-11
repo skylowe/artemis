@@ -825,6 +825,7 @@ calculate_historical_population_marital <- function(total_pop,
                                                     start_year = 1940,
                                                     end_year = 2022,
                                                     ages = 14:100,
+                                                    config = NULL,
                                                     use_cache = TRUE,
                                                     cache_dir = here::here("data/cache"),
                                                     include_same_sex = TRUE) {
@@ -892,8 +893,24 @@ calculate_historical_population_marital <- function(total_pop,
     yr_pop <- balance_married_populations(yr_pop, year = yr)
 
     # Incorporate same-sex marriage for 2013+
-    if (include_same_sex && yr >= 2013) {
-      yr_pop <- incorporate_same_sex_marriage(yr_pop, year = yr)
+    # Read same-sex start year and percentages from config
+    ss_cfg <- config$projected_population$population_status
+    if (is.null(ss_cfg)) {
+      cli::cli_abort("Config missing {.field projected_population.population_status}")
+    }
+    required_ss_fields <- c("same_sex_start_year", "gay_percent", "lesbian_percent")
+    missing <- setdiff(required_ss_fields, names(ss_cfg))
+    if (length(missing) > 0) {
+      cli::cli_abort("Config missing population_status fields: {.field {missing}}")
+    }
+    ss_start <- ss_cfg$same_sex_start_year
+    gay_pct <- ss_cfg$gay_percent
+    lesbian_pct <- ss_cfg$lesbian_percent
+
+    if (include_same_sex && yr >= ss_start) {
+      yr_pop <- incorporate_same_sex_marriage(yr_pop, year = yr,
+                                              gay_pct = gay_pct,
+                                              lesbian_pct = lesbian_pct)
     } else {
       yr_pop[, orientation := "heterosexual"]
     }

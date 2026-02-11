@@ -979,24 +979,26 @@ get_ss_area_adjustments <- function(year) {
 #' Section V.A: Historical Population Methodology.
 #'
 #' @export
-get_tab_years <- function() {
-  c(
-    1940, 1950, 1956, 1960,
-    1969:2009,
-    2022  # Last historical year for TR2025
-  )
+get_tab_years <- function(config = NULL) {
+  # Read tab years from config
+  if (is.null(config) || is.null(config$historical_population$tab_years)) {
+    cli::cli_abort(c(
+      "Config missing {.field historical_population.tab_years}",
+      "i" = "Ensure config is passed to {.fn get_tab_years}"
+    ))
+  }
+  tab_cfg <- config$historical_population$tab_years
+  required_keys <- c("early", "annual_range", "final")
+  missing <- setdiff(required_keys, names(tab_cfg))
+  if (length(missing) > 0) {
+    cli::cli_abort("Config missing tab_years fields: {.field {missing}}")
+  }
+  early <- tab_cfg$early
+  annual <- seq(tab_cfg$annual_range[1], tab_cfg$annual_range[2])
+  final <- tab_cfg$final
+  sort(unique(c(early, annual, final)))
 }
 
-#' Check if a year is a tab year
-#'
-#' @param year Integer: year to check
-#'
-#' @return Logical: TRUE if year is a tab year
-#'
-#' @export
-is_tab_year <- function(year) {
-  year %in% get_tab_years()
-}
 
 # =============================================================================
 # DOCUMENTATION FUNCTIONS

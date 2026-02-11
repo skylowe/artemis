@@ -54,7 +54,8 @@ NULL
 #' @export
 calculate_historical_temp_unlawful <- function(start_year = 1940,
                                                 end_year = 2022,
-                                                ages = 0:99,
+                                                ages = 0:100,
+                                                config = NULL,
                                                 use_cache = TRUE,
                                                 cache_dir = here::here("data/cache")) {
   cli::cli_h1("Calculating Temporary/Unlawfully Present Population (Eq 1.4.3)")
@@ -92,7 +93,7 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
 
   # Step 2: Get age-sex distribution for O population
   cli::cli_h2("Step 2: Getting Age-Sex Distribution")
-  age_sex_dist <- get_o_age_sex_distribution(ages)
+  age_sex_dist <- get_o_age_sex_distribution(ages, config)
   cli::cli_alert_info("Distribution covers {nrow(age_sex_dist)} age-sex cells")
 
   # Step 3: Load mortality data
@@ -163,45 +164,75 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
 #' - Few elderly (unauthorized immigration is recent phenomenon)
 #'
 #' @keywords internal
-get_o_age_sex_distribution <- function(ages = 0:99) {
-  # DHS unauthorized age distribution (approximate from CMS/DHS estimates)
-  # Under 18: ~8% (mostly entered as minors with parents)
-  # 18-24: ~12%
-  # 25-34: ~28%
-  # 35-44: ~25%
-  # 45-54: ~15%
-  # 55-64: ~8%
-  # 65+: ~4%
+get_o_age_sex_distribution <- function(ages = 0:100, config = NULL) {
+  # Read O-population distribution parameters from config
+  o_cfg <- config$historical_population$o_population
+  if (is.null(o_cfg)) {
+    cli::cli_abort("Config missing {.field historical_population.o_population}")
+  }
+
+  # Age distribution weights from config
+  age_dist <- o_cfg$age_distribution
+  if (is.null(age_dist)) {
+    cli::cli_abort("Config missing {.field historical_population.o_population.age_distribution}")
+  }
+  required_age_keys <- c("age_0_4", "age_5_9", "age_10_14", "age_15_17", "age_18_19",
+    "age_20_24", "age_25_29", "age_30_34", "age_35_39", "age_40_44", "age_45_49",
+    "age_50_54", "age_55_59", "age_60_64", "age_65_69", "age_70_79", "age_80_plus")
+  missing <- setdiff(required_age_keys, names(age_dist))
+  if (length(missing) > 0) {
+    cli::cli_abort("Config missing o_population.age_distribution keys: {.field {missing}}")
+  }
+  wt_0_4   <- age_dist$age_0_4
+  wt_5_9   <- age_dist$age_5_9
+  wt_10_14 <- age_dist$age_10_14
+  wt_15_17 <- age_dist$age_15_17
+  wt_18_19 <- age_dist$age_18_19
+  wt_20_24 <- age_dist$age_20_24
+  wt_25_29 <- age_dist$age_25_29
+  wt_30_34 <- age_dist$age_30_34
+  wt_35_39 <- age_dist$age_35_39
+  wt_40_44 <- age_dist$age_40_44
+  wt_45_49 <- age_dist$age_45_49
+  wt_50_54 <- age_dist$age_50_54
+  wt_55_59 <- age_dist$age_55_59
+  wt_60_64 <- age_dist$age_60_64
+  wt_65_69 <- age_dist$age_65_69
+  wt_70_79 <- age_dist$age_70_79
+  wt_80_pl <- age_dist$age_80_plus
 
   dist <- data.table::data.table(age = ages)
 
-  # Create distribution
+  # Create distribution from config weights
   dist[, raw_prop := data.table::fcase(
-    age < 5, 0.002,      # Very few young children
-    age < 10, 0.005,     # Some children
-    age < 15, 0.008,     # Some older children
-    age < 18, 0.015,     # Teenagers
-    age < 20, 0.020,     # Young adults
-    age < 25, 0.025,     # 20-24
-    age < 30, 0.035,     # 25-29 peak
-    age < 35, 0.040,     # 30-34 peak
-    age < 40, 0.035,     # 35-39
-    age < 45, 0.025,     # 40-44
-    age < 50, 0.018,     # 45-49
-    age < 55, 0.012,     # 50-54
-    age < 60, 0.008,     # 55-59
-    age < 65, 0.005,     # 60-64
-    age < 70, 0.003,     # 65-69
-    age < 80, 0.001,     # 70-79
-    default = 0.0005     # 80+
+    age < 5, wt_0_4,
+    age < 10, wt_5_9,
+    age < 15, wt_10_14,
+    age < 18, wt_15_17,
+    age < 20, wt_18_19,
+    age < 25, wt_20_24,
+    age < 30, wt_25_29,
+    age < 35, wt_30_34,
+    age < 40, wt_35_39,
+    age < 45, wt_40_44,
+    age < 50, wt_45_49,
+    age < 55, wt_50_54,
+    age < 60, wt_55_59,
+    age < 65, wt_60_64,
+    age < 70, wt_65_69,
+    age < 80, wt_70_79,
+    default = wt_80_pl
   )]
 
   # Normalize to sum to 1
   dist[, raw_prop := raw_prop / sum(raw_prop)]
 
-  # Split by sex (approximately 57% male, 43% female per DHS)
-  male_share <- 0.57
-  female_share <- 0.43
+  # Split by sex from config
+  if (is.null(o_cfg$male_share)) {
+    cli::cli_abort("Config missing {.field historical_population.o_population.male_share}")
+  }
+  male_share <- o_cfg$male_share
+  female_share <- 1 - male_share
 
   male_dist <- data.table::copy(dist)
   male_dist[, sex := "male"]
@@ -283,11 +314,20 @@ build_o_stock_from_flows <- function(o_flows,
     # Calculate new stock for each age-sex
     new_pop_list <- list()
 
+    max_age <- max(ages)
+
     for (s in c("male", "female")) {
       for (a in ages) {
         # Previous year's population at age a-1 (for aging)
         if (a == 0) {
           prev_pop <- 0  # O population at birth is 0
+        } else if (a == max_age) {
+          # Open-ended group (100+): survivors from age 99 aging in + survivors from 100+ staying
+          prev_pop_from_below <- current_stock[age == (a - 1) & sex == s, population]
+          prev_pop_staying <- current_stock[age == a & sex == s, population]
+          if (length(prev_pop_from_below) == 0) prev_pop_from_below <- 0
+          if (length(prev_pop_staying) == 0) prev_pop_staying <- 0
+          prev_pop <- prev_pop_from_below + prev_pop_staying
         } else {
           prev_pop <- current_stock[age == (a - 1) & sex == s, population]
           if (length(prev_pop) == 0) {
@@ -484,7 +524,12 @@ load_lpr_immigration_for_o <- function(years, ages) {
 #' @param emigration_ratio Numeric: ratio of emigration to LPR immigration (default: 0.25)
 #'
 #' @keywords internal
-load_emigration_for_o <- function(years, ages, emigration_ratio = 0.25) {
+load_emigration_for_o <- function(years, ages, emigration_ratio = 0.25, config = NULL) {
+  # Read emigration ratio from config
+  if (is.null(config$historical_population$o_population$emigration_ratio)) {
+    cli::cli_abort("Config missing {.field historical_population.o_population.emigration_ratio}")
+  }
+  emigration_ratio <- config$historical_population$o_population$emigration_ratio
   # Try to load from emigration subprocess
   emig_file <- here::here("data/cache/emigration/legal_emigration.rds")
 
@@ -503,7 +548,7 @@ load_emigration_for_o <- function(years, ages, emigration_ratio = 0.25) {
 #' Load AOS for O Calculation
 #'
 #' @keywords internal
-load_aos_for_o <- function(years, ages) {
+load_aos_for_o <- function(years, ages, config = NULL) {
   # Try to load from LPR immigration subprocess
   aos_file <- here::here("data/cache/immigration/aos.rds")
 
@@ -513,11 +558,15 @@ load_aos_for_o <- function(years, ages) {
     return(aos_data[year %in% years & age %in% ages])
   }
 
-  # Generate estimates (about 40% of LPR are AOS)
-  cli::cli_alert_info("AOS cache not found, generating estimates (~40% of LPR)")
+  # Generate estimates using AOS ratio from config
+  if (is.null(config$historical_population$o_population$aos_ratio)) {
+    cli::cli_abort("Config missing {.field historical_population.o_population.aos_ratio}")
+  }
+  aos_ratio <- config$historical_population$o_population$aos_ratio
+  cli::cli_alert_info("AOS cache not found, generating estimates (~{aos_ratio * 100}% of LPR)")
   lpr <- load_lpr_immigration_for_o(years, ages)
   aos <- data.table::copy(lpr)
-  aos[, aos := immigration * 0.40]
+  aos[, aos := immigration * aos_ratio]
   aos[, immigration := NULL]
 
   aos
@@ -838,12 +887,20 @@ build_temp_unlawful_stock <- function(residuals,
     # 3. Add net residual (inflows - outflows)
 
     new_pop_list <- list()
+    max_age <- max(ages)
 
     for (s in c("male", "female")) {
       for (a in ages) {
         # Previous year's population at age a-1 (or 0 for age 0)
         if (a == 0) {
           prev_pop <- 0  # O population at birth is 0 (births are US citizens)
+        } else if (a == max_age) {
+          # Open-ended group (100+): survivors from age 99 aging in + survivors from 100+ staying
+          prev_pop_from_below <- current_stock[age == (a - 1) & sex == s, population]
+          prev_pop_staying <- current_stock[age == a & sex == s, population]
+          if (length(prev_pop_from_below) == 0) prev_pop_from_below <- 0
+          if (length(prev_pop_staying) == 0) prev_pop_staying <- 0
+          prev_pop <- prev_pop_from_below + prev_pop_staying
         } else {
           prev_pop <- current_stock[age == (a - 1) & sex == s, population]
           if (length(prev_pop) == 0) {

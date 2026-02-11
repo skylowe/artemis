@@ -41,6 +41,7 @@ create_historical_population_targets <- function() {
         start_year = 1940,
         end_year = 2022,
         ages = 14:100,
+        config = config_assumptions,
         use_cache = TRUE,
         include_same_sex = TRUE
       )
@@ -52,7 +53,8 @@ create_historical_population_targets <- function() {
       calculate_historical_temp_unlawful(
         start_year = 1940,
         end_year = 2022,
-        ages = 0:99,
+        ages = 0:100,
+        config = config_assumptions,
         use_cache = TRUE
       )
     ),
@@ -63,7 +65,8 @@ create_historical_population_targets <- function() {
       calculate_historical_civilian_noninst(
         start_year = 2010,
         end_year = 2022,
-        ages = 0:99,
+        ages = 0:100,
+        config = config_assumptions,
         include_orientation = TRUE,
         use_cache = TRUE
       )
