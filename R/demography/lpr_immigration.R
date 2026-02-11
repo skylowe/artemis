@@ -74,11 +74,11 @@ NULL
 #'
 #' @export
 get_immigration_distribution <- function(
-    method = "dhs",
+    method,
     dhs_data = NULL,
-    dhs_years = 2016:2020,
+    dhs_years = NULL,
     tr_derived_data = NULL,
-    tr_derived_file = "data/processed/tr2025_implied_immigration_distribution.csv",
+    tr_derived_file = NULL,
     elderly_override = NULL,
     elderly_override_tr_derived = NULL,
     total_net_immigration = NULL
@@ -139,7 +139,7 @@ get_immigration_distribution <- function(
 #'
 #' @param tr_population data.table: TR2025 population with columns year, age, sex, population
 #' @param tr_qx data.table: TR2025 death probabilities with columns year, age, sex, qx
-#' @param years Integer vector: years to calculate (default 2023:2030)
+#' @param years Integer vector: years to calculate. Required, no default.
 #'
 #' @return data.table with columns: age, sex, avg_implied, total_implied, implied_dist
 #'
@@ -147,7 +147,7 @@ get_immigration_distribution <- function(
 calculate_tr_derived_distribution <- function(
     tr_population,
     tr_qx,
-    years = 2023:2030
+    years
 ) {
   cli::cli_alert_info("Calculating TR2025-derived immigration distribution")
 
@@ -491,11 +491,11 @@ load_dhs_lpr_data <- function(file_path = "data/cache/dhs_immigration/dhs_lpr_al
 #' the Beers ordinary formula.
 #'
 #' @param dhs_data data.table from load_dhs_lpr_data()
-#' @param reference_years Years to average for distribution (default: 2018:2023)
+#' @param reference_years Years to average for distribution. Required, no default.
 #' @return data.table with columns: age, sex, distribution
 #' @export
 calculate_lpr_distribution_dhs <- function(dhs_data,
-                                           reference_years = 2016:2020,
+                                           reference_years,
                                            interpolation_method = "uniform") {
   dhs_data <- data.table::as.data.table(dhs_data)
 
@@ -550,7 +550,7 @@ calculate_lpr_distribution_dhs <- function(dhs_data,
 #' 4. Normalize each to sum to 1.0
 #'
 #' @param dhs_data data.table from load_dhs_lpr_data() with admission_type column
-#' @param reference_years Integer vector: years for averaging (default: 2016:2020)
+#' @param reference_years Integer vector: years for averaging. Required, no default.
 #' @param convert_fy_cy Logical: apply FY-to-CY conversion (default: FALSE)
 #' @param interpolation_method Character: "beers" or "uniform" (default: "uniform")
 #'
@@ -561,7 +561,7 @@ calculate_lpr_distribution_dhs <- function(dhs_data,
 #'
 #' @export
 calculate_lpr_distributions_separate <- function(dhs_data,
-                                                  reference_years = 2016:2020,
+                                                  reference_years,
                                                   convert_fy_cy = FALSE,
                                                   interpolation_method = "uniform") {
   dhs_data <- data.table::as.data.table(dhs_data)
@@ -651,11 +651,11 @@ calculate_lpr_distributions_separate <- function(dhs_data,
 #' emigration distribution (see config immigration.emigration.distribution_source).
 #'
 #' @param dhs_data data.table from load_dhs_lpr_data()
-#' @param reference_years Years to average for distribution (default: 2016:2020)
+#' @param reference_years Years to average for distribution. Required, no default.
 #' @return data.table with columns: age, sex, distribution
 #' @export
 calculate_emigration_distribution_dhs <- function(dhs_data,
-                                                   reference_years = 2016:2020) {
+                                                   reference_years) {
   cli::cli_alert_info("Using DHS immigration distribution for emigration (legacy fallback)")
   calculate_lpr_distribution_dhs(dhs_data, reference_years)
 }
@@ -959,11 +959,11 @@ beers_interpolate_dhs <- uniform_interpolate_dhs
 #' Calculate NEW/AOS ratio from DHS data
 #'
 #' @param dhs_data data.table from load_dhs_lpr_data()
-#' @param reference_years Years to calculate ratio (default: 2016:2019)
+#' @param reference_years Years to calculate ratio. Required, no default.
 #' @return list with new_ratio, aos_ratio, and details
 #' @export
 calculate_new_aos_ratio <- function(dhs_data,
-                                     reference_years = 2016:2020) {
+                                     reference_years) {
   dhs_data <- data.table::as.data.table(dhs_data)
 
   # Filter to reference years
@@ -1019,7 +1019,7 @@ calculate_new_aos_ratio <- function(dhs_data,
 #' official OCACT immigration assumptions for both historical (1940-2024)
 #' and projected (2025-2100) years.
 #'
-#' @param years Integer vector: years to get assumptions for (default: 2025:2099)
+#' @param years Integer vector: years to get assumptions for. Required, no default.
 #' @param alternative Character: which alternative to use for projections
 #'   ("intermediate", "low-cost", or "high-cost"). Default: "intermediate"
 #' @param data_dir Character: directory containing TR2025 files
@@ -1564,7 +1564,6 @@ calculate_net_lpr <- function(lpr_immigration, emigration) {
 #' @export
 get_lpr_distribution_for_projection <- function(config, tr_derived_dist = NULL) {
   method <- config$immigration$lpr$distribution_method
-  if (is.null(method)) method <- "dhs"
 
   # Calculate approximate total net immigration for override proportions
   # Using ultimate values: net LPR (~788K) + net O (~750K) = ~1.54M
@@ -1573,11 +1572,9 @@ get_lpr_distribution_for_projection <- function(config, tr_derived_dist = NULL) 
 
   if (method == "dhs") {
     dhs_mode <- config$immigration$lpr$dhs_distribution_mode
-    if (is.null(dhs_mode)) dhs_mode <- "separate"
 
     ref_years <- config$immigration$lpr$distribution_years
     interp_method <- config$immigration$lpr$interpolation_method
-    if (is.null(interp_method)) interp_method <- "uniform"
     convert_fy_cy <- isTRUE(config$immigration$lpr$convert_fy_to_cy)
 
     dhs_data <- load_dhs_lpr_data()
@@ -1630,15 +1627,15 @@ get_lpr_distribution_for_projection <- function(config, tr_derived_dist = NULL) 
 #' Run complete LPR immigration projection
 #'
 #' @param dhs_data DHS expanded tables data (or NULL to load from file)
-#' @param projection_years Years to project (default: 2025:2099)
-#' @param distribution_years Years for DHS age-sex distribution (default: 2018:2023)
-#' @param new_aos_ratio_years Years for DHS NEW/AOS ratio (default: 2016:2019)
+#' @param projection_years Years to project. Required, no default.
+#' @param distribution_years Years for DHS age-sex distribution. Required, no default.
+#' @param new_aos_ratio_years Years for DHS NEW/AOS ratio. Required, no default.
 #' @return list with all 5 outputs plus distributions, ratios, assumptions
 #' @export
 run_lpr_projection <- function(dhs_data = NULL,
-                                projection_years = 2025:2099,
-                                distribution_years = 2016:2020,
-                                new_aos_ratio_years = 2016:2020) {
+                                projection_years,
+                                distribution_years,
+                                new_aos_ratio_years) {
   cli::cli_h2("LPR Immigration Projection")
 
   # Load DHS data if not provided

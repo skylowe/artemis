@@ -515,7 +515,7 @@ fetch_acs_citizenship_year <- function(year, api_key) {
 #' citizens have minimal undercount.
 #'
 #' @export
-calculate_acs_undercount_factors <- function(years = 2017:2019,
+calculate_acs_undercount_factors <- function(years,
                                               use_fallback = FALSE,
                                               cache_dir = here::here("data/cache/acs_pums")) {
   # If fallback requested, return hardcoded factors immediately
@@ -678,7 +678,7 @@ calculate_acs_undercount_factors <- function(years = 2017:2019,
 #' @return data.table comparing the two approaches
 #'
 #' @export
-compare_undercount_factors <- function(years = 2017:2019) {
+compare_undercount_factors <- function(years) {
   dynamic <- calculate_acs_undercount_factors(years = years, use_fallback = FALSE)
   hardcoded <- get_dhs_hardcoded_undercount_factors()
 

@@ -522,6 +522,12 @@ data_sources:
   population_estimates:
     start_year: 1980
     end_year: 2024
+  # ACS foreign-born flow years (PUMS microdata, 2020 excluded due to COVID)
+  acs_foreign_born_years: [2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013,
+    2014, 2015, 2016, 2017, 2018, 2019, 2021, 2022, 2023]
+  # ACS undercount factor reference years
+  acs_undercount_years: [2017, 2018, 2019]
+
   # Census Bureau population estimates vintage
   # 2024: Latest data with 2020 Census revisions (default)
   # 2023: Earlier vintage, closer to what TR2025 used for 2020-2022

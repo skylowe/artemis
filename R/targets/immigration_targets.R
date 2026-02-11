@@ -56,18 +56,11 @@ create_immigration_targets <- function() {
     # TR2025-derived immigration distribution
     targets::tar_target(
       tr_derived_immigration_dist,
-      {
-        # Get years from config, with default fallback
-        tr_derived_years <- get_config_with_default(
-          config_assumptions, "immigration", "lpr", "tr_derived_years",
-          default = 2023:2030
-        )
-        calculate_tr_derived_distribution(
-          tr_population = tr2025_population_long,
-          tr_qx = tr2025_qx_long,
-          years = tr_derived_years
-        )
-      }
+      calculate_tr_derived_distribution(
+        tr_population = tr2025_population_long,
+        tr_qx = tr2025_qx_long,
+        years = config_assumptions$immigration$lpr$tr_derived_years
+      )
     ),
 
     # ==========================================================================
@@ -91,27 +84,19 @@ create_immigration_targets <- function() {
     targets::tar_target(
       emigration_distribution,
       {
-        source <- get_config_with_default(
-          config_assumptions, "immigration", "emigration", "distribution_source",
-          default = "cbo"
-        )
+        source <- config_assumptions$immigration$emigration$distribution_source
         if (source == "cbo") {
           cbo_data <- load_cbo_migration(
-            file_path = here::here("data/raw/cbo/grossMigration_byYearAgeSexStatusFlow.csv")
+            file_path = here::here(config_assumptions$immigration$cbo_file)
           )
-          ref_years <- get_config_with_default(
-            config_assumptions, "immigration", "emigration", "cbo_reference_years",
-            default = 2021:2024
+          calculate_cbo_emigration_distribution(
+            cbo_data,
+            config_assumptions$immigration$emigration$cbo_reference_years
           )
-          calculate_cbo_emigration_distribution(cbo_data, ref_years)
         } else {
-          ref_years <- get_config_with_default(
-            config_assumptions, "immigration", "emigration", "distribution_years",
-            default = 2016:2020
-          )
           calculate_emigration_distribution_dhs(
             dhs_data = load_dhs_lpr_data(),
-            reference_years = ref_years
+            reference_years = config_assumptions$immigration$emigration$distribution_years
           )
         }
       }
@@ -167,14 +152,8 @@ create_immigration_targets <- function() {
     targets::tar_target(
       lpr_projection_result,
       {
-        dist_method <- get_config_with_default(
-          config_assumptions, "immigration", "lpr", "distribution_method",
-          default = "dhs"
-        )
-        dhs_mode <- get_config_with_default(
-          config_assumptions, "immigration", "lpr", "dhs_distribution_mode",
-          default = "separate"
-        )
+        dist_method <- config_assumptions$immigration$lpr$distribution_method
+        dhs_mode <- config_assumptions$immigration$lpr$dhs_distribution_mode
 
         use_separate <- (dist_method == "dhs" && dhs_mode == "separate" &&
                           is.list(lpr_distribution) && "new_distribution" %in% names(lpr_distribution))
@@ -202,10 +181,7 @@ create_immigration_targets <- function() {
           )
 
           # Split into NEW/AOS using assumptions or ratio
-          split_method <- get_config_with_default(
-            config_assumptions, "immigration", "lpr", "new_aos_split_method",
-            default = "assumption"
-          )
+          split_method <- config_assumptions$immigration$lpr$new_aos_split_method
           if (split_method == "assumption") {
             split_result <- split_lpr_new_aos(
               lpr_immigration = lpr_imm,
@@ -301,7 +277,7 @@ create_immigration_targets <- function() {
     targets::tar_target(
       acs_foreign_born_flows,
       load_cached_multi_year(
-        years = c(2006:2019, 2021:2023),
+        years = config_assumptions$data_sources$acs_foreign_born_years,
         cache_pattern = "data/cache/acs_pums/foreign_born_flows_%d.rds",
         on_missing = "skip"
       ),
@@ -320,7 +296,10 @@ create_immigration_targets <- function() {
     # ACS undercount factors
     targets::tar_target(
       acs_undercount_factors,
-      calculate_acs_undercount_factors(years = 2017:2019, use_fallback = TRUE)
+      calculate_acs_undercount_factors(
+        years = config_assumptions$data_sources$acs_undercount_years,
+        use_fallback = TRUE
+      )
     ),
 
     # ==========================================================================
@@ -331,17 +310,13 @@ create_immigration_targets <- function() {
     targets::tar_target(
       va2_net_immigration,
       {
-        alternative <- get_config_with_default(
-          config_assumptions, "immigration", "va2_alternative",
-          default = "intermediate"
-        )
-        va2_file <- get_config_with_default(config_assumptions, "immigration", "va2_file", default = "")
-        data_dir <- if (va2_file == "") "data/raw/SSA_TR2025" else dirname(va2_file)
+        va2_file <- config_assumptions$immigration$va2_file
+        data_dir <- dirname(va2_file)
         if (data_dir == ".") data_dir <- "data/raw/SSA_TR2025"
         get_tr_va2_net_immigration(
           years = config_assumptions$metadata$projection_period$start_year:
                   config_assumptions$metadata$projection_period$end_year,
-          alternative = alternative,
+          alternative = config_assumptions$immigration$va2_alternative,
           data_dir = data_dir,
           convert_to_persons = TRUE
         )
