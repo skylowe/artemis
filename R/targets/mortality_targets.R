@@ -280,7 +280,16 @@ create_mortality_targets <- function() {
         # Add qx_exact column for ALB function compatibility
         lt_temp[, qx_exact := qx]
         qx_alb <- calculate_age_last_birthday_qx(lt_temp, min_age = 0, max_age = 99)
-        apply_age_last_birthday_qx(qx_adjusted, qx_alb, min_age = 0)
+        result <- apply_age_last_birthday_qx(qx_adjusted, qx_alb, min_age = 0)
+        # Clamp qx to [0, 1] — ALB formula can produce negative values at the
+        # HMD calibration boundary (age 99) where the survival curve has a kink
+        n_clamped <- result[qx < 0 | qx > 1, .N]
+        if (n_clamped > 0) {
+          cli::cli_alert_warning("Clamped {n_clamped} out-of-range ALB qx values to [0, 1]")
+          result[qx < 0, qx := 0]
+          result[qx > 1, qx := 1]
+        }
+        result
       }
     ),
 

@@ -5844,13 +5844,19 @@ combine_mortality_qx_for_projection <- function(mortality_qx_projected,
     use.names = TRUE
   )
 
-  # Apply age-last-birthday qx for all ages (per TR2025 Section 1.2.c)
-  cli::cli_alert_info("Applying age-last-birthday qx adjustment for ages 0-100 (per TR2025 Section 1.2.c)")
-  combined_qx <- apply_age_last_birthday_qx(
-    mortality_qx = combined_qx,
-    qx_alb = qx_age_last_birthday,
-    min_age = 0
-  )
+  # Apply age-last-birthday qx conversion
+  # In tr_qx mode: use TR2025's period life tables for ALB (the correct source)
+  # In regression mode: Step 9 already applied ALB from ARTEMIS's own life tables
+  if (!is.null(method) && method == "tr_qx") {
+    cli::cli_alert_info("Applying TR2025 age-last-birthday qx for all ages (tr_qx mode)")
+    combined_qx <- apply_age_last_birthday_qx(
+      mortality_qx = combined_qx,
+      qx_alb = qx_age_last_birthday,
+      min_age = 0
+    )
+  } else {
+    cli::cli_alert_info("Using Step 9 age-last-birthday qx (regression mode)")
+  }
 
   combined_qx
 }
