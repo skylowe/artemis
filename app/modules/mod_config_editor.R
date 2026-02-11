@@ -166,6 +166,16 @@ mod_config_editor_ui <- function(id) {
         icon = icon("plane"),
 
         selectInput(
+          ns("lpr_assumptions_source"),
+          "LPR Assumptions Source",
+          choices = c(
+            "TR2025 V.A2 (Official)" = "va2",
+            "CBO Demographic Outlook" = "cbo"
+          ),
+          selected = "va2"
+        ),
+
+        selectInput(
           ns("distribution_method"),
           "Age-Sex Distribution",
           choices = c(
@@ -175,12 +185,15 @@ mod_config_editor_ui <- function(id) {
           selected = "tr_derived"
         ),
 
-        sliderInput(
-          ns("emigration_ratio"),
-          "Emigration Ratio",
-          min = 0.10, max = 0.50,
-          value = 0.25,
-          step = 0.01
+        conditionalPanel(
+          condition = sprintf("input['%s'] == 'va2'", ns("lpr_assumptions_source")),
+          sliderInput(
+            ns("emigration_ratio"),
+            "Emigration Ratio",
+            min = 0.10, max = 0.50,
+            value = 0.25,
+            step = 0.01
+          )
         )
       )
     ),
@@ -303,6 +316,9 @@ mod_config_editor_server <- function(id, rv) {
       updateSliderInput(session, "elderly_aax_cap_value",
         value = config$mortality$elderly_aax_cap$max_aax %||% 0.0055)
 
+      updateSelectInput(session, "lpr_assumptions_source",
+        selected = config$immigration$lpr$assumptions_source %||% "va2")
+
       updateSelectInput(session, "distribution_method",
         selected = config$immigration$lpr$distribution_method %||% "tr_derived")
 
@@ -334,6 +350,7 @@ mod_config_editor_server <- function(id, rv) {
       updateCheckboxInput(session, "use_tr_historical_pop", value = TRUE)
       updateCheckboxInput(session, "custom_recent_tfr", value = TRUE)
       updateSelectInput(session, "starting_aax_method", selected = "tr_qx")
+      updateSelectInput(session, "lpr_assumptions_source", selected = "va2")
       updateSelectInput(session, "distribution_method", selected = "tr_derived")
     })
 
@@ -342,6 +359,7 @@ mod_config_editor_server <- function(id, rv) {
       updateCheckboxInput(session, "use_tr_historical_pop", value = FALSE)
       updateCheckboxInput(session, "custom_recent_tfr", value = FALSE)
       updateSelectInput(session, "starting_aax_method", selected = "regression")
+      updateSelectInput(session, "lpr_assumptions_source", selected = "va2")
       updateSelectInput(session, "distribution_method", selected = "dhs")
     })
 
@@ -384,6 +402,7 @@ mod_config_editor_server <- function(id, rv) {
       config$mortality$elderly_aax_cap$max_aax <- input$elderly_aax_cap_value
 
       config$immigration$va2_alternative <- input$immigration_scenario
+      config$immigration$lpr$assumptions_source <- input$lpr_assumptions_source
       config$immigration$lpr$distribution_method <- input$distribution_method
       config$immigration$emigration$ratio <- input$emigration_ratio
 

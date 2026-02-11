@@ -1037,11 +1037,15 @@ calculate_new_aos_ratio <- function(dhs_data,
 #' - LPR AOS: Adjustments of status (included in inflow)
 #' - LPR Net: Net LPR change
 #'
+#' @param emigration_ratio Numeric: fraction of LPR immigration that emigrates.
+#'   TR2025 Section 1.3.c Eq 1.3.4: E = ratio * L. Required, no default.
+#'
 #' @export
-get_tr_lpr_assumptions <- function(years = 2025:2099,
-                                        alternative = c("intermediate", "low-cost", "high-cost"),
-                                        data_dir = "data/raw/SSA_TR2025") {
-  alternative <- match.arg(alternative)
+get_tr_lpr_assumptions <- function(years,
+                                        alternative,
+                                        data_dir,
+                                        emigration_ratio) {
+  alternative <- match.arg(alternative, c("intermediate", "low-cost", "high-cost"))
 
  # Try to load from V.A2
   va2_available <- tryCatch({
@@ -1060,16 +1064,23 @@ get_tr_lpr_assumptions <- function(years = 2025:2099,
     ))
   }
 
-  result <- get_tr_lpr_assumptions_va2(years, alternative, data_dir)
+  result <- get_tr_lpr_assumptions_va2(years, alternative, data_dir, emigration_ratio)
   result
 }
 
 #' Get LPR assumptions from V.A2 data
 #'
+#' @param years Integer vector: years to retrieve
+#' @param alternative Character: V.A2 alternative scenario
+#' @param data_dir Character: directory containing TR2025 files
+#' @param emigration_ratio Numeric: fraction of LPR immigration that emigrates
+#'   (TR2025 Section 1.3.c Eq 1.3.4: E = ratio * L). Required, no default.
+#'
 #' @keywords internal
 get_tr_lpr_assumptions_va2 <- function(years,
-                                            alternative = "intermediate",
-                                            data_dir = "data/raw/SSA_TR2025") {
+                                            alternative,
+                                            data_dir,
+                                            emigration_ratio) {
   # Load V.A2 immigration assumptions
   imm <- load_tr_immigration_assumptions(data_dir = data_dir, cache = TRUE)
 
@@ -1100,13 +1111,14 @@ get_tr_lpr_assumptions_va2 <- function(years,
   # Rename columns to match expected format
   # NOTE: In V.A2, LPR Inflow = NEW arrivals only, LPR AOS = Adjustments of Status
   # Total LPR Immigration = NEW + AOS (per TR2025 methodology)
+  # Emigration computed as total_lpr * emigration_ratio (TR2025 Eq 1.3.4)
   result <- result[, .(
     year = year,
     total_lpr = (lpr_inflow + lpr_aos) * 1000,  # Total = NEW + AOS, convert to persons
     lpr_new = lpr_inflow * 1000,                 # NEW arrivals only
     lpr_aos = lpr_aos * 1000,                    # AOS only
-    total_emigration = lpr_outflow * 1000,
-    net_lpr_total = lpr_net * 1000,
+    total_emigration = (lpr_inflow + lpr_aos) * 1000 * emigration_ratio,
+    net_lpr_total = (lpr_inflow + lpr_aos) * 1000 * (1 - emigration_ratio),
     data_type = data_type
   )]
 
@@ -1137,8 +1149,83 @@ get_tr_lpr_assumptions_va2 <- function(years,
 }
 
 # NOTE: get_tr_lpr_assumptions_hardcoded() was removed. All LPR immigration
-# totals must come from official V.A2 data. If V.A2 is unavailable,
-# get_tr_lpr_assumptions() will abort with a clear error message.
+# totals must come from official V.A2 data or CBO data.
+
+#' Get LPR assumptions from CBO Demographic Outlook data
+#'
+#' @description
+#' Loads LPR+ immigration and emigration totals from CBO migration data.
+#' CBO provides both immigration and emigration by year, age, and sex.
+#' Emigration totals come directly from CBO (no ratio applied).
+#'
+#' CBO has no NEW/AOS split, so the DHS historical ratio is used to
+#' derive lpr_new and lpr_aos from total_lpr.
+#'
+#' @param years Integer vector: years to get assumptions for. Required, no default.
+#' @param cbo_file Character: path to CBO migration CSV file. Required, no default.
+#' @param new_aos_ratio Numeric: fraction of total LPR that are new arrivals,
+#'   from DHS historical data. Required, no default.
+#'
+#' @return data.table with columns: year, total_lpr, lpr_new, lpr_aos,
+#'   total_emigration, net_lpr_total, data_type
+#'
+#' @export
+get_cbo_lpr_assumptions <- function(years, cbo_file, new_aos_ratio) {
+  # Load CBO data
+  cbo_data <- load_cbo_migration(file_path = cbo_file)
+
+  # Get LPR+ immigration by year
+  lpr_imm <- get_cbo_lpr_immigration(cbo_data, years = years)
+  if (nrow(lpr_imm) == 0) {
+    cli::cli_abort("No CBO LPR+ immigration data found for years {min(years)}-{max(years)}")
+  }
+  imm_by_year <- lpr_imm[, .(total_lpr = sum(immigration)), by = year]
+
+  # Get LPR+ emigration by year (direct from CBO, no ratio)
+  lpr_emig <- get_cbo_lpr_emigration(cbo_data, years = years)
+  if (nrow(lpr_emig) == 0) {
+    cli::cli_abort("No CBO LPR+ emigration data found for years {min(years)}-{max(years)}")
+  }
+  emig_by_year <- lpr_emig[, .(total_emigration = sum(emigration)), by = year]
+
+  # Merge immigration and emigration
+  result <- merge(imm_by_year, emig_by_year, by = "year", all = TRUE)
+
+  # Compute net LPR
+  result[, net_lpr_total := total_lpr - total_emigration]
+
+  # Split into NEW/AOS using DHS historical ratio
+  result[, lpr_new := total_lpr * new_aos_ratio]
+  result[, lpr_aos := total_lpr * (1 - new_aos_ratio)]
+
+  # Set data type
+  result[, data_type := "cbo"]
+
+  # Ensure column order matches V.A2 schema
+  result <- result[, .(year, total_lpr, lpr_new, lpr_aos,
+                        total_emigration, net_lpr_total, data_type)]
+
+  # Filter to requested years (CBO may have more/fewer years)
+  result <- result[year %in% years]
+
+  # Report
+  n_years <- nrow(result)
+  cli::cli_alert_success("Loaded CBO LPR+ assumptions: {n_years} years ({min(result$year)}-{max(result$year)})")
+
+  if (nrow(result) > 0) {
+    sample_yr <- if (2027 %in% result$year) 2027 else min(result$year)
+    sample <- result[year == sample_yr]
+    cli::cli_alert_info(
+      "{sample_yr} CBO: LPR={format(round(sample$total_lpr), big.mark=',')} Emig={format(round(sample$total_emigration), big.mark=',')} Net={format(round(sample$net_lpr_total), big.mark=',')}"
+    )
+    cli::cli_alert_info(
+      "NEW/AOS split using DHS ratio: NEW={round(new_aos_ratio * 100, 1)}%, AOS={round((1 - new_aos_ratio) * 100, 1)}%"
+    )
+  }
+
+  data.table::setorder(result, year)
+  result
+}
 
 # ===========================================================================
 # PROJECTION FUNCTIONS
@@ -1571,7 +1658,12 @@ run_lpr_projection <- function(dhs_data = NULL,
 
   # Step 3: Get TR2025 assumptions
   cli::cli_h3("Step 3: Load TR2025 assumptions")
-  assumptions <- get_tr_lpr_assumptions(projection_years)
+  assumptions <- get_tr_lpr_assumptions(
+    years = projection_years,
+    alternative = "intermediate",
+    data_dir = "data/raw/SSA_TR2025",
+    emigration_ratio = 0.25
+  )
   cli::cli_alert_info("Projection years: {min(projection_years)}-{max(projection_years)}")
   cli::cli_alert_info("2025 LPR: {format(assumptions[year==2025, total_lpr], big.mark=',')}")
   cli::cli_alert_info("Ultimate LPR: {format(assumptions[year==max(projection_years), total_lpr], big.mark=',')}")

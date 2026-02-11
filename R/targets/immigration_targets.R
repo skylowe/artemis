@@ -126,13 +126,40 @@ create_immigration_targets <- function() {
       )
     ),
 
-    # Step 4: LPR assumptions (from V.A2)
+    # Step 4: LPR assumptions (V.A2 or CBO, based on config)
     targets::tar_target(
       lpr_assumptions,
-      get_tr_lpr_assumptions(
-        years = config_assumptions$metadata$projection_period$start_year:
-                config_assumptions$metadata$projection_period$end_year
-      )
+      {
+        source <- config_assumptions$immigration$lpr$assumptions_source
+        proj_years <- config_assumptions$metadata$projection_period$start_year:
+                      config_assumptions$metadata$projection_period$end_year
+
+        if (source == "cbo") {
+          cbo_file <- here::here(config_assumptions$immigration$cbo_file)
+          get_cbo_lpr_assumptions(
+            years = proj_years,
+            cbo_file = cbo_file,
+            new_aos_ratio = new_aos_ratio$new_ratio
+          )
+        } else {
+          emig_ratio <- config_assumptions$immigration$emigration$ratio
+          alternative <- config_assumptions$immigration$va2_alternative
+          va2_file <- config_assumptions$immigration$va2_file
+          data_dir <- if (is.null(va2_file) || va2_file == "") {
+            "data/raw/SSA_TR2025"
+          } else {
+            dirname(va2_file)
+          }
+          if (data_dir == ".") data_dir <- "data/raw/SSA_TR2025"
+
+          get_tr_lpr_assumptions(
+            years = proj_years,
+            alternative = alternative,
+            data_dir = data_dir,
+            emigration_ratio = emig_ratio
+          )
+        }
+      }
     ),
 
     # Step 5: Project LPR immigration

@@ -230,6 +230,20 @@ immigration:
 
   lpr:
     # =========================================================================
+    # LPR Assumptions Source
+    # =========================================================================
+    # Controls the source of aggregate LPR immigration/emigration totals.
+    #
+    # Options:
+    #   "va2" - TR2025 Table V.A2 (official Trustees assumptions)
+    #           Emigration computed as total_lpr * emigration ratio (from config).
+    #   "cbo" - CBO Demographic Outlook 2026-2056 (LPR+ projections, 2021-2099)
+    #           CBO provides both immigration and emigration totals directly.
+    #           CBO has no NEW/AOS split; DHS historical ratio is used.
+    # =========================================================================
+    assumptions_source: "va2"
+
+    # =========================================================================
     # Age-Sex Distribution Method (TR2025 Section 1.3)
     # =========================================================================
     # Controls the source of the immigration age-sex distribution.
@@ -337,8 +351,10 @@ immigration:
   # =========================================================================
 
   emigration:
-    # Emigration ratio (fraction of LPR immigration that emigrates)
-    # TR2025 Section 1.3: 25% (0.25) for legal emigration
+    # Emigration ratio: fraction of LPR immigration that emigrates
+    # TR2025 Section 1.3.c Eq 1.3.4: E = 0.25 * L (25% of gross LPR)
+    # Only applied when lpr.assumptions_source = "va2"
+    # When assumptions_source = "cbo", CBO provides emigration totals directly
     ratio: 0.25
 
     # Distribution source for emigration age-sex pattern:
@@ -376,6 +392,9 @@ immigration:
   # This ensures exact alignment with Trustees Report assumptions
   va2_file: "data/raw/SSA_TR2025/SingleYearTRTables_TR2025.xlsx"
   va2_alternative: "intermediate"  # Options: "intermediate", "low", "high"
+
+  # CBO migration data file (used when lpr.assumptions_source = "cbo")
+  cbo_file: "data/raw/cbo/grossMigration_byYearAgeSexStatusFlow.csv"
 
   # =========================================================================
   # O (Other/Temp/Unlawful) Immigration Configuration
