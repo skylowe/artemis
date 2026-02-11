@@ -256,104 +256,6 @@ calculate_annual_reduction_rates <- function(mx,
 # Starting AAx Method Functions
 # =============================================================================
 
-#' Apply capped starting AAx method
-#'
-#' @description
-#' Caps starting AAx values at a configurable multiple of ultimate AAx.
-#' This prevents unrealistically high starting improvement rates while
-#' preserving the relative pattern across ages.
-#'
-#' @param starting_aax data.table with starting AAx by age, sex, [cause]
-#' @param ultimate_aax data.table from get_ultimate_aax_assumptions()
-#' @param cap_multiplier Numeric: cap starting AAx at this multiple of ultimate (default: 1.5)
-#'
-#' @return data.table with capped starting_aax values
-#'
-#' @details
-#' For each age-sex combination:
-#' - If starting_aax > ultimate_aax * cap_multiplier: cap at ultimate * multiplier
-#' - If starting_aax <= 0: use ultimate_aax (no negative improvement)
-#' - Otherwise: keep original starting_aax
-#'
-#' @export
-apply_capped_starting_aax <- function(starting_aax,
-                                       ultimate_aax = NULL,
-                                       cap_multiplier = 1.5) {
-  checkmate::assert_data_table(starting_aax)
-  checkmate::assert_number(cap_multiplier, lower = 1.0, upper = 10.0)
-
-  if (is.null(ultimate_aax)) {
-    ultimate_aax <- get_ultimate_aax_assumptions()
-  }
-
-  dt <- data.table::copy(starting_aax)
-
-  # Determine if we have cause-specific data
-  has_cause <- "cause" %in% names(dt)
-
-  # Map ages to ultimate age groups
-  dt[, age_group := map_age_to_ultimate_group(age)]
-
-  # Get cause-weighted ultimate AAx by age group and sex
-  cause_props <- tryCatch(
-    get_cause_of_death_proportions(),
-    error = function(e) {
-      cli::cli_alert_warning("Could not load cause-of-death proportions, using simple average")
-      NULL
-    }
-  )
-
-  if (!is.null(cause_props)) {
-    # Merge proportions with ultimate AAx values
-    weighted_data <- merge(
-      ultimate_aax[, .(age_group, cause, ultimate_aax)],
-      cause_props,
-      by = c("age_group", "cause"),
-      all.x = TRUE
-    )
-    weighted_data[is.na(proportion), proportion := 1/6]
-
-    # Calculate weighted average by age_group and sex
-    ultimate_avg <- weighted_data[, .(
-      ultimate_aax_weighted = sum(ultimate_aax * proportion)
-    ), by = .(age_group, sex)]
-  } else {
-    # Simple average fallback
-    ultimate_avg <- ultimate_aax[, .(ultimate_aax_weighted = mean(ultimate_aax)), by = age_group]
-  }
-
-  # Merge ultimate values
-  if ("sex" %in% names(ultimate_avg) && "sex" %in% names(dt)) {
-    dt <- merge(dt, ultimate_avg, by = c("age_group", "sex"), all.x = TRUE)
-  } else {
-    dt <- merge(dt, ultimate_avg[, .(age_group, ultimate_aax_weighted)], by = "age_group", all.x = TRUE)
-  }
-
-  # Handle missing ultimate values
-  dt[is.na(ultimate_aax_weighted), ultimate_aax_weighted := 0.005]
-
-  # Calculate cap value
-  dt[, cap_value := ultimate_aax_weighted * cap_multiplier]
-
-  # Apply cap: limit starting_aax to cap_value
-  # Also ensure starting_aax is at least 0 (no negative improvement allowed)
-  original_aax <- dt$starting_aax
-  dt[, starting_aax := pmax(0, pmin(starting_aax, cap_value))]
-
-  # Count how many were capped
-  n_capped <- sum(original_aax > dt$cap_value, na.rm = TRUE)
-  n_negative <- sum(original_aax < 0, na.rm = TRUE)
-
-  # Clean up temporary columns
-  dt[, c("age_group", "ultimate_aax_weighted", "cap_value") := NULL]
-
-  cli::cli_alert_success(
-    "Applied capped starting AAx (multiplier={cap_multiplier}): {n_capped} capped, {n_negative} negative values zeroed"
-  )
-
-  dt
-}
-
 #' Load starting values from TR2025 death probabilities
 #'
 #' @description
@@ -746,13 +648,13 @@ apply_age_last_birthday_qx <- function(
 #' Apply configured starting AAx method
 #'
 #' @description
-#' Applies the configured starting AAx method (regression, capped, or tr_qx).
+#' Applies the configured starting AAx method (regression or tr_qx).
 #'
 #' @param regression_aax data.table with regression-based AAx (from calculate_annual_reduction_rates)
-#' @param method Character: method to apply ("regression", "capped", "tr_qx")
+#' @param method Character: method to apply ("regression", "tr_qx")
 #' @param config List: mortality configuration (from load_mortality_config)
 #'
-#' @return For "regression" and "capped": data.table with starting_aax by age, sex
+#' @return For "regression": data.table with starting_aax by age, sex, [cause]
 #'         For "tr_qx": list with starting_mx and starting_aax data.tables
 #'
 #' @export
@@ -760,7 +662,7 @@ apply_starting_aax_method <- function(regression_aax,
                                        method = "regression",
                                        config = NULL) {
   checkmate::assert_data_table(regression_aax)
-  checkmate::assert_choice(method, c("regression", "capped", "tr_qx"))
+  checkmate::assert_choice(method, c("regression", "tr_qx"))
 
   # Start with regression-based AAx
   dt <- data.table::copy(regression_aax)
@@ -770,23 +672,9 @@ apply_starting_aax_method <- function(regression_aax,
   aax_cols <- intersect(c("age", "sex", "cause", "starting_aax"), names(dt))
 
   if (method == "regression") {
-    # Original method: use regression-based starting_aax as-is
-    cli::cli_alert_info("Using regression-based starting AAx (original method)")
+    # Use regression-based starting_aax as-is (TR2025 official methodology)
+    cli::cli_alert_info("Using regression-based starting AAx")
     return(dt[, ..aax_cols])
-  }
-
-  if (method == "capped") {
-    # Capped method: limit starting AAx to multiple of ultimate
-    cap_multiplier <- 1.5
-    if (!is.null(config) && !is.null(config$starting_aax_cap$multiplier)) {
-      cap_multiplier <- config$starting_aax_cap$multiplier
-    }
-
-    result <- apply_capped_starting_aax(
-      starting_aax = dt[, ..aax_cols],
-      cap_multiplier = cap_multiplier
-    )
-    return(result)
   }
 
   if (method == "tr_qx") {
@@ -795,7 +683,7 @@ apply_starting_aax_method <- function(regression_aax,
       cli::cli_abort(c(
         "tr_qx method is incompatible with cause-specific projection (by_cause = TRUE)",
         "i" = "TR2025 qx files contain total qx only, not cause-specific values",
-        "i" = "Use starting_aax_method = 'regression' or 'capped' with by_cause = TRUE"
+        "i" = "Use starting_aax_method = 'regression' with by_cause = TRUE"
       ))
     }
     # TR_QX method: use TR2025's actual qx as starting point
@@ -822,10 +710,11 @@ apply_starting_aax_method <- function(regression_aax,
 
     # Check if files exist
     if (!file.exists(male_file) || !file.exists(female_file)) {
-      cli::cli_alert_warning("TR2025 qx files not found, falling back to capped method")
-      return(apply_capped_starting_aax(
-        starting_aax = dt[, .(age, sex, starting_aax)],
-        cap_multiplier = 1.5
+      cli::cli_abort(c(
+        "TR2025 qx files not found for tr_qx method",
+        "x" = "Male: {male_file} (exists: {file.exists(male_file)})",
+        "x" = "Female: {female_file} (exists: {file.exists(female_file)})",
+        "i" = "Use starting_aax_method = 'regression' or place TR2025 files in data/raw/SSA_TR2025/"
       ))
     }
 
@@ -1665,7 +1554,7 @@ apply_covid_adjustments <- function(qx, covid_factors = NULL) {
 #' @param projection_end Integer: last projection year (default: 2100)
 #' @param by_cause Logical: project by cause of death (default: FALSE for total)
 #' @param starting_aax_method Character: method for starting values
-#'   ("regression", "capped", "tr_qx"). Default: "regression"
+#'   ("regression", "tr_qx"). Default: "regression"
 #' @param mortality_config List: mortality configuration from config file (optional)
 #'
 #' @return list with projected_mx, projected_qx, aax_trajectory, and life_tables
@@ -1798,7 +1687,7 @@ run_mortality_projection <- function(deaths,
     ))
   }
 
-  # Standard projection path (regression or capped methods)
+  # Standard projection path (regression method)
   # Step 6: Calculate AAx trajectory
   cli::cli_h2("Step 6: Calculate AAx trajectory to ultimate")
   projection_years <- (effective_base_year + 1):projection_end

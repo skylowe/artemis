@@ -118,22 +118,10 @@ mod_config_editor_ui <- function(id) {
           ns("starting_aax_method"),
           "Starting AAx Method",
           choices = c(
-            "TR2025 qx Values" = "tr_qx",
-            "Regression-based" = "regression",
-            "Capped at Multiple" = "capped"
+            "Regression-based (TR2025)" = "regression",
+            "TR2025 qx Values" = "tr_qx"
           ),
-          selected = "tr_qx"
-        ),
-
-        conditionalPanel(
-          condition = sprintf("input['%s'] == 'capped'", ns("starting_aax_method")),
-          sliderInput(
-            ns("aax_cap_multiplier"),
-            "Cap Multiplier",
-            min = 1.0, max = 3.0,
-            value = 1.5,
-            step = 0.1
-          )
+          selected = "regression"
         ),
 
         checkboxInput(
@@ -336,10 +324,6 @@ mod_config_editor_server <- function(id, rv) {
 
       config$mortality$ultimate_year <- input$mortality_ultimate_year
       config$mortality$starting_aax_method <- input$starting_aax_method
-
-      if (input$starting_aax_method == "capped") {
-        config$mortality$starting_aax_cap$multiplier <- input$aax_cap_multiplier
-      }
 
       config$immigration$va2_alternative <- input$immigration_scenario
       config$immigration$lpr$distribution_method <- input$distribution_method

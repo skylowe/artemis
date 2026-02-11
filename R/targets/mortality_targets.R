@@ -123,9 +123,8 @@ create_mortality_targets <- function() {
     ),
 
     # Step 5: Run full mortality projection
-    # NOTE: Default starting_aax_method = "tr_qx" loads TR2025 qx directly,
-    # bypassing the regression-based projection. Set to "regression" in config
-    # to exercise the full independent mortality methodology.
+    # Default: regression method with by_cause=TRUE (TR2025 official methodology).
+    # Set starting_aax_method = "tr_qx" for exact TR2025 qx alignment.
     targets::tar_target(
       mortality_mx_projected,
       run_mortality_projection(
@@ -207,7 +206,7 @@ create_mortality_targets <- function() {
     # ==========================================================================
 
     # Step 9: Extract projected qx
-    # For regression/capped methods: apply HMD calibration + age-last-birthday conversion
+    # For regression method: apply HMD calibration + age-last-birthday conversion
     # For tr_qx method: TR files already contain age-last-birthday qx
     targets::tar_target(
       mortality_qx_projected,

@@ -61,20 +61,14 @@ mortality:
   # Controls how starting values are determined for the mortality projection.
   #
   # Options:
-  #   "regression" - Use historical regression-based AAx (original implementation)
-  #                  Calculates starting AAx from weighted regression on 2008-2019 data
-  #   "capped"     - Cap starting AAx at a multiple of ultimate AAx
-  #                  Prevents unrealistically high starting improvement rates
-  #   "tr_qx"      - Use TR2025's actual qx values as starting point
-  #                  Both starting qx AND starting AAx come from TR2025 files
-  #                  Ensures full alignment with TR2025 mortality trajectory
+  #   "regression" - TR2025 official methodology. Calculates starting AAx from
+  #                  weighted regression on 2008-2019 data. Use with by_cause: true.
+  #   "tr_qx"      - Use TR2025's actual qx values as starting point.
+  #                  Both starting qx AND starting AAx come from TR2025 files.
+  #                  Ensures exact alignment with TR2025 mortality outputs.
+  #                  Incompatible with by_cause: true.
   # =========================================================================
-  starting_aax_method: "tr_qx"  # Options: "regression", "capped", "tr_qx"
-
-  # Configuration for "capped" method
-  starting_aax_cap:
-    multiplier: 1.5  # Cap starting AAx at this multiple of ultimate AAx
-    # Example: If ultimate AAx is 0.5%, cap starting at 0.75% (1.5 × 0.5%)
+  starting_aax_method: "regression"  # Options: "regression", "tr_qx"
 
   # Configuration for "tr_qx" method
   starting_tr_qx:
@@ -107,8 +101,8 @@ mortality:
 
   # Project mortality rates by cause of death (6 categories), then sum to total.
   # Per TR2025 Eq 1.2.1-1.2.2, mx is projected separately for each cause.
-  # Only applies to regression/capped methods; tr_qx method ignores this setting.
-  by_cause: false
+  # Only applies to regression method; tr_qx method ignores this setting.
+  by_cause: true
 
   # Use CDC WONDER provisional data for the most recent death year.
   # The provisional year is auto-derived as trustees_report_year - 2.

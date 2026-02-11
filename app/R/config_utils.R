@@ -86,7 +86,7 @@ validate_config <- function(config) {
   # Validate mortality
   if (!is.null(config$mortality)) {
     method <- config$mortality$starting_aax_method
-    if (!is.null(method) && !method %in% c("regression", "capped", "tr_qx")) {
+    if (!is.null(method) && !method %in% c("regression", "tr_qx")) {
       errors <- c(errors, paste("Invalid starting_aax_method:", method))
     }
   }
