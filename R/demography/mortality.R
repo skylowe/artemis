@@ -3189,9 +3189,8 @@ get_default_marital_factors <- function() {
 #' @param monthly_births data.table with columns: year, month, births
 #' @param year Integer: year for which to calculate q0
 #' @param method Character: "separation_factor" (default) or "simple"
-#' @param births_by_sex Optional data.table with columns: year, sex, births.
-#'   If provided, uses actual sex-specific birth counts instead of a fixed
-#'   51.2% male ratio.
+#' @param births_by_sex data.table with columns: year, sex, births.
+#'   Actual sex-specific birth counts for q0 calculation.
 #'
 #' @return data.table with columns: year, sex, q0, deaths, births, exposure
 #'
@@ -3217,7 +3216,7 @@ get_default_marital_factors <- function() {
 #' @export
 calculate_infant_mortality <- function(infant_deaths, monthly_births, year,
                                        method = c("separation_factor", "simple"),
-                                       births_by_sex = NULL) {
+                                       births_by_sex) {
   method <- match.arg(method)
 
   checkmate::assert_data_table(infant_deaths)
@@ -3246,20 +3245,14 @@ calculate_infant_mortality <- function(infant_deaths, monthly_births, year,
   total_births <- sum(births_yr$births)
   total_births_prev <- if (nrow(births_prev) > 0) sum(births_prev$births) else total_births
 
-  # Sex-specific birth counts: use actual data if available, else fixed ratio
-  if (!is.null(births_by_sex)) {
-    sex_births_yr <- births_by_sex[year == target_year]
-    sex_births_prev <- births_by_sex[year == prev_year]
-  } else {
-    sex_births_yr <- NULL
-    sex_births_prev <- NULL
-  }
-
-  results <- list()
-
+  # Sex-specific birth counts from actual data
   if (is.null(births_by_sex)) {
     cli::cli_abort("births_by_sex data is required for sex-specific q0 calculation")
   }
+  sex_births_yr <- births_by_sex[year == target_year]
+  sex_births_prev <- births_by_sex[year == prev_year]
+
+  results <- list()
 
   for (sex_val in c("male", "female")) {
     # Use actual sex-specific birth counts
@@ -3517,7 +3510,7 @@ calculate_ssa_separation_factors <- function(monthly_births_current, monthly_bir
 #' @export
 calculate_infant_mortality_series <- function(infant_deaths, monthly_births, years,
                                                method = "separation_factor",
-                                               births_by_sex = NULL) {
+                                               births_by_sex) {
   checkmate::assert_data_table(infant_deaths)
   checkmate::assert_data_table(monthly_births)
   checkmate::assert_integerish(years, min.len = 1)
@@ -4565,7 +4558,7 @@ calculate_qx_with_infant_mortality <- function(mx_total,
                                                deaths_raw = NULL,
                                                last_historical_year = NULL,
                                                max_age = 100,
-                                               births_by_sex = NULL) {
+                                               births_by_sex) {
   # Get available years
   pop_years <- unique(population$year)
   years_to_calc <- intersect(unique(mx_total$year), pop_years)
