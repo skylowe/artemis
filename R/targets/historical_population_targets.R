@@ -59,6 +59,11 @@ create_historical_population_targets <- function() {
         end_year = config_assumptions$historical_population$end_year,
         ages = 0:config_assumptions$historical_population$max_age,
         config = config_assumptions,
+        total_pop = historical_population,
+        lpr_assumptions = lpr_assumptions,
+        immigration_dist = lpr_distribution,
+        emigration_dist = emigration_distribution,
+        births_by_sex = nchs_births_by_sex,
         use_cache = TRUE
       )
     ),

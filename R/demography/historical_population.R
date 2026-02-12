@@ -1210,18 +1210,21 @@ build_historical_immigration_emigration <- function(lpr_assumptions,
 #' Build Historical Births from NCHS Data
 #'
 #' Converts nchs_births_by_sex (long format: year, sex, births) to wide format
-#' (year, male, female) for the component method. Years outside NCHS coverage
-#' (pre-1968) are not included — the closure ratio method compensates.
+#' (year, male, female) for the component method. With the extended
+#' nchs_births_by_sex target (1940-2023), all historical years should be covered.
 #'
 #' @param births_by_sex data.table from nchs_births_by_sex target (year, sex, births).
+#'   Must cover 1940+ (pre-1968 from CDC NVSR, post-1968 from NBER microdata).
 #' @param years Integer vector of years to cover.
 #'
 #' @return data.table with columns: year, male, female
 #' @keywords internal
 build_historical_births <- function(births_by_sex, years) {
   if (is.null(births_by_sex) || nrow(births_by_sex) == 0) {
-    cli::cli_alert_warning("No births data provided; closure ratios will compensate")
-    return(data.table::data.table(year = integer(), male = numeric(), female = numeric()))
+    cli::cli_abort(c(
+      "births_by_sex data is required but empty or NULL",
+      "i" = "Ensure nchs_births_by_sex target has run (covers 1940+ via CDC NVSR + NBER)"
+    ))
   }
 
   dt <- data.table::as.data.table(births_by_sex)
@@ -1230,10 +1233,13 @@ build_historical_births <- function(births_by_sex, years) {
   # Pivot to wide format: year, male, female
   wide <- data.table::dcast(dt, year ~ sex, value.var = "births")
 
-  nchs_range <- range(dt$year)
   missing_years <- setdiff(years, dt$year)
   if (length(missing_years) > 0) {
-    cli::cli_alert_info("  Births available for {nchs_range[1]}-{nchs_range[2]}; {length(missing_years)} years without births data (closure ratios compensate)")
+    cli::cli_abort(c(
+      "Births data missing for {length(missing_years)} year{?s}: {.val {head(missing_years, 10)}}",
+      "i" = "nchs_births_by_sex target should cover 1940+ (pre-1968 from CDC NVSR, post-1968 from NBER)",
+      "i" = "Available range: {min(dt$year)}-{max(dt$year)}"
+    ))
   }
 
   wide

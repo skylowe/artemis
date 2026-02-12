@@ -659,9 +659,13 @@ historical_population:
   # Source: TR2025 Section 1.4, Equation 1.4.3
   o_population:
     # Method for computing O-population stock
-    # "va2_flows": Build stock from V.A2 net O flows (current default)
     # "residual": Back out from population accounting identity (TR2025 methodology)
-    method: "va2_flows"
+    # "va2_flows": Build stock from V.A2 net O flows (alternative)
+    method: "residual"
+
+    # COVID-19 adjustment for 2020 (TR2025 footnote 9)
+    # Replace 2020 O-stock with average of 2019 and 2021 by age/sex
+    covid_average_2020: true
 
     # Sex split for O-population (DHS unauthorized estimates)
     male_share: 0.57
@@ -694,6 +698,16 @@ historical_population:
 
     # Adjustment of Status as fraction of LPR immigration
     aos_ratio: 0.40
+
+    # Residual modification parameters (TR2025 Section 1.4.c Eq 1.4.3:
+    # "These residuals are then modified to ensure reasonableness")
+    residual_smoothing:
+      # Rolling median window for per-(age,sex) time series smoothing (must be odd)
+      rolling_median_window: 11
+      # Floor negative residuals at 0 before computing proportions.
+      # Residuals are only used for age-sex SHAPE (V.A2 provides LEVELS),
+      # so negative values should not contribute to the distribution.
+      floor_at_zero: true
 
   # =========================================================================
   # Territory Age Distribution Parameters

@@ -112,20 +112,46 @@ create_immigration_targets <- function() {
     ),
 
     # Step 4: LPR assumptions (V.A2 or CBO, based on config)
+    # Includes both historical (for historical_population component method)
+    # and projected years (for LPR projection)
     targets::tar_target(
       lpr_assumptions,
       {
         source <- config_assumptions$immigration$lpr$assumptions_source
-        proj_years <- config_assumptions$metadata$projection_period$start_year:
-                      config_assumptions$metadata$projection_period$end_year
+        hist_start <- config_assumptions$historical_population$start_year
+        proj_end <- config_assumptions$metadata$projection_period$end_year
+        all_years <- hist_start:proj_end
 
         if (source == "cbo") {
+          # CBO only has projected years; historical comes from V.A2
+          proj_start <- config_assumptions$metadata$projection_period$start_year
+          proj_years <- proj_start:proj_end
           cbo_file <- here::here(config_assumptions$immigration$cbo_file)
-          get_cbo_lpr_assumptions(
+          cbo_result <- get_cbo_lpr_assumptions(
             years = proj_years,
             cbo_file = cbo_file,
             new_aos_ratio = new_aos_ratio$new_ratio
           )
+
+          # Get historical from V.A2
+          emig_ratio <- config_assumptions$immigration$emigration$ratio
+          alternative <- config_assumptions$immigration$va2_alternative
+          va2_file <- config_assumptions$immigration$va2_file
+          data_dir <- if (is.null(va2_file) || va2_file == "") {
+            "data/raw/SSA_TR2025"
+          } else {
+            dirname(va2_file)
+          }
+          if (data_dir == ".") data_dir <- "data/raw/SSA_TR2025"
+
+          hist_years <- hist_start:(proj_start - 1L)
+          va2_hist <- get_tr_lpr_assumptions(
+            years = hist_years,
+            alternative = alternative,
+            data_dir = data_dir,
+            emigration_ratio = emig_ratio
+          )
+          data.table::rbindlist(list(va2_hist, cbo_result), fill = TRUE)
         } else {
           emig_ratio <- config_assumptions$immigration$emigration$ratio
           alternative <- config_assumptions$immigration$va2_alternative
@@ -138,7 +164,7 @@ create_immigration_targets <- function() {
           if (data_dir == ".") data_dir <- "data/raw/SSA_TR2025"
 
           get_tr_lpr_assumptions(
-            years = proj_years,
+            years = all_years,
             alternative = alternative,
             data_dir = data_dir,
             emigration_ratio = emig_ratio

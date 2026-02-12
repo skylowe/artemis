@@ -616,3 +616,57 @@ fetch_nchs_births_by_month_sex_multi <- function(years, cache_dir = "data/raw/nc
 
   data.table::rbindlist(results, use.names = TRUE)
 }
+
+#' Load Historical Births by Sex (1940-1967)
+#'
+#' @description
+#' Loads pre-1968 births by sex from processed CSV file. These data come from
+#' CDC NCHS NVSR Vol. 53 No. 20, Table 1 ("Number of male and female births...
+#' United States, 1940-2002").
+#'
+#' TR2025 Input Data Items 35 (Section 1.4.b) and 32 (Section 1.5.b) require
+#' "births by month and sex of child, for years 1931-2023". The 1968+ data
+#' comes from NBER microdata; this function provides the 1940-1967 subset.
+#'
+#' @param file_path Character: path to the CSV file.
+#'
+#' @return data.table with columns: year (integer), sex (character), births (numeric).
+#'   Matches the schema of the post-1968 data from the nchs_births_by_sex target.
+#'
+#' @export
+load_historical_births_by_sex <- function(
+    file_path = here::here("data/processed/nchs_births_by_sex_1940_1967.csv")
+) {
+  if (!file.exists(file_path)) {
+    cli::cli_abort(c(
+      "Historical births CSV not found at {.path {file_path}}",
+      "i" = "Source: CDC NCHS NVSR Vol. 53 No. 20, Table 1",
+      "i" = "See data/processed/nchs_births_by_sex_1940_1967_SOURCE.md for details"
+    ))
+  }
+  dt <- data.table::fread(file_path)
+
+  # Validate expected columns
+  required_cols <- c("year", "sex", "births")
+  missing_cols <- setdiff(required_cols, names(dt))
+  if (length(missing_cols) > 0) {
+    cli::cli_abort(c(
+      "Historical births CSV missing required columns: {.field {missing_cols}}",
+      "i" = "Expected columns: year, sex, births"
+    ))
+  }
+
+  # Validate data range
+  if (min(dt$year) != 1940L || max(dt$year) != 1967L) {
+    cli::cli_abort(c(
+      "Historical births CSV should cover 1940-1967",
+      "i" = "Found years {min(dt$year)}-{max(dt$year)}"
+    ))
+  }
+
+  # Ensure correct types
+  dt[, year := as.integer(year)]
+  dt[, births := as.numeric(births)]
+
+  dt
+}

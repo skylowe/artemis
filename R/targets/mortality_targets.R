@@ -68,18 +68,30 @@ create_mortality_targets <- function() {
       cue = targets::tar_cue(mode = "thorough")
     ),
 
-    # Sex-specific births by year
+    # Sex-specific births by year (1940+)
+    # Pre-1968: CDC NCHS NVSR Vol. 53 No. 20, Table 1 (published totals)
+    # Post-1968: NBER microdata aggregated from monthly records
+    # TR2025 Items 35 (Section 1.4.b) and 32 (Section 1.5.b): "births by
+    # month and sex of child, for years 1931-2023"
     targets::tar_target(
       nchs_births_by_sex,
       {
         tr_year <- config_assumptions$metadata$trustees_report_year
         last_birth_year <- tr_year - 1L
-        raw_data <- load_cached_multi_year(
+
+        # Post-1968: NBER microdata (existing cache)
+        post_1968 <- load_cached_multi_year(
           years = 1968:last_birth_year,
           cache_pattern = "data/raw/nchs/births_by_month_sex_%d.rds",
           on_missing = "skip"
         )
-        raw_data[, .(births = sum(births)), by = .(year, sex)]
+        post_1968 <- post_1968[, .(births = sum(births)), by = .(year, sex)]
+
+        # Pre-1968: CDC NVSR published totals
+        pre_1968 <- load_historical_births_by_sex()
+
+        # Combine (pre-1968 rows won't overlap with post-1968)
+        data.table::rbindlist(list(pre_1968, post_1968), use.names = TRUE)
       },
       cue = targets::tar_cue(mode = "thorough")
     ),

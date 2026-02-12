@@ -219,6 +219,16 @@ mod_config_editor_ui <- function(id) {
             "SSA TR2025 (all ages)" = "ssa"
           ),
           selected = "hybrid"
+        ),
+
+        selectInput(
+          ns("o_population_method"),
+          "O-Population Method",
+          choices = c(
+            "Residual + V.A2 levels (default)" = "residual",
+            "V.A2 flows only" = "va2_flows"
+          ),
+          selected = "residual"
         )
       )
     ),
@@ -317,6 +327,9 @@ mod_config_editor_server <- function(id, rv) {
       updateSelectInput(session, "historical_pop_source",
         selected = config$historical_population$population_source %||% "hybrid")
 
+      updateSelectInput(session, "o_population_method",
+        selected = config$historical_population$o_population$method %||% "residual")
+
       # Check if custom recent TFR is enabled and populate values
       has_custom_tfr <- !is.null(config$fertility$custom_recent_tfr) &&
                         length(config$fertility$custom_recent_tfr) > 0
@@ -380,6 +393,12 @@ mod_config_editor_server <- function(id, rv) {
       config$historical_population$population_source <- input$historical_pop_source
       # "ssa" mode bypasses historical calculation, so also set use_tr flag
       config$projected_population$use_tr_historical_population <- (input$historical_pop_source == "ssa")
+
+      # O-population method
+      if (is.null(config$historical_population$o_population)) {
+        config$historical_population$o_population <- list()
+      }
+      config$historical_population$o_population$method <- input$o_population_method
 
       # Store modified config
       modified_config(config)
