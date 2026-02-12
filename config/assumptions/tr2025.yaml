@@ -670,8 +670,8 @@ historical_population:
     # Sex split for O-population (DHS unauthorized estimates)
     male_share: 0.57
 
-    # Age distribution weights for O-population
-    # Based on DHS/CMS unauthorized population estimates
+    # Age distribution weights for O-population (used by va2_flows method)
+    # Based on DHS/CMS unauthorized population estimates (modern era)
     # Each weight applies uniformly to all single-year ages within the group
     # Weights are raw (not normalized); code normalizes to sum to 1
     age_distribution:
@@ -692,6 +692,83 @@ historical_population:
       age_65_69: 0.003     # 65-69
       age_70_79: 0.001     # 70-79
       age_80_plus: 0.0005  # 80+
+
+    # Era-based distributions for va2_flows method (Phase 6)
+    # When enabled, the va2_flows method uses era-specific age-sex distributions
+    # instead of the single static distribution above. The residual method
+    # already derives year-varying distributions from data and does not use these.
+    # Eras are applied based on year; years between eras interpolate linearly.
+    era_distributions:
+      enabled: true
+      eras:
+        # Pre-1980: Bracero-era pattern — mostly adult male agricultural workers
+        # Source: INS estimates, Bracero program records (1942-1964)
+        - start_year: 1940
+          end_year: 1979
+          male_share: 0.75
+          age_distribution:
+            age_0_4: 0.001
+            age_5_9: 0.002
+            age_10_14: 0.003
+            age_15_17: 0.010
+            age_18_19: 0.025
+            age_20_24: 0.050
+            age_25_29: 0.060
+            age_30_34: 0.050
+            age_35_39: 0.040
+            age_40_44: 0.030
+            age_45_49: 0.020
+            age_50_54: 0.010
+            age_55_59: 0.005
+            age_60_64: 0.002
+            age_65_69: 0.001
+            age_70_79: 0.0005
+            age_80_plus: 0.0001
+        # 1980-1999: Growing unauthorized immigration, more families
+        # Source: INS/CIS estimates, Warren & Passel (1987), Passel (2002)
+        - start_year: 1980
+          end_year: 1999
+          male_share: 0.65
+          age_distribution:
+            age_0_4: 0.002
+            age_5_9: 0.004
+            age_10_14: 0.006
+            age_15_17: 0.012
+            age_18_19: 0.022
+            age_20_24: 0.035
+            age_25_29: 0.045
+            age_30_34: 0.045
+            age_35_39: 0.035
+            age_40_44: 0.025
+            age_45_49: 0.018
+            age_50_54: 0.010
+            age_55_59: 0.006
+            age_60_64: 0.003
+            age_65_69: 0.002
+            age_70_79: 0.001
+            age_80_plus: 0.0003
+        # 2000+: Modern DHS-measured pattern (same as static distribution)
+        - start_year: 2000
+          end_year: 2099
+          male_share: 0.57
+          age_distribution:
+            age_0_4: 0.002
+            age_5_9: 0.005
+            age_10_14: 0.008
+            age_15_17: 0.015
+            age_18_19: 0.020
+            age_20_24: 0.025
+            age_25_29: 0.035
+            age_30_34: 0.040
+            age_35_39: 0.035
+            age_40_44: 0.025
+            age_45_49: 0.018
+            age_50_54: 0.012
+            age_55_59: 0.008
+            age_60_64: 0.005
+            age_65_69: 0.003
+            age_70_79: 0.001
+            age_80_plus: 0.0005
 
     # Emigration as fraction of LPR immigration (for O-population calculation)
     emigration_ratio: 0.25

@@ -214,8 +214,9 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
     }
 
     cli::cli_h2("Step 2: Getting Age-Sex Distribution")
-    age_sex_dist <- get_o_age_sex_distribution(ages, config)
-    cli::cli_alert_info("Distribution covers {nrow(age_sex_dist)} age-sex cells")
+    age_sex_dist <- get_o_age_sex_distribution_by_year(ages, years, config)
+    n_years_dist <- length(unique(age_sex_dist$year))
+    cli::cli_alert_info("Distribution covers {nrow(age_sex_dist)} age-sex-year cells ({n_years_dist} years)")
 
     cli::cli_h2("Step 3: Loading Mortality Data")
     mortality <- load_mortality_for_o(years, config)
@@ -288,107 +289,210 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
 # AGE-SEX DISTRIBUTION FOR O POPULATION
 # =============================================================================
 
-#' Get Age-Sex Distribution for O Population
+#' Get Static Age-Sex Distribution for O Population
 #'
 #' @description
-#' Returns the age-sex distribution to apply to annual O net flows.
-#' Based on DHS unauthorized population estimates which show working-age
-#' concentration.
+#' Returns a single static age-sex distribution from config. Used as a fallback
+#' by the residual method (when all residuals are zero for a year) and as the
+#' base distribution when era-based distributions are disabled.
 #'
-#' @param ages Integer vector: ages to include (default: 0:99)
+#' @param ages Integer vector: ages to include
+#' @param config List: configuration from tr2025.yaml
 #'
-#' @return data.table with columns: age, sex, proportion
-#'
-#' @details
-#' Distribution based on:
-#' - DHS unauthorized population estimates by age group
-#' - Unauthorized population is heavily concentrated ages 18-44
-#' - Very few children (many are US-born citizens)
-#' - Few elderly (unauthorized immigration is recent phenomenon)
+#' @return data.table with columns: age, sex, proportion (sums to 1)
 #'
 #' @keywords internal
 get_o_age_sex_distribution <- function(ages = 0:100, config = NULL) {
-  # Read O-population distribution parameters from config
+  o_cfg <- config$historical_population$o_population
+  if (is.null(o_cfg)) {
+    cli::cli_abort("Config missing {.field historical_population.o_population}")
+  }
+  build_distribution_from_weights(
+    age_dist = o_cfg$age_distribution,
+    male_share = o_cfg$male_share,
+    ages = ages
+  )
+}
+
+#' Get Year-Varying Age-Sex Distribution for O Population
+#'
+#' @description
+#' Returns a year-varying age-sex distribution for the va2_flows method.
+#' When era_distributions are enabled in config, interpolates between era-specific
+#' distributions. When disabled, returns the static distribution for all years.
+#'
+#' @param ages Integer vector: ages to include
+#' @param years Integer vector: years to produce distributions for
+#' @param config List: configuration from tr2025.yaml
+#'
+#' @return data.table with columns: year, age, sex, proportion
+#'   Proportions sum to 1 within each year.
+#'
+#' @keywords internal
+get_o_age_sex_distribution_by_year <- function(ages = 0:100, years = 1940:2022,
+                                                config = NULL) {
   o_cfg <- config$historical_population$o_population
   if (is.null(o_cfg)) {
     cli::cli_abort("Config missing {.field historical_population.o_population}")
   }
 
-  # Age distribution weights from config
-  age_dist <- o_cfg$age_distribution
-  if (is.null(age_dist)) {
-    cli::cli_abort("Config missing {.field historical_population.o_population.age_distribution}")
+  era_cfg <- o_cfg$era_distributions
+  use_eras <- isTRUE(era_cfg$enabled) && !is.null(era_cfg$eras) && length(era_cfg$eras) > 0
+
+  if (!use_eras) {
+    # No era distributions — replicate static distribution for all years
+    static <- get_o_age_sex_distribution(ages, config)
+    result_list <- lapply(years, function(yr) {
+      d <- data.table::copy(static)
+      d[, year := yr]
+      d
+    })
+    return(data.table::rbindlist(result_list, use.names = TRUE))
   }
+
+  # Build distribution for each era
+  eras <- era_cfg$eras
+  era_dists <- list()
+  era_bounds <- list()
+
+  for (i in seq_along(eras)) {
+    era <- eras[[i]]
+    if (is.null(era$age_distribution) || is.null(era$male_share)) {
+      cli::cli_abort("Era {i} missing age_distribution or male_share")
+    }
+    era_dists[[i]] <- build_distribution_from_weights(
+      age_dist = era$age_distribution,
+      male_share = era$male_share,
+      ages = ages
+    )
+    era_bounds[[i]] <- list(start = era$start_year, end = era$end_year)
+  }
+
+  # For each year, find which era(s) apply and interpolate if between eras
+  result_list <- list()
+
+  for (yr in years) {
+    # Find the era that contains this year
+    in_era <- NULL
+    for (i in seq_along(era_bounds)) {
+      if (yr >= era_bounds[[i]]$start && yr <= era_bounds[[i]]$end) {
+        in_era <- i
+        break
+      }
+    }
+
+    if (!is.null(in_era)) {
+      # Year falls within an era — use that era's distribution
+      d <- data.table::copy(era_dists[[in_era]])
+      d[, year := yr]
+      result_list[[length(result_list) + 1L]] <- d
+    } else {
+      # Year falls between eras — interpolate between adjacent eras
+      prev_era <- NULL
+      next_era <- NULL
+      for (i in seq_along(era_bounds)) {
+        if (era_bounds[[i]]$end < yr) prev_era <- i
+        if (era_bounds[[i]]$start > yr && is.null(next_era)) next_era <- i
+      }
+
+      if (!is.null(prev_era) && !is.null(next_era)) {
+        # Linear interpolation between adjacent era distributions
+        gap_start <- era_bounds[[prev_era]]$end
+        gap_end <- era_bounds[[next_era]]$start
+        weight <- (yr - gap_start) / (gap_end - gap_start)
+
+        d <- data.table::copy(era_dists[[prev_era]])
+        d_next <- era_dists[[next_era]]
+        d[, proportion := proportion * (1 - weight) + d_next$proportion * weight]
+        # Re-normalize
+        d[, proportion := proportion / sum(proportion)]
+        d[, year := yr]
+        result_list[[length(result_list) + 1L]] <- d
+      } else if (!is.null(prev_era)) {
+        # After all eras — use last era
+        d <- data.table::copy(era_dists[[prev_era]])
+        d[, year := yr]
+        result_list[[length(result_list) + 1L]] <- d
+      } else if (!is.null(next_era)) {
+        # Before all eras — use first era
+        d <- data.table::copy(era_dists[[next_era]])
+        d[, year := yr]
+        result_list[[length(result_list) + 1L]] <- d
+      } else {
+        # No eras defined — use static fallback
+        d <- data.table::copy(get_o_age_sex_distribution(ages, config))
+        d[, year := yr]
+        result_list[[length(result_list) + 1L]] <- d
+      }
+    }
+  }
+
+  result <- data.table::rbindlist(result_list, use.names = TRUE)
+  data.table::setorder(result, year, sex, age)
+  result
+}
+
+#' Build Age-Sex Distribution from Config Weights
+#'
+#' @description
+#' Helper that converts age-group weights and male_share into a normalized
+#' single-year-of-age by sex distribution.
+#'
+#' @param age_dist Named list of age group weights (age_0_4, age_5_9, etc.)
+#' @param male_share Numeric: proportion male (0-1)
+#' @param ages Integer vector: ages to include
+#'
+#' @return data.table with columns: age, sex, proportion (sums to 1)
+#'
+#' @keywords internal
+build_distribution_from_weights <- function(age_dist, male_share, ages = 0:100) {
+  if (is.null(age_dist)) {
+    cli::cli_abort("age_dist is required")
+  }
+  if (is.null(male_share)) {
+    cli::cli_abort("male_share is required")
+  }
+
   required_age_keys <- c("age_0_4", "age_5_9", "age_10_14", "age_15_17", "age_18_19",
     "age_20_24", "age_25_29", "age_30_34", "age_35_39", "age_40_44", "age_45_49",
     "age_50_54", "age_55_59", "age_60_64", "age_65_69", "age_70_79", "age_80_plus")
   missing <- setdiff(required_age_keys, names(age_dist))
   if (length(missing) > 0) {
-    cli::cli_abort("Config missing o_population.age_distribution keys: {.field {missing}}")
+    cli::cli_abort("age_distribution missing keys: {.field {missing}}")
   }
-  wt_0_4   <- age_dist$age_0_4
-  wt_5_9   <- age_dist$age_5_9
-  wt_10_14 <- age_dist$age_10_14
-  wt_15_17 <- age_dist$age_15_17
-  wt_18_19 <- age_dist$age_18_19
-  wt_20_24 <- age_dist$age_20_24
-  wt_25_29 <- age_dist$age_25_29
-  wt_30_34 <- age_dist$age_30_34
-  wt_35_39 <- age_dist$age_35_39
-  wt_40_44 <- age_dist$age_40_44
-  wt_45_49 <- age_dist$age_45_49
-  wt_50_54 <- age_dist$age_50_54
-  wt_55_59 <- age_dist$age_55_59
-  wt_60_64 <- age_dist$age_60_64
-  wt_65_69 <- age_dist$age_65_69
-  wt_70_79 <- age_dist$age_70_79
-  wt_80_pl <- age_dist$age_80_plus
 
   dist <- data.table::data.table(age = ages)
-
-  # Create distribution from config weights
   dist[, raw_prop := data.table::fcase(
-    age < 5, wt_0_4,
-    age < 10, wt_5_9,
-    age < 15, wt_10_14,
-    age < 18, wt_15_17,
-    age < 20, wt_18_19,
-    age < 25, wt_20_24,
-    age < 30, wt_25_29,
-    age < 35, wt_30_34,
-    age < 40, wt_35_39,
-    age < 45, wt_40_44,
-    age < 50, wt_45_49,
-    age < 55, wt_50_54,
-    age < 60, wt_55_59,
-    age < 65, wt_60_64,
-    age < 70, wt_65_69,
-    age < 80, wt_70_79,
-    default = wt_80_pl
+    age < 5,  age_dist$age_0_4,
+    age < 10, age_dist$age_5_9,
+    age < 15, age_dist$age_10_14,
+    age < 18, age_dist$age_15_17,
+    age < 20, age_dist$age_18_19,
+    age < 25, age_dist$age_20_24,
+    age < 30, age_dist$age_25_29,
+    age < 35, age_dist$age_30_34,
+    age < 40, age_dist$age_35_39,
+    age < 45, age_dist$age_40_44,
+    age < 50, age_dist$age_45_49,
+    age < 55, age_dist$age_50_54,
+    age < 60, age_dist$age_55_59,
+    age < 65, age_dist$age_60_64,
+    age < 70, age_dist$age_65_69,
+    age < 80, age_dist$age_70_79,
+    default = age_dist$age_80_plus
   )]
 
-  # Normalize to sum to 1
   dist[, raw_prop := raw_prop / sum(raw_prop)]
 
-  # Split by sex from config
-  if (is.null(o_cfg$male_share)) {
-    cli::cli_abort("Config missing {.field historical_population.o_population.male_share}")
-  }
-  male_share <- o_cfg$male_share
   female_share <- 1 - male_share
-
   male_dist <- data.table::copy(dist)
-  male_dist[, sex := "male"]
-  male_dist[, proportion := raw_prop * male_share]
-
+  male_dist[, `:=`(sex = "male", proportion = raw_prop * male_share)]
   female_dist <- data.table::copy(dist)
-  female_dist[, sex := "female"]
-  female_dist[, proportion := raw_prop * female_share]
+  female_dist[, `:=`(sex = "female", proportion = raw_prop * female_share)]
 
   result <- data.table::rbindlist(list(male_dist, female_dist))
   result[, raw_prop := NULL]
 
-  # Verify sums to 1
   total <- sum(result$proportion)
   if (abs(total - 1) > 0.001) {
     result[, proportion := proportion / total]
