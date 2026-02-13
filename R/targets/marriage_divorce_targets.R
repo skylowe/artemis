@@ -114,17 +114,10 @@ create_marriage_divorce_targets <- function() {
         prior_status_data = nchs_prior_status_1978_1988,
         same_sex_data = acs_same_sex_grids,
         same_sex_fraction = same_sex_fraction,
-        ultimate_amr = config_assumptions$marriage$ultimate_amr,
-        ultimate_year = config_assumptions$marriage$ultimate_year,
-        end_year = config_assumptions$metadata$projection_period$end_year,
-        min_age = config_assumptions$marriage$min_age,
-        max_age = config_assumptions$marriage$max_age,
-        acs_start = config_assumptions$marriage$acs_start,
-        acs_end = config_assumptions$marriage$acs_end,
+        config = config_assumptions,
         include_same_sex = TRUE,
         include_prior_status = TRUE,
-        force_recompute = FALSE,
-        config = config_assumptions
+        force_recompute = FALSE
       )
     ),
 

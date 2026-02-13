@@ -2015,38 +2015,22 @@ calculate_starting_amr <- function(historical_amr, n_years = 5, weights = NULL) 
 #' where progress(t) = (t - start_year) / (ultimate_year - start_year)
 #'
 #' @param starting_amr Numeric: starting AMR value
-#' @param ultimate_amr Numeric: ultimate AMR value (default: 4000, or from config)
-#' @param start_year Integer: first projection year (default: 2023, or from config)
-#' @param ultimate_year Integer: year when ultimate is reached (default: 2047, or from config)
-#' @param end_year Integer: final projection year (default: 2099, or from config)
-#' @param convergence_exp Numeric: exponent for convergence curve (default: 2)
+#' @param ultimate_amr Numeric: ultimate AMR value
+#' @param start_year Integer: first projection year
+#' @param ultimate_year Integer: year when ultimate is reached
+#' @param end_year Integer: final projection year
+#' @param convergence_exp Numeric: exponent for convergence curve.
 #'   Higher values = more gradual early change, faster late change
-#' @param config List: optional configuration object to derive year parameters
 #'
 #' @return data.table with year and projected_amr columns
 #'
 #' @export
 project_amr <- function(starting_amr,
-                        ultimate_amr = NULL,
-                        start_year = NULL,
-                        ultimate_year = NULL,
-                        end_year = NULL,
-                        convergence_exp = 2,
-                        config = NULL) {
-  # Derive parameters from config if not provided
-  if (!is.null(config)) {
-    years <- get_projection_years(config, "marriage")
-    if (is.null(start_year)) start_year <- years$projection_start
-    if (is.null(end_year)) end_year <- years$projection_end
-    if (is.null(ultimate_year)) ultimate_year <- years$ultimate_year
-    if (is.null(ultimate_amr)) ultimate_amr <- config$marriage$ultimate_amr %||% 4000
-  } else {
-    # Fallback defaults
-    if (is.null(start_year)) start_year <- 2023
-    if (is.null(ultimate_year)) ultimate_year <- 2049
-    if (is.null(end_year)) end_year <- 2099
-    if (is.null(ultimate_amr)) ultimate_amr <- 4000
-  }
+                        ultimate_amr,
+                        start_year,
+                        ultimate_year,
+                        end_year,
+                        convergence_exp) {
   checkmate::assert_number(starting_amr, lower = 0)
   checkmate::assert_number(ultimate_amr, lower = 0)
   checkmate::assert_integerish(start_year)
@@ -2147,14 +2131,15 @@ scale_margrid_to_target_amr <- function(base_margrid, target_amr, standard_pop_g
 #' @param base_margrid Matrix: base MarGrid to scale
 #' @param historical_amr data.table: historical AMR values for starting calculation
 #' @param standard_pop_grid Matrix: 2010 standard population for AMR calculation
-#' @param ultimate_amr Numeric: ultimate AMR target (default: 4000, or from config)
-#' @param start_year Integer: first projection year (default: 2023, or from config)
-#' @param ultimate_year Integer: year when ultimate is reached (default: 2047, or from config)
-#' @param end_year Integer: final projection year (default: 2099, or from config)
-#' @param convergence_exp Numeric: convergence exponent (default: 2)
+#' @param ultimate_amr Numeric: ultimate AMR target
+#' @param start_year Integer: first projection year
+#' @param ultimate_year Integer: year when ultimate is reached
+#' @param end_year Integer: final projection year
+#' @param convergence_exp Numeric: convergence exponent
+#' @param starting_amr_n_years Integer: number of years for starting AMR average
+#' @param starting_amr_weights Numeric vector or NULL: weights for starting AMR average
 #' @param cache_dir Character: directory for caching results
 #' @param force_recompute Logical: force recomputation even if cache exists
-#' @param config List: optional configuration object to derive year parameters
 #'
 #' @return list with:
 #'   - rates: List of rate matrices by year (2023-2099)
@@ -2165,29 +2150,15 @@ scale_margrid_to_target_amr <- function(base_margrid, target_amr, standard_pop_g
 project_marriage_rates <- function(base_margrid,
                                     historical_amr,
                                     standard_pop_grid,
-                                    ultimate_amr = NULL,
-                                    start_year = NULL,
-                                    ultimate_year = NULL,
-                                    end_year = NULL,
-                                    convergence_exp = 2,
+                                    ultimate_amr,
+                                    start_year,
+                                    ultimate_year,
+                                    end_year,
+                                    convergence_exp,
+                                    starting_amr_n_years,
+                                    starting_amr_weights = NULL,
                                     cache_dir = here::here("data/cache/marriage"),
-                                    force_recompute = FALSE,
-                                    config = NULL) {
-  # Derive parameters from config if not provided
-  if (!is.null(config)) {
-    years <- get_projection_years(config, "marriage")
-    if (is.null(start_year)) start_year <- years$projection_start
-    if (is.null(end_year)) end_year <- years$projection_end
-    if (is.null(ultimate_year)) ultimate_year <- years$ultimate_year
-    if (is.null(ultimate_amr)) ultimate_amr <- config$marriage$ultimate_amr %||% 4000
-  } else {
-    # Fallback defaults
-    if (is.null(start_year)) start_year <- 2023
-    if (is.null(ultimate_year)) ultimate_year <- 2049
-    if (is.null(end_year)) end_year <- 2099
-    if (is.null(ultimate_amr)) ultimate_amr <- 4000
-  }
-
+                                    force_recompute = FALSE) {
   # Check for cached results
   cache_file <- file.path(cache_dir, get_cache_filename("projected_rates", start_year, end_year))
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
@@ -2211,16 +2182,9 @@ project_marriage_rates <- function(base_margrid,
   # =========================================================================
   # STEP 1: Calculate starting AMR
   # =========================================================================
-  # Read starting AMR params from config if available
-  sa_n_years <- 5
-  sa_weights <- NULL
-  if (!is.null(config) && !is.null(config$marriage$starting_amr)) {
-    sa_n_years <- config$marriage$starting_amr$n_years %||% 5
-    sa_weights <- config$marriage$starting_amr$weights
-  }
   starting_amr <- calculate_starting_amr(historical_amr,
-                                          n_years = sa_n_years,
-                                          weights = sa_weights)
+                                          n_years = starting_amr_n_years,
+                                          weights = starting_amr_weights)
 
   # =========================================================================
   # STEP 2: Project AMR to ultimate
@@ -2795,16 +2759,15 @@ separate_marriage_types <- function(marriage_rates,
 #'   From get_2010_standard_population()
 #' @param prior_status_data Prior marital status data (1979, 1981-88)
 #'   From fetch_nchs_marriages_by_prior_status_1978_1988()
-#' @param ultimate_amr Ultimate AMR target (default: 4000)
-#' @param ultimate_year Year when ultimate is reached (default: 2049)
-#' @param end_year Final projection year (default: 2099)
+#' @param same_sex_data ACS same-sex marriage grids
+#' @param same_sex_fraction Numeric: overall same-sex marriage fraction
+#' @param config List: configuration object (required). All projection parameters
+#'   (ultimate_amr, ultimate_year, end_year, smoothing, convergence, etc.) are
+#'   read from config$marriage.
 #' @param include_same_sex Logical: separate same-sex rates (default: TRUE)
 #' @param include_prior_status Logical: apply prior status differentials (default: TRUE)
 #' @param cache_dir Directory for caching results
 #' @param force_recompute Force recomputation even if cache exists
-#' @param config List: optional configuration object. When provided, reads
-#'   smoothing params, convergence exponent, starting AMR params, standard
-#'   population year, and interpolation method from config.
 #'
 #' @return list with:
 #'   - historical_rates: Rate matrices for 1989-2022
@@ -2828,18 +2791,11 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
                                      prior_status_data = NULL,
                                      same_sex_data = NULL,
                                      same_sex_fraction = 0.045,
-                                     ultimate_amr = 4000,
-                                     ultimate_year = 2049,
-                                     end_year = 2099,
-                                     min_age = 14,
-                                     max_age = 100,
-                                     acs_start = 2008,
-                                     acs_end = 2022,
+                                     config,
                                      include_same_sex = TRUE,
                                      include_prior_status = TRUE,
                                      cache_dir = here::here("data/cache/marriage"),
-                                     force_recompute = FALSE,
-                                     config = NULL) {
+                                     force_recompute = FALSE) {
 
   # Check for complete cached result
   cache_file <- file.path(cache_dir, "marriage_projection_complete.rds")
@@ -2860,37 +2816,34 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
   # =========================================================================
   cli::cli_h2("Step 1: Building Base MarGrid (1978-1988)")
 
-  # Read config-driven parameters with fallback defaults
-  base_smooth_params <- list(h_param = 1, w_param = 1)
-  hist_smooth_params <- list(h_param = 0.5, w_param = 0.5)
-  interp_method <- "beers"
-  std_year <- 2010
-  convergence_exp <- 2
-  starting_amr_n_years <- 5
-  starting_amr_weights <- NULL
-  prior_status_years <- c(1979, 1981:1988)
-
-  if (!is.null(config) && !is.null(config$marriage)) {
-    mc <- config$marriage
-    if (!is.null(mc$smoothing$base)) {
-      base_smooth_params$h_param <- mc$smoothing$base$h_param %||% 1
-      base_smooth_params$w_param <- mc$smoothing$base$w_param %||% 1
-    }
-    if (!is.null(mc$smoothing$historical)) {
-      hist_smooth_params$h_param <- mc$smoothing$historical$h_param %||% 0.5
-      hist_smooth_params$w_param <- mc$smoothing$historical$w_param %||% 0.5
-    }
-    interp_method <- mc$interpolation_method %||% "beers"
-    std_year <- mc$standard_population_year %||% 2010
-    convergence_exp <- mc$convergence_exponent %||% 2
-    if (!is.null(mc$starting_amr)) {
-      starting_amr_n_years <- mc$starting_amr$n_years %||% 5
-      starting_amr_weights <- mc$starting_amr$weights
-    }
-    if (!is.null(mc$prior_status$years)) {
-      prior_status_years <- mc$prior_status$years
-    }
+  # Read config-driven parameters (config is required)
+  if (is.null(config) || is.null(config$marriage)) {
+    cli::cli_abort("config with marriage section is required for run_marriage_projection()")
   }
+  mc <- config$marriage
+
+  base_smooth_params <- list(
+    h_param = require_config_value(config, "marriage", "smoothing", "base", "h_param"),
+    w_param = require_config_value(config, "marriage", "smoothing", "base", "w_param")
+  )
+  hist_smooth_params <- list(
+    h_param = require_config_value(config, "marriage", "smoothing", "historical", "h_param"),
+    w_param = require_config_value(config, "marriage", "smoothing", "historical", "w_param")
+  )
+  interp_method <- require_config_value(config, "marriage", "interpolation_method")
+  std_year <- require_config_value(config, "marriage", "standard_population_year")
+  convergence_exp <- require_config_value(config, "marriage", "convergence_exponent")
+  starting_amr_n_years <- require_config_value(config, "marriage", "starting_amr", "n_years")
+  starting_amr_weights <- mc$starting_amr$weights
+  prior_status_years <- require_config_value(config, "marriage", "prior_status", "years")
+  ultimate_amr <- require_config_value(config, "marriage", "ultimate_amr")
+  ultimate_year <- require_config_value(config, "marriage", "ultimate_year")
+  start_year <- require_config_value(config, "metadata", "projection_period", "start_year")
+  end_year <- require_config_value(config, "metadata", "projection_period", "end_year")
+  min_age <- require_config_value(config, "marriage", "min_age")
+  max_age <- require_config_value(config, "marriage", "max_age")
+  acs_start <- require_config_value(config, "marriage", "acs_start")
+  acs_end <- require_config_value(config, "marriage", "acs_end")
 
   margrid_result <- build_base_margrid(
     nchs_marriages = nchs_marriages_1978_1988,
@@ -2960,12 +2913,14 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
     historical_amr = historical_result$amr,
     standard_pop_grid = standard_pop_grid,
     ultimate_amr = ultimate_amr,
+    start_year = start_year,
     ultimate_year = ultimate_year,
     end_year = end_year,
     convergence_exp = convergence_exp,
+    starting_amr_n_years = starting_amr_n_years,
+    starting_amr_weights = starting_amr_weights,
     cache_dir = cache_dir,
-    force_recompute = force_recompute,
-    config = config
+    force_recompute = force_recompute
   )
 
   # Combine all rates
@@ -3067,7 +3022,7 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
     standard_pop_grid = standard_pop_grid,
 
     # Metadata
-    projection_years = 2023:end_year,
+    projection_years = start_year:end_year,
     historical_years = as.integer(names(historical_result$rates)),
     computed_at = Sys.time(),
     elapsed_minutes = as.numeric(elapsed)
