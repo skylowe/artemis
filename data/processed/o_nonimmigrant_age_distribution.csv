@@ -1,0 +1,11 @@
+age_min,age_max,ni_weight,male_skew,source
+0,4,0.02,1.00,"DHS Yearbook visa category composition"
+5,17,0.05,1.00,"DHS Yearbook F-2 dependents"
+18,21,0.15,1.00,"DHS Yearbook F-1 students"
+22,24,0.18,1.00,"DHS Yearbook grad students/early workers"
+25,29,0.20,1.10,"DHS Yearbook peak H-1B"
+30,34,0.15,1.10,"DHS Yearbook H-1B/L-1"
+35,39,0.10,1.10,"DHS Yearbook H-1B/L-1"
+40,49,0.08,1.10,"DHS Yearbook various workers"
+50,59,0.04,0.90,"DHS Yearbook declining work visas"
+60,100,0.02,0.90,"DHS Yearbook few elderly NI"

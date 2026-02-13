@@ -1,0 +1,13 @@
+age_min,age_max,overstay_pct,source
+0,4,0.20,"Warren & Kerwin (2017); DHS Entry/Exit Overstay Reports"
+5,17,0.30,"Warren & Kerwin (2017)"
+18,24,0.55,"DHS F-1/J-1 elevated overstay; Passel & Cohn (2019)"
+25,29,0.50,"DHS Entry/Exit Overstay Reports"
+30,34,0.45,"Warren & Kerwin (2017)"
+35,39,0.40,"Warren & Kerwin (2017)"
+40,44,0.35,"Warren & Kerwin (2017)"
+45,49,0.30,"Warren & Kerwin (2017)"
+50,54,0.25,"Warren & Kerwin (2017)"
+55,59,0.22,"Warren & Kerwin (2017)"
+60,64,0.20,"Warren & Kerwin (2017)"
+65,100,0.15,"Warren & Kerwin (2017); long-term EWI residents"

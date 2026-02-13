@@ -383,46 +383,32 @@ get_type_anchor_points <- function(config = NULL) {
   y1963[, type_v := 0]
 
   # =========================================================================
-  # ANCHOR POINT 2: December 31, 2010
+  # ANCHOR POINTS 2 & 3: Load from CSV
+  # See data/processed/o_dhs_anchor_points_SOURCE.md for provenance
   # =========================================================================
-  # Based on DHS estimates for this period:
-  # - Total unauthorized: ~10.8M (DHS 2010 estimate)
-  # - Nonimmigrant stock: ~1.9M (DHS Dec 2010)
-  # - Total O: ~12.7M
-  # - Overstay proportion of unauthorized: ~40% (Warren & Kerwin)
-  #
-  # Type proportions:
-  # - I (nonimmigrant): 1.9M / 12.7M ≈ 15%
-  # - V (overstayer): 10.8M × 0.40 / 12.7M ≈ 34%
-  # - N (never-auth): remainder ≈ 51%
-  # =========================================================================
+  anchors <- load_dhs_anchor_points()
+
+  anchor_2010 <- anchors[year == 2010]
+  if (nrow(anchor_2010) == 0) {
+    cli::cli_abort("Missing 2010 anchor point in o_dhs_anchor_points.csv")
+  }
   y2010 <- calculate_anchor_from_dhs(
     reference_year = 2010,
-    total_unauthorized = 10800000,  # DHS 2010 estimate
-    total_nonimmigrant = 1900000,   # DHS Dec 2010 stock
-    overstay_pct_overall = 0.40,    # Warren & Kerwin estimate
+    total_unauthorized = anchor_2010$total_unauthorized,
+    total_nonimmigrant = anchor_2010$total_nonimmigrant,
+    overstay_pct_overall = anchor_2010$overstay_pct_overall,
     config = config
   )
 
-  # =========================================================================
-  # ANCHOR POINT 3: December 31, 2015
-  # =========================================================================
-  # Based on more recent DHS estimates:
-  # - Total unauthorized: ~10.7M (DHS 2015 estimate)
-  # - Nonimmigrant stock: ~2.1M (DHS Apr 2016, closest available)
-  # - Total O: ~12.8M
-  # - Overstay proportion: ~42% (updated Warren & Kerwin)
-  #
-  # Type proportions:
-  # - I (nonimmigrant): 2.1M / 12.8M ≈ 16%
-  # - V (overstayer): 10.7M × 0.42 / 12.8M ≈ 35%
-  # - N (never-auth): remainder ≈ 49%
-  # =========================================================================
+  anchor_2015 <- anchors[year == 2015]
+  if (nrow(anchor_2015) == 0) {
+    cli::cli_abort("Missing 2015 anchor point in o_dhs_anchor_points.csv")
+  }
   y2015 <- calculate_anchor_from_dhs(
     reference_year = 2015,
-    total_unauthorized = 10700000,  # DHS 2015 estimate
-    total_nonimmigrant = 2100000,   # DHS Apr 2016 stock
-    overstay_pct_overall = 0.42,    # Updated estimate
+    total_unauthorized = anchor_2015$total_unauthorized,
+    total_nonimmigrant = anchor_2015$total_nonimmigrant,
+    overstay_pct_overall = anchor_2015$overstay_pct_overall,
     config = config
   )
 
@@ -511,40 +497,9 @@ calculate_anchor_from_dhs <- function(reference_year,
 #'
 #' @keywords internal
 get_nonimmigrant_age_distribution <- function() {
-  ages <- 0:100
-  sexes <- c("male", "female")
-
-  result <- data.table::CJ(age = ages, sex = sexes)
-
-  # ===========================================================================
-  # Age distribution based on visa categories
-  # ===========================================================================
-  # - F-1 students: concentrated ages 18-30
-  # - H-1B workers: concentrated ages 25-45
-  # - L-1 transfers: ages 30-50
-  # - Other workers: various
-  # ===========================================================================
-  result[, ni_age_pct := data.table::fcase(
-    age < 5, 0.02,
-    age >= 5 & age < 18, 0.05,
-    age >= 18 & age < 22, 0.15,   # College students
-    age >= 22 & age < 25, 0.18,   # Grad students, early workers
-    age >= 25 & age < 30, 0.20,   # Peak H-1B
-    age >= 30 & age < 35, 0.15,
-    age >= 35 & age < 40, 0.10,
-    age >= 40 & age < 50, 0.08,
-    age >= 50 & age < 60, 0.04,
-    age >= 60, 0.02
-  )]
-
-  # Slight male skew in worker categories
-  result[sex == "male" & age >= 25 & age < 50, ni_age_pct := ni_age_pct * 1.1]
-  result[sex == "female" & age >= 25 & age < 50, ni_age_pct := ni_age_pct * 0.9]
-
-  # Normalize to sum to 1
-  result[, ni_age_pct := ni_age_pct / sum(ni_age_pct)]
-
-  result
+  # Load from CSV (see data/processed/o_nonimmigrant_age_distribution_SOURCE.md)
+  csv_data <- load_nonimmigrant_age_distribution()
+  expand_ni_to_single_age(csv_data)
 }
 
 #' Calculate ODIST with historical type interpolation
@@ -851,44 +806,13 @@ get_overstay_percentages <- function(config = NULL) {
     return(overstay)
   }
 
-  # =========================================================================
-  # HARDCODED DEFAULT VALUES
-  # =========================================================================
-  # These are approximations based on published research.
-  # SSA's internal values (TR2025 Input #25) are not publicly available.
-  #
-  # Sources:
-  # - Warren & Kerwin (2017): Overall ~42% overstay rate
+  # Load from CSV (see data/processed/o_overstay_pct_by_age_SOURCE.md)
+  cli::cli_alert_info("Loading overstay percentages from CSV")
+  csv_data <- load_overstay_percentages()
+  expanded <- expand_overstay_to_single_age(csv_data)
 
-  # - DHS Entry/Exit Overstay Reports: Higher rates for student visas
-  # - Age pattern: Young adults peak, elderly lowest
-  # =========================================================================
-
-  cli::cli_alert_info("Using default overstay percentages (HARDCODED - see documentation)")
-
-  overstay[, overstay_pct := data.table::fcase(
-    # Children: Lower rates (usually accompany unauthorized parents)
-    age < 5, 0.20,
-    age >= 5 & age < 18, 0.30,
-
-    # Young adults: Highest rates (students, tourists, temporary workers)
-    # Source: DHS shows F-1/J-1 visas have elevated overstay rates
-    age >= 18 & age < 25, 0.55,
-    age >= 25 & age < 30, 0.50,
-
-    # Middle age: Moderate rates (mixed entry modes)
-    age >= 30 & age < 35, 0.45,
-    age >= 35 & age < 40, 0.40,
-    age >= 40 & age < 45, 0.35,
-    age >= 45 & age < 50, 0.30,
-
-    # Older adults: Lower rates (long-term EWI residents)
-    # Source: Warren & Kerwin show older cohorts more likely EWI
-    age >= 50 & age < 55, 0.25,
-    age >= 55 & age < 60, 0.22,
-    age >= 60 & age < 65, 0.20,
-    age >= 65, 0.15
-  )]
+  overstay <- merge(overstay, expanded[, .(age, overstay_pct)],
+                    by = "age", all.x = TRUE)
 
   overstay
 }

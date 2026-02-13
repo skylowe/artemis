@@ -542,22 +542,9 @@ build_historical_daca <- function(eligible_population, attainment_rates,
   # - 2018-2022: Decline due to non-renewal, no new grants
   # =========================================================================
 
-  # DHS total stock by year (for calibration)
-  dhs_totals <- data.table::data.table(
-    year = 2013:2022,
-    dhs_total = c(
-      472000L,   # 2013
-      610000L,   # 2014
-      680000L,   # 2015
-      740000L,   # 2016
-      800000L,   # 2017 - peak
-      700000L,   # 2018
-      660000L,   # 2019
-      640000L,   # 2020
-      616000L,   # 2021
-      594000L    # 2022
-    )
-  )
+  # Load DHS total stock from CSV (see data/processed/daca_historical_stock_SOURCE.md)
+  daca_stock_csv <- load_daca_historical_stock()
+  dhs_totals <- daca_stock_csv[, .(year, dhs_total = total_active)]
 
   # If DHS stock provided, use it for totals
   if (!is.null(dhs_stock) && nrow(dhs_stock) > 0) {

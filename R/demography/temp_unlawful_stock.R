@@ -873,38 +873,9 @@ run_full_o_projection <- function(historical_o_pop,
 calculate_simplified_departure_rates <- function(historical_o_pop,
                                                   mortality_qx,
                                                   config = NULL) {
-  # Get departure rate config (will read from YAML or abort)
-  rate_config <- get_default_rate_config(config)
-
-  # Base departure rates by age — will be loaded from CSV in Phase 2.
-  # For now these remain inline as the values that match the CSV to be created.
-  ages <- 0:99
-  sexes <- c("male", "female")
-  types <- c("N", "I", "V")
-
-  base_rates <- data.table::CJ(age = ages, sex = sexes, type = types)
-
-  # Age-specific base rates (higher for young adults who are more mobile)
-  base_rates[, base_rate := data.table::fcase(
-    age < 5, 0.02,
-    age >= 5 & age < 18, 0.03,
-    age >= 18 & age < 25, 0.08,
-    age >= 25 & age < 35, 0.06,
-    age >= 35 & age < 45, 0.04,
-    age >= 45 & age < 55, 0.03,
-    age >= 55 & age < 65, 0.02,
-    age >= 65, 0.015
-  )]
-
-  # Type-specific adjustments from config multipliers
-  n_mult <- rate_config$n_pre_2015_multiplier %||% 1.2
-  i_mult <- rate_config$ni_initial_multiplier %||% 0.7
-  base_rates[type == "N", base_rate := base_rate * n_mult]
-  base_rates[type == "I", base_rate := base_rate * i_mult]
-  base_rates[type == "V", base_rate := base_rate * 1.0]
-
-  # Small sex difference (males slightly higher rates)
-  base_rates[sex == "male", base_rate := base_rate * 1.05]
+  # Load base departure rates from CSV
+  # (see data/processed/o_base_departure_rates_SOURCE.md)
+  base_rates <- expand_departure_rates(load_base_departure_rates())
 
   base_rates
 }

@@ -1,0 +1,9 @@
+age_min,age_max,base_rate,n_multiplier,i_multiplier,v_multiplier,male_multiplier,source
+0,4,0.020,1.2,0.7,1.0,1.05,"TR2025 Section 1.5.c methodology approximation"
+5,17,0.030,1.2,0.7,1.0,1.05,"TR2025 Section 1.5.c methodology approximation"
+18,24,0.080,1.2,0.7,1.0,1.05,"TR2025 Section 1.5.c higher mobility"
+25,34,0.060,1.2,0.7,1.0,1.05,"TR2025 Section 1.5.c"
+35,44,0.040,1.2,0.7,1.0,1.05,"TR2025 Section 1.5.c"
+45,54,0.030,1.2,0.7,1.0,1.05,"TR2025 Section 1.5.c"
+55,64,0.020,1.2,0.7,1.0,1.05,"TR2025 Section 1.5.c"
+65,99,0.015,1.2,0.7,1.0,1.05,"TR2025 Section 1.5.c"
