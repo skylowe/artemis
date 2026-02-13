@@ -104,6 +104,28 @@ calculate_o_immigration <- function(acs_new_arrivals,
 
 #' Apply undercount correction to ACS new arrivals
 #'
+#' @description
+#' Applies an undercount correction factor to ACS foreign-born new arrivals data.
+#'
+#' @section TR2025 Methodology:
+#' TR2025 uses a three-component undercount model:
+#' 1. **ACS vs DHS administrative records gap:** Compares ACS self-reported
+#'    foreign-born counts against DHS administrative records of legal admissions.
+#'    The difference reflects ACS undercount of unauthorized immigrants.
+#' 2. **ACS PUMS vs Census total population gap:** Compares PUMS microdata
+#'    totals against published Census population totals for foreign-born.
+#' 3. **Puerto Rico foreign-born:** Adds foreign-born residents of PR who
+#'    are not captured in standard ACS geographic coverage.
+#'
+#' @section ARTEMIS Deviation:
+#' ARTEMIS uses a single calibrated factor per broad age group (now configurable
+#' via `immigration.o_immigration.acs_undercount_factors` in config YAML) instead
+#' of the three-component model. The individual components are not published by
+#' SSA. The aggregate calibration captures the end-to-end undercount effect at
+#' the population level. Impact assessment: the combined factor is sufficient for
+#' population-level accuracy, as the three components are additive and the net
+#' effect is what matters for ODIST calculation.
+#'
 #' @keywords internal
 apply_undercount_to_acs <- function(acs_data, undercount_factors) {
   dt <- data.table::copy(acs_data)
@@ -380,6 +402,10 @@ get_type_splits_interpolated <- function(year,
 #' - 2015: Current proportions from DHS data
 #'
 #' @param config Optional configuration to override anchor values
+#' @param dhs_ni_stock Optional data.table with DHS nonimmigrant stock by
+#'   age group and sex (from \code{dhs_nonimmigrant_stock} target). When
+#'   provided, used for age-sex specific type I proportions instead of
+#'   flat national aggregates.
 #'
 #' @return List with data.tables for y1963, y2010, y2015
 #'
@@ -390,7 +416,7 @@ get_type_splits_interpolated <- function(year,
 #' - Overstay percentage estimates (Input #25)
 #'
 #' @export
-get_type_anchor_points <- function(config = NULL) {
+get_type_anchor_points <- function(config = NULL, dhs_ni_stock = NULL) {
   ages <- 0:100
   sexes <- c("male", "female")
 
@@ -421,7 +447,8 @@ get_type_anchor_points <- function(config = NULL) {
     total_unauthorized = anchor_2010$total_unauthorized,
     total_nonimmigrant = anchor_2010$total_nonimmigrant,
     overstay_pct_overall = anchor_2010$overstay_pct_overall,
-    config = config
+    config = config,
+    dhs_ni_stock = dhs_ni_stock
   )
 
   anchor_2015 <- anchors[year == 2015]
@@ -433,7 +460,8 @@ get_type_anchor_points <- function(config = NULL) {
     total_unauthorized = anchor_2015$total_unauthorized,
     total_nonimmigrant = anchor_2015$total_nonimmigrant,
     overstay_pct_overall = anchor_2015$overstay_pct_overall,
-    config = config
+    config = config,
+    dhs_ni_stock = dhs_ni_stock
   )
 
   list(
@@ -447,13 +475,19 @@ get_type_anchor_points <- function(config = NULL) {
 #'
 #' @description
 #' Calculates age-sex specific type proportions for a given anchor year
-#' using DHS unauthorized and nonimmigrant estimates.
+#' using DHS unauthorized and nonimmigrant estimates. When DHS NI stock
+#' data by age/sex is available, uses it for more accurate type I
+#' proportions; otherwise falls back to flat national aggregates.
 #'
 #' @param reference_year Reference year for the anchor
 #' @param total_unauthorized Total unauthorized population
 #' @param total_nonimmigrant Total nonimmigrant stock
 #' @param overstay_pct_overall Overall overstay percentage of unauthorized
 #' @param config Optional configuration
+#' @param dhs_ni_stock Optional data.table with DHS nonimmigrant stock by
+#'   age group and sex (columns: reference_year, age_min, age_max, sex,
+#'   nonimmigrant_stock). When available for the anchor year, provides
+#'   age-sex specific type I proportions instead of flat aggregates.
 #'
 #' @return data.table with type proportions by age and sex
 #'
@@ -462,36 +496,77 @@ calculate_anchor_from_dhs <- function(reference_year,
                                        total_unauthorized,
                                        total_nonimmigrant,
                                        overstay_pct_overall,
-                                       config = NULL) {
+                                       config = NULL,
+                                       dhs_ni_stock = NULL) {
   ages <- 0:100
   sexes <- c("male", "female")
 
   result <- data.table::CJ(age = ages, sex = sexes)
 
   # Total O population
-
   total_o <- total_unauthorized + total_nonimmigrant
 
   # Get age-specific overstay percentages
   overstay_by_age <- get_overstay_percentages(config)
 
-  # Get age distribution of nonimmigrants (working-age concentrated)
-  ni_age_dist <- get_nonimmigrant_age_distribution()
-
-  # Merge distributions
+  # Merge overstay percentages
   result <- merge(result, overstay_by_age[, .(age, overstay_pct)],
                   by = "age", all.x = TRUE)
-  result <- merge(result, ni_age_dist[, .(age, sex, ni_age_pct)],
-                  by = c("age", "sex"), all.x = TRUE)
-
-  # Fill missing values
   result[is.na(overstay_pct), overstay_pct := overstay_pct_overall]
-  result[is.na(ni_age_pct), ni_age_pct := 1 / (length(ages) * length(sexes))]
 
-  # Calculate type proportions
-  # Type I: Nonimmigrant proportion based on stock
-  result[, type_i := (total_nonimmigrant / total_o) * ni_age_pct * length(ages) * length(sexes)]
-  result[type_i > 0.50, type_i := 0.50]  # Cap at 50%
+  # ---------------------------------------------------------------------------
+  # Type I (nonimmigrant) proportion: use DHS NI stock if available
+  # ---------------------------------------------------------------------------
+  ni_stock_for_year <- NULL
+  if (!is.null(dhs_ni_stock) && "reference_year" %in% names(dhs_ni_stock)) {
+    anchor_yr <- reference_year  # avoid data.table column name collision
+    ni_stock_for_year <- dhs_ni_stock[reference_year == anchor_yr]
+    if (nrow(ni_stock_for_year) == 0) ni_stock_for_year <- NULL
+  }
+
+  if (!is.null(ni_stock_for_year)) {
+    # Use DHS NI stock data for age-sex specific type I proportions
+    # Expand age groups to single-year ages
+    ni_expanded <- data.table::CJ(age = ages, sex = sexes)
+    ni_expanded[, ni_stock := 0]
+    for (i in seq_len(nrow(ni_stock_for_year))) {
+      row <- ni_stock_for_year[i]
+      ni_expanded[age >= row$age_min & age <= row$age_max & sex == row$sex,
+                  ni_stock := row$nonimmigrant_stock / (row$age_max - row$age_min + 1)]
+    }
+    result <- merge(result, ni_expanded[, .(age, sex, ni_stock)],
+                    by = c("age", "sex"), all.x = TRUE)
+    result[is.na(ni_stock), ni_stock := 0]
+
+    # Type I proportion = NI stock at this age-sex / total O at this age-sex
+    # Use total O scaled by the NI distribution shape
+    result[, type_i := ni_stock / (total_o / (length(ages) * length(sexes)))]
+    result[type_i > 0.50, type_i := 0.50]  # Cap at 50%
+    result[, ni_stock := NULL]
+
+    cli::cli_alert_info(
+      "Using DHS NI stock data for {reference_year} anchor type I proportions"
+    )
+  } else {
+    # Fallback: flat national aggregate method
+    if (!is.null(dhs_ni_stock)) {
+      cli::cli_warn(c(
+        "DHS NI stock data not available for anchor year {reference_year}",
+        "i" = "Using flat national aggregate NI age distribution instead",
+        "i" = "Available reference years: {paste(unique(dhs_ni_stock$reference_year), collapse=', ')}"
+      ))
+    }
+
+    ni_age_dist <- get_nonimmigrant_age_distribution()
+    result <- merge(result, ni_age_dist[, .(age, sex, ni_age_pct)],
+                    by = c("age", "sex"), all.x = TRUE)
+    result[is.na(ni_age_pct), ni_age_pct := 1 / (length(ages) * length(sexes))]
+
+    # Type I: Nonimmigrant proportion based on stock
+    result[, type_i := (total_nonimmigrant / total_o) * ni_age_pct * length(ages) * length(sexes)]
+    result[type_i > 0.50, type_i := 0.50]  # Cap at 50%
+    result[, ni_age_pct := NULL]
+  }
 
   # Type V: Overstayer proportion of non-nonimmigrant
   result[, type_v := (1 - type_i) * overstay_pct]

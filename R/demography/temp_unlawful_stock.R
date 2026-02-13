@@ -1075,3 +1075,92 @@ validate_o_projection <- function(projection, tolerance = 0.05) {
     n_total = n_total
   )
 }
+
+# =============================================================================
+# PLACEHOLDER FUNCTIONS FOR MISSING INPUTS
+# =============================================================================
+
+#' Calibrate nonimmigrant stock to DHS admissions (Placeholder)
+#'
+#' @description
+#' Placeholder for TR2025 Input #12: DHS admissions-based NI calibration.
+#' When I-94 detail data becomes available, this function would calibrate
+#' the nonimmigrant stock estimate to DHS admission records.
+#'
+#' @param ni_stock Nonimmigrant stock by age/sex
+#' @param dhs_admissions DHS admissions data (not currently available)
+#'
+#' @return Input data unchanged (placeholder — no calibration applied)
+#'
+#' @section Missing Input:
+#' TR2025 Input #12: "DHS admissions data for nonimmigrant calibration."
+#' I-94 detail is not publicly available in the form required.
+#'
+#' @export
+calibrate_ni_to_dhs_admissions <- function(ni_stock, dhs_admissions = NULL) {
+  if (is.null(dhs_admissions)) {
+    cli::cli_alert_info(
+      "NI-DHS admissions calibration skipped (Input #12 not available; I-94 detail not public)"
+    )
+    return(ni_stock)
+  }
+  # Future: implement calibration when I-94 data available
+  ni_stock
+}
+
+#' Get nonimmigrant "other in" distribution factor (Placeholder)
+#'
+#' @description
+#' Placeholder for TR2025 Input #24: nonimmigrant "other in" factor.
+#' This factor accounts for parolees and other non-standard entries that
+#' contribute to the nonimmigrant stock but are not captured in standard
+#' DHS admission categories.
+#'
+#' @return Numeric: 1.0 (no adjustment — placeholder)
+#'
+#' @section Missing Input:
+#' TR2025 Input #24: "Distribution factor for nonimmigrant 'other in' entries."
+#' DHS parolee and EWI data at the required granularity are not publicly available.
+#'
+#' @export
+get_ni_other_in_factor <- function() {
+  cli::cli_alert_info(
+    "NI 'other in' factor returning 1.0 (Input #24 not available; parolee/EWI detail not public)"
+  )
+  1.0
+}
+
+# =============================================================================
+# KNOWN DEVIATIONS DOCUMENTATION
+# =============================================================================
+# @section Known Deviations from TR2025:
+#
+# 1. **Death timing (Deviation 1.12):** ARTEMIS uses mid-year population
+#    exposure (pop + 0.5 × immigration) for death calculation, while TR2025
+#    uses end-of-year stock. Impact: <0.1% on population levels. The mid-year
+#    approximation is standard in demographic accounting.
+#
+# 2. **Age range (Deviation 1.13):** ARTEMIS uses ages 0-100, while TR2025
+#    uses ages -1 to 99+. Age -1 represents births to O population mothers
+#    during the year, which is immaterial for O-pop stock calculations since
+#    these births enter the total population via the FERTILITY subprocess,
+#    not the O immigration subprocess.
+#
+# 3. **ACS undercount (Deviation 1.3):** ARTEMIS uses a single calibrated
+#    factor per age group instead of TR2025's three-component model
+#    (ACS-DHS gap + PUMS-Census gap + PR foreign-born). Individual
+#    components not published. See apply_undercount_to_acs() documentation.
+#
+# 4. **DHS admissions calibration (Deviation 1.8):** Not implemented.
+#    I-94 detail data at the required age/sex granularity is not publicly
+#    available. Placeholder: calibrate_ni_to_dhs_admissions().
+#
+# 5. **Departure rates (Deviation 1.5):** Derived from multiplicative
+#    adjustments on a single base rate schedule instead of TR2025's separate
+#    rate tables from the 2014 TR stock build-up. Actual SSA internal rates
+#    (Inputs #26-30) are not published.
+#
+# 6. **NI "other in" factor (Deviation 1.11):** Not implemented.
+#    DHS parolee/EWI data not available at required granularity.
+#    Placeholder: get_ni_other_in_factor().
+# =============================================================================
