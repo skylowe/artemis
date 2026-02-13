@@ -90,7 +90,7 @@ estimate_daca_eligible_population <- function(acs_2012_daca_data = NULL,
 
   # Fallback: Use internally developed estimates based on published sources
   cli::cli_alert_info("Using internally developed DACA eligibility estimates")
-  result <- get_default_daca_eligible()
+  result <- get_default_daca_eligible(config)
 
   cli::cli_alert_success(
     "DACA eligible population: {format(sum(result$eligible_population), big.mark = ',')}"
@@ -110,39 +110,37 @@ estimate_daca_eligible_population <- function(acs_2012_daca_data = NULL,
 #'
 #' @keywords internal
 get_daca_criteria <- function(config = NULL) {
-  # =========================================================================
-  # DACA 2012 ELIGIBILITY CRITERIA - HARDCODED
+  # DACA 2012 eligibility criteria
   # Source: DHS Executive Memorandum, June 15, 2012
-  # =========================================================================
+  # criminal_exclusion_factor from config: immigration.o_immigration.daca
 
   default <- list(
-    # Age requirements
-    max_age_at_announcement = 30L,  # Under 31 on June 15, 2012
-    min_birth_year = 1981L,         # Born after June 15, 1981 (approx)
-    max_age_at_entry = 15L,         # Came before 16th birthday
-
-    # Residency requirements
-    continuous_residence_since = 2007L,  # June 15, 2007
-    physical_presence_date = 2012L,      # June 15, 2012
-
-    # Application requirements
-    min_age_at_application = 15L,  # Must be at least 15 to apply
-
-    # Program timeline
+    max_age_at_announcement = 30L,
+    min_birth_year = 1981L,
+    max_age_at_entry = 15L,
+    continuous_residence_since = 2007L,
+    physical_presence_date = 2012L,
+    min_age_at_application = 15L,
     program_start_year = 2012L,
-    new_grants_cutoff = 2017L,  # No new initial grants after Sept 2017
-
-    # Criminal exclusion adjustment
-    # Estimate ~10% excluded due to criminal history (not observable in ACS)
-    criminal_exclusion_factor = 0.90  # HARDCODED
+    new_grants_cutoff = 2017L,
+    criminal_exclusion_factor = 0.90
   )
 
-  # Apply config overrides if provided
+  # Apply config overrides from YAML path
+  daca_cfg <- NULL
+  if (!is.null(config)) {
+    daca_cfg <- config$immigration$o_immigration$daca
+  }
+  if (!is.null(daca_cfg)) {
+    if (!is.null(daca_cfg$criminal_exclusion_factor)) {
+      default$criminal_exclusion_factor <- daca_cfg$criminal_exclusion_factor
+    }
+  }
+
+  # Apply direct config overrides (legacy)
   if (!is.null(config) && is.list(config)) {
-    for (name in names(config)) {
-      if (name %in% names(default)) {
-        default[[name]] <- config[[name]]
-      }
+    for (name in intersect(names(config), names(default))) {
+      default[[name]] <- config[[name]]
     }
   }
 
@@ -158,22 +156,13 @@ get_daca_criteria <- function(config = NULL) {
 #' @return data.table with eligible population by age and sex
 #'
 #' @keywords internal
-get_default_daca_eligible <- function() {
-  # =========================================================================
-  # INTERNALLY DEVELOPED DACA ELIGIBILITY ESTIMATES - HARDCODED
-  # Sources:
-  # - Migration Policy Institute (MPI): ~1.1M immediately eligible (2012)
-  # - Pew Research: ~1.0-1.2M eligible
-  # - USCIS: ~725K initial grants through 2017
-  # - Warren (2020): Estimates of DACA-eligible population
-  #
-  # Age distribution based on USCIS published age breakdowns (2017 peak)
-  # Sex split: ~54% male, ~46% female (USCIS characteristics)
-  # =========================================================================
+get_default_daca_eligible <- function(config = NULL) {
+  # DACA eligibility estimates from config or defaults
+  # Sources: MPI (~1.1M eligible 2012), Pew Research, USCIS grant data
+  daca_cfg <- NULL
+  if (!is.null(config)) daca_cfg <- config$immigration$o_immigration$daca
 
-  # Total estimated eligible (2012): approximately 1.1 million
-  # This includes those who would meet criteria but may not have applied
-  total_eligible <- 1100000L  # HARDCODED
+  total_eligible <- daca_cfg$total_eligible_2012 %||% 1100000L
 
   # Age distribution of eligibles (2012)
   # Peak ages 18-25 due to:
@@ -205,9 +194,9 @@ get_default_daca_eligible <- function() {
   # Normalize weights
   age_dist[, age_weight := age_weight / sum(age_weight)]
 
-  # Sex split
-  male_pct <- 0.54  # HARDCODED from USCIS data
-  female_pct <- 0.46
+  # Sex split from config or default
+  male_pct <- daca_cfg$male_pct %||% 0.54
+  female_pct <- 1 - male_pct
 
   # Build result
   results <- list()
@@ -326,46 +315,31 @@ calculate_daca_attainment_rates <- function(eligible_population = NULL,
 #'
 #' @keywords internal
 get_daca_rate_params <- function(config = NULL) {
-  # =========================================================================
-  # INTERNALLY DEVELOPED DACA ATTAINMENT PARAMETERS - HARDCODED
-  # Derived from comparing USCIS grants to estimated eligible population
-  #
+  # DACA attainment parameters from config YAML or defaults
   # FY 2013: 472K grants / ~1.1M eligible = ~43% first-year attainment
   # FY 2014: 123K additional / remaining eligible = ~15% second-year
   # Ultimate: Total ~725K grants / 1.1M = ~66% cumulative attainment
-  # =========================================================================
+
+  # Try YAML config path
+  att_cfg <- NULL
+  if (!is.null(config)) att_cfg <- config$immigration$o_immigration$daca$attainment
 
   default <- list(
-    # First year attainment (FY 2013)
-    first_year_base_rate = 0.43,  # HARDCODED
-
-    # Second year attainment (FY 2014)
-    second_year_base_rate = 0.15,  # HARDCODED (of remaining eligible)
-
-    # Ultimate attainment (cumulative)
-    ultimate_base_rate = 0.66,  # HARDCODED
-
-    # Age adjustments (relative to base)
-    # Younger eligible may have lower rates (still in school, less urgency)
-    # Peak ages 20-25 have highest rates
-    age_adjustment_young = 0.85,  # Ages 15-17
-    age_adjustment_peak = 1.05,   # Ages 20-25
-    age_adjustment_older = 0.95,  # Ages 26-30
-
-    # Sex adjustment (males slightly higher based on USCIS data)
-    male_adjustment = 1.02,
-    female_adjustment = 0.98,
-
-    # Decline factor for later years (program uncertainty)
-    annual_decline_factor = 0.98  # HARDCODED
+    first_year_base_rate = att_cfg$first_year_base_rate %||% 0.43,
+    second_year_base_rate = att_cfg$second_year_base_rate %||% 0.15,
+    ultimate_base_rate = att_cfg$ultimate_base_rate %||% 0.66,
+    age_adjustment_young = att_cfg$age_adjustment_young %||% 0.85,
+    age_adjustment_peak = att_cfg$age_adjustment_peak %||% 1.05,
+    age_adjustment_older = att_cfg$age_adjustment_older %||% 0.95,
+    male_adjustment = att_cfg$male_adjustment %||% 1.02,
+    female_adjustment = att_cfg$female_adjustment %||% 0.98,
+    annual_decline_factor = att_cfg$annual_decline_factor %||% 0.98
   )
 
-  # Apply config overrides
+  # Apply direct config overrides (legacy)
   if (!is.null(config) && is.list(config)) {
-    for (name in names(config)) {
-      if (name %in% names(default)) {
-        default[[name]] <- config[[name]]
-      }
+    for (name in intersect(names(config), names(default))) {
+      default[[name]] <- config[[name]]
     }
   }
 
@@ -515,43 +489,29 @@ project_daca_population <- function(eligible_population,
 #'
 #' @keywords internal
 get_daca_projection_params <- function(config = NULL) {
-  # =========================================================================
-  # DACA PROJECTION PARAMETERS - HARDCODED
-  # =========================================================================
+  # DACA projection parameters from config YAML or defaults
+  # Try YAML config path
+  proj_cfg <- NULL
+  if (!is.null(config)) proj_cfg <- config$immigration$o_immigration$daca$projection
 
   default <- list(
-    # Historical reference points
     program_start_year = 2012L,
-    peak_year = 2017L,  # ~800K recipients
+    peak_year = 2017L,
     new_grants_cutoff = 2017L,
-
-    # Attrition rates (annual)
-    # Based on decline from 800K (2017) to 580K (2023): ~5.5% annual
-    base_attrition_rate = 0.03,  # HARDCODED - base non-renewal
-    departure_rate = 0.01,       # HARDCODED - voluntary departure
-    death_rate = 0.001,          # HARDCODED - mortality (young population)
-
-    # Combined annual decline rate
-    # 2017: 800K, 2023: 580K -> (580/800)^(1/6) = 0.947 -> 5.3% decline
-    annual_decline_rate = 0.053,  # HARDCODED
-
-    # Minimum population floor (program continues for core recipients)
-    minimum_population_pct = 0.30,  # 30% of peak as floor
-
-    # Age range for active DACA
+    base_attrition_rate = proj_cfg$base_attrition_rate %||% 0.03,
+    departure_rate = proj_cfg$departure_rate %||% 0.01,
+    death_rate = proj_cfg$death_rate %||% 0.001,
+    annual_decline_rate = proj_cfg$annual_decline_rate %||% 0.053,
+    minimum_population_pct = proj_cfg$minimum_population_pct %||% 0.30,
     min_active_age = 15L,
-    max_active_age = 50L,  # Practical upper bound (aging cohort)
-
-    # TR2025 assumption: no new grants
+    max_active_age = proj_cfg$max_active_age %||% 50L,
     assume_new_grants = FALSE
   )
 
-  # Apply config overrides
+  # Apply direct config overrides (legacy)
   if (!is.null(config) && is.list(config)) {
-    for (name in names(config)) {
-      if (name %in% names(default)) {
-        default[[name]] <- config[[name]]
-      }
+    for (name in intersect(names(config), names(default))) {
+      default[[name]] <- config[[name]]
     }
   }
 

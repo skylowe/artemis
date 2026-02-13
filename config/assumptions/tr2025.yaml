@@ -419,6 +419,104 @@ immigration:
     # Note: Currently not used in code; included for documentation
     transition_gross_o: 2000000
 
+    # TR2025 Section 1.5, Input #1: year-specific gross O immigration totals
+    # "The ultimate annual level is 1,350,000 for each year beginning in 2026.
+    # The level is estimated to be 2,200,000, 2,700,000, 2,600,000, and
+    # 2,000,000 for years 2022-25, respectively."
+    total_by_year:
+      2022: 2200000
+      2023: 2700000
+      2024: 2600000
+      2025: 2000000
+      # 2026+ uses ultimate_gross_o
+
+    # -----------------------------------------------------------------------
+    # Departure rate parameters (TR2025 Section 1.5.c)
+    # -----------------------------------------------------------------------
+    # Actual SSA rates (Inputs #26-30) not published; these are approximations.
+    # Known deviation: TR2025 uses separate rate tables per type/period; ARTEMIS
+    # uses multiplicative adjustments on a single base rate schedule.
+    departure_rates:
+      n_pre_2015_multiplier: 1.20
+      n_post_2015_multiplier: 0.80
+      n_recent_arrival_multiplier: 2.0  # TR2025 explicit: "twice the rates"
+      ni_initial_multiplier: 0.70
+      ni_ultimate_multiplier: 1.00
+      ni_transition_start_year: 2015
+      ni_transition_end_year: 2025
+      v_pre_2015_multiplier: 1.10
+      v_post_2015_multiplier: 0.85
+      daca_rate_reduction: 0.50
+      recent_arrival_years: 5
+      recent_arrival_proportion: 0.30   # Pct of N that are recent arrivals
+      recession_factor: 0.85            # Recession adjustment (2008-2010 period)
+      recession_working_age_factor: 0.95
+
+    # -----------------------------------------------------------------------
+    # AOS type distribution (TR2025 LPR Immigration subprocess)
+    # -----------------------------------------------------------------------
+    # AOS (adjustment of status) comes from nonimmigrants and visa-overstayers
+    # who regularize their immigration status and become LPRs.
+    aos_type_distribution:
+      N: 0.00   # Never-authorized cannot directly adjust to LPR
+      I: 0.60   # Nonimmigrants (H-1B->GC, F-1->GC, etc.)
+      V: 0.40   # Overstayers who regularize through family/employer
+
+    # -----------------------------------------------------------------------
+    # Default type splits (N/I/V) for fallback when detailed data unavailable
+    # -----------------------------------------------------------------------
+    # Source: DHS unauthorized (~11M) + nonimmigrant (~2M) = ~13M total O
+    # N = (11M * 0.60) / 13M ≈ 50%, I = 2M / 13M ≈ 15%, V = (11M * 0.40) / 13M ≈ 35%
+    default_type_splits:
+      N: 0.50
+      I: 0.15
+      V: 0.35
+
+    # -----------------------------------------------------------------------
+    # Total O population and unauthorized estimates
+    # -----------------------------------------------------------------------
+    # Source: DHS unauthorized (~11M) + nonimmigrant stock (~2M) = ~13M
+    total_o_population: 13000000
+    total_unauthorized: 11000000
+
+    # -----------------------------------------------------------------------
+    # ACS undercount factors for O immigration calculation
+    # -----------------------------------------------------------------------
+    # TR2025 uses three-component model (ACS-DHS gap, PUMS-Census gap, PR
+    # foreign-born). ARTEMIS uses a single calibrated factor per broad age
+    # group. See deviation documentation in temp_unlawful_immigration.R.
+    acs_undercount_factors:
+      age_0_17: 1.05
+      age_18_34: 1.10
+      age_35_49: 1.08
+      age_50_64: 1.03
+      age_65_plus: 1.01
+
+    # -----------------------------------------------------------------------
+    # DACA (Deferred Action for Childhood Arrivals) parameters
+    # -----------------------------------------------------------------------
+    daca:
+      total_eligible_2012: 1100000
+      male_pct: 0.54
+      criminal_exclusion_factor: 0.90
+      attainment:
+        first_year_base_rate: 0.43   # 472K grants / 1.1M eligible
+        second_year_base_rate: 0.15  # 123K / remaining
+        ultimate_base_rate: 0.66     # 725K total / 1.1M
+        age_adjustment_young: 0.85
+        age_adjustment_peak: 1.05
+        age_adjustment_older: 0.95
+        male_adjustment: 1.02
+        female_adjustment: 0.98
+        annual_decline_factor: 0.98
+      projection:
+        base_attrition_rate: 0.03
+        departure_rate: 0.01
+        death_rate: 0.001
+        annual_decline_rate: 0.053
+        minimum_population_pct: 0.30
+        max_active_age: 50
+
 # =========================================================================
 # Marriage Configuration (TR2025 Intermediate Assumptions)
 # =========================================================================

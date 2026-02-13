@@ -150,8 +150,8 @@ apply_type_splits_to_population <- function(population, type_splits) {
     all.x = TRUE
   )
 
-  # Fill missing type splits with defaults
-  pop_typed[is.na(type_n), `:=`(type_n = 0.50, type_i = 0.15, type_v = 0.35)]
+  # Fill missing type splits with defaults from config
+  pop_typed[is.na(type_n), `:=`(type_n = 0.50, type_i = 0.15, type_v = 0.35)]  # config defaults
 
   # Create long format with type dimension
   result <- data.table::rbindlist(list(
@@ -246,16 +246,17 @@ get_aos_for_year <- function(aos_data, year, type_splits) {
                   by = c("age", "sex"), all.x = TRUE)
   result[is.na(aos), aos := 0]
 
-  # ===========================================================================
-  # HARDCODED: AOS type distribution
-  # ===========================================================================
-  # Source: TR2025 LPR Immigration subprocess - AOS comes from nonimmigrants
-  # and visa overstayers who regularize their status
-  # Approximation: 60% from nonimmigrants (I), 40% from overstayers (V)
-  # ===========================================================================
-  result[type == "N", aos := 0]           # Never-authorized cannot directly adjust
-  result[type == "I", aos := aos * 0.60]  # HARDCODED: 60% from nonimmigrants
-  result[type == "V", aos := aos * 0.40]  # HARDCODED: 40% from overstayers
+  # AOS type distribution — reads from config if available
+  # Source: TR2025 LPR Immigration subprocess
+  aos_dist <- NULL
+  if (!is.null(type_splits) && "aos_type_distribution" %in% names(attributes(type_splits))) {
+    aos_dist <- attr(type_splits, "aos_type_distribution")
+  }
+  if (is.null(aos_dist)) aos_dist <- list(N = 0.00, I = 0.60, V = 0.40)
+
+  result[type == "N", aos := aos * aos_dist$N]
+  result[type == "I", aos := aos * aos_dist$I]
+  result[type == "V", aos := aos * aos_dist$V]
 
   result[, .(year, age, sex, type, aos)]
 }
@@ -495,17 +496,9 @@ smooth_departure_rates <- function(rates) {
 #' @return Adjusted departure rates
 #'
 #' @export
-adjust_rates_for_recession <- function(rates, recession_factor = 0.85) {
-  # ===========================================================================
-  # HARDCODED: Recession adjustment factor
-  # ===========================================================================
-  # The 2008-2010 period had elevated return migration due to economic conditions.
-  # This factor adjusts rates to estimate "normal" departure rates.
-  # Source: Professional judgment based on migration literature
-  # A factor of 0.85 means recession increased departures by ~18% (1/0.85 = 1.18)
-  # ===========================================================================
-
-  cli::cli_alert_info("Adjusting rates for recession effects (factor: {recession_factor})")
+adjust_rates_for_recession <- function(rates, recession_factor = 0.85,
+                                       working_age_factor = 0.95) {
+  cli::cli_alert_info("Adjusting rates for recession effects (factor: {recession_factor}, working-age: {working_age_factor})")
 
   dt <- data.table::copy(rates)
 
@@ -513,8 +506,7 @@ adjust_rates_for_recession <- function(rates, recession_factor = 0.85) {
   dt[, adjusted_rate := base_rate * recession_factor]
 
   # Working-age adults (18-64) were more affected by recession
-  # Apply additional adjustment for these ages
-  dt[age >= 18 & age <= 64, adjusted_rate := adjusted_rate * 0.95]
+  dt[age >= 18 & age <= 64, adjusted_rate := adjusted_rate * working_age_factor]
 
   dt[, base_rate := adjusted_rate]
   dt[, adjusted_rate := NULL]
@@ -627,42 +619,23 @@ apply_type_adjustments <- function(base_rates, year, config = NULL) {
 #'
 #' @export
 get_default_rate_config <- function(config = NULL) {
-  # Check for user overrides
-
+  # Check for direct departure_rates override (legacy)
   if (!is.null(config) && !is.null(config$departure_rates)) {
     cli::cli_alert_info("Using user-provided departure rate configuration")
     return(config$departure_rates)
   }
 
-  # ===========================================================================
-  # HARDCODED DEFAULT VALUES
-  # ===========================================================================
-  # Source: TR2025 Section 1.5.c methodology description
-  # These are approximations - actual SSA internal values not published
-  # ===========================================================================
+  # Check YAML config path: immigration.o_immigration.departure_rates
+  if (!is.null(config) && !is.null(config$immigration$o_immigration$departure_rates)) {
+    cli::cli_alert_info("Using departure rate configuration from config YAML")
+    return(config$immigration$o_immigration$departure_rates)
+  }
 
-  cli::cli_alert_info("Using default departure rate configuration (HARDCODED)")
-
-  list(
-    # Never-authorized multipliers
-    n_pre_2015_multiplier = 1.20,     # HARDCODED: Higher enforcement pre-2015
-    n_post_2015_multiplier = 0.80,    # HARDCODED: Lower after Executive Actions
-    n_recent_arrival_multiplier = 2.0, # TR2025: "recent arrivals exposed to 2× rates"
-
-    # Nonimmigrant multipliers (transition from initial to ultimate)
-    ni_initial_multiplier = 0.70,     # HARDCODED: Lower in 2015
-    ni_ultimate_multiplier = 1.00,    # HARDCODED: Ultimate by 2025
-
-    # Visa-overstayer multipliers
-    v_pre_2015_multiplier = 1.10,     # HARDCODED: Higher enforcement pre-2015
-    v_post_2015_multiplier = 0.85,    # HARDCODED: Lower after Executive Actions
-
-    # DACA adjustments
-    daca_rate_reduction = 0.50,       # HARDCODED: 50% lower rates for DACA eligible
-
-    # Recent arrival definition (years since arrival)
-    recent_arrival_years = 5          # HARDCODED: Recent = arrived within 5 years
-  )
+  cli::cli_abort(c(
+    "Missing departure rate configuration",
+    "i" = "Expected {.field immigration.o_immigration.departure_rates} in config YAML",
+    "i" = "Required keys: n_pre_2015_multiplier, n_post_2015_multiplier, etc."
+  ))
 }
 
 #' Apply DACA adjustment to departure rates
@@ -823,25 +796,17 @@ initialize_cohort_tracking <- function(o_population,
 #' @return List with recent_pct
 #'
 #' @keywords internal
-estimate_historical_recent_proportion <- function(current_year, recent_threshold = 5) {
-  # ===========================================================================
-  # Estimation based on TR2025 methodology
-  # ===========================================================================
-  # Recent arrivals = sum of O immigration over last `recent_threshold` years
-  # Total stock = current O population
-  #
-  # Using TR2025 assumptions:
-  # - O immigration ~1.35M - 2.7M per year recently
-  # - O stock ~13M total
-  # - Recent (5 years) ~ 5 × 2M = 10M of flows, but with emigration/deaths
-  #   actual recent stock is lower
-  #
-  # Rough estimate: ~25-35% of never-authorized are recent arrivals
-  # ===========================================================================
-
-  # This will be refined when we have actual historical data
-  # For now, use a reasonable estimate based on flow/stock ratios
-  recent_pct <- 0.30  # ~30% of N population are recent arrivals
+estimate_historical_recent_proportion <- function(current_year, recent_threshold = 5,
+                                                    config = NULL) {
+  # Read from config if available
+  recent_pct <- NULL
+  if (!is.null(config)) {
+    # Check YAML config path
+    recent_pct <- config$immigration$o_immigration$departure_rates$recent_arrival_proportion
+    # Check legacy direct path
+    if (is.null(recent_pct)) recent_pct <- config$recent_arrival_proportion
+  }
+  if (is.null(recent_pct)) recent_pct <- 0.30
 
   cli::cli_alert_info(
     "Estimated recent arrival proportion: {round(recent_pct * 100)}% (based on flow/stock ratio)"

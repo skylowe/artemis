@@ -145,26 +145,22 @@ calculate_net_o_immigration <- function(o_immigration, o_emigration, aos) {
 #' @return AOS data with type dimension
 #'
 #' @keywords internal
-distribute_aos_to_types <- function(aos) {
+distribute_aos_to_types <- function(aos, config = NULL) {
   dt <- data.table::copy(aos)
 
-  # ===========================================================================
-  # HARDCODED: AOS type distribution
-  # ===========================================================================
+  # AOS type distribution from config or defaults
   # Source: TR2025 LPR Immigration subprocess
-  # AOS comes primarily from nonimmigrants who adjust to LPR (e.g., employment-
-  # based, family-sponsored), and visa-overstayers who regularize.
-  # Never-authorized cannot directly adjust (would need to leave and re-enter).
-  #
-  # Approximation based on DHS LPR reports:
-  # - ~60% from nonimmigrants (I): H-1B→green card, F-1→green card, etc.
-  # - ~40% from overstayers (V): Those who regularize through family/employer
-  # - 0% from never-authorized (N): Cannot directly adjust
-  # ===========================================================================
+  aos_dist <- NULL
+  if (!is.null(config)) {
+    aos_dist <- config$immigration$o_immigration$aos_type_distribution
+  }
+  if (is.null(aos_dist)) {
+    aos_dist <- list(N = 0.00, I = 0.60, V = 0.40)
+  }
 
   type_dist <- data.table::data.table(
     type = c("N", "I", "V"),
-    type_pct = c(0.00, 0.60, 0.40)  # HARDCODED
+    type_pct = c(aos_dist$N, aos_dist$I, aos_dist$V)
   )
 
   # Expand AOS to include type
@@ -402,7 +398,13 @@ age_o_population <- function(population) {
 #' Applies historical type interpolation to add type dimension.
 #'
 #' @keywords internal
-add_type_dimension <- function(population, year) {
+add_type_dimension <- function(population, year, config = NULL) {
+  # Read default type splits from config if available
+  ds <- if (!is.null(config)) config$immigration$o_immigration$default_type_splits else NULL
+  def_n <- ds$N %||% 0.50
+  def_i <- ds$I %||% 0.15
+  def_v <- ds$V %||% 0.35
+
   # Get type splits for the year
   type_splits <- tryCatch({
     get_type_splits_interpolated(
@@ -411,13 +413,13 @@ add_type_dimension <- function(population, year) {
       sex = unique(population$sex)
     )
   }, error = function(e) {
-    # Fallback to default splits
+    # Fallback to config-provided default splits
     ages <- unique(population$age)
     sexes <- unique(population$sex)
     dt <- data.table::CJ(age = ages, sex = sexes)
-    dt[, type_n := 0.50]
-    dt[, type_i := 0.15]
-    dt[, type_v := 0.35]
+    dt[, type_n := def_n]
+    dt[, type_i := def_i]
+    dt[, type_v := def_v]
     dt
   })
 
@@ -425,7 +427,7 @@ add_type_dimension <- function(population, year) {
   merged <- merge(population, type_splits, by = c("age", "sex"), all.x = TRUE)
 
   # Fill missing
-  merged[is.na(type_n), `:=`(type_n = 0.50, type_i = 0.15, type_v = 0.35)]
+  merged[is.na(type_n), `:=`(type_n = def_n, type_i = def_i, type_v = def_v)]
 
   # Create long format
   result <- data.table::rbindlist(list(
@@ -871,32 +873,22 @@ run_full_o_projection <- function(historical_o_pop,
 calculate_simplified_departure_rates <- function(historical_o_pop,
                                                   mortality_qx,
                                                   config = NULL) {
-  if (is.null(config)) {
-    config <- get_default_rate_config()
-  }
+  # Get departure rate config (will read from YAML or abort)
+  rate_config <- get_default_rate_config(config)
 
-  # ===========================================================================
-  # HARDCODED BASE DEPARTURE RATES
-  # ===========================================================================
-  # When detailed 2008-2010 data is not available, use estimates based on
-  # TR2025 methodology description and migration literature.
-  #
-  # Per TR2025: "rates are calculated by dividing OE by OP for each age, sex, type"
-  # These are approximations of those rates.
-  # ===========================================================================
-
+  # Base departure rates by age — will be loaded from CSV in Phase 2.
+  # For now these remain inline as the values that match the CSV to be created.
   ages <- 0:99
   sexes <- c("male", "female")
   types <- c("N", "I", "V")
 
-  # Create base rates grid
   base_rates <- data.table::CJ(age = ages, sex = sexes, type = types)
 
   # Age-specific base rates (higher for young adults who are more mobile)
   base_rates[, base_rate := data.table::fcase(
     age < 5, 0.02,
     age >= 5 & age < 18, 0.03,
-    age >= 18 & age < 25, 0.08,   # Higher mobility
+    age >= 18 & age < 25, 0.08,
     age >= 25 & age < 35, 0.06,
     age >= 35 & age < 45, 0.04,
     age >= 45 & age < 55, 0.03,
@@ -904,14 +896,11 @@ calculate_simplified_departure_rates <- function(historical_o_pop,
     age >= 65, 0.015
   )]
 
-  # Type-specific adjustments
-  # Never-authorized: Higher base rates (more vulnerable to deportation)
-  base_rates[type == "N", base_rate := base_rate * 1.2]
-
-  # Nonimmigrants: Lower rates (legal status, employment ties)
-  base_rates[type == "I", base_rate := base_rate * 0.7]
-
-  # Visa-overstayers: Medium rates
+  # Type-specific adjustments from config multipliers
+  n_mult <- rate_config$n_pre_2015_multiplier %||% 1.2
+  i_mult <- rate_config$ni_initial_multiplier %||% 0.7
+  base_rates[type == "N", base_rate := base_rate * n_mult]
+  base_rates[type == "I", base_rate := base_rate * i_mult]
   base_rates[type == "V", base_rate := base_rate * 1.0]
 
   # Small sex difference (males slightly higher rates)

@@ -1023,17 +1023,23 @@ get_nonimmigrant_stock_distribution <- function(config = NULL) {
   # Convert to single-year ages using simple interpolation
   result <- interpolate_ni_to_single_age(ni_2016)
 
-  # ===========================================================================
-  # HARDCODED: Total O population estimate
-  # ===========================================================================
-  # Source: DHS unauthorized (~11M) + nonimmigrant stock (~2M) = ~13M
-  # This can be overridden via config$total_o_population
-  # ===========================================================================
-  if (!is.null(config) && !is.null(config$total_o_population)) {
-    total_o <- config$total_o_population
-    cli::cli_alert_info("Using user-provided total O population: {format(total_o, big.mark = ',')}")
-  } else {
-    total_o <- 13000000  # HARDCODED: Approximate total O population
+  # Total O population from config or legacy override
+  total_o <- NULL
+  if (!is.null(config)) {
+    # Check legacy override
+    if (!is.null(config$total_o_population)) {
+      total_o <- config$total_o_population
+    }
+    # Check YAML config path
+    if (is.null(total_o) && !is.null(config$immigration$o_immigration$total_o_population)) {
+      total_o <- config$immigration$o_immigration$total_o_population
+    }
+  }
+  if (is.null(total_o)) {
+    cli::cli_abort(c(
+      "Missing total O population estimate",
+      "i" = "Set {.field immigration.o_immigration.total_o_population} in config YAML"
+    ))
   }
 
   result[, ni_pct := count / total_o]
@@ -1130,7 +1136,7 @@ get_default_ni_distribution <- function() {
 #' - Total unauthorized: ~11M; Total O population: ~13M (ratio = 0.846)
 #'
 #' @keywords internal
-get_unauthorized_distribution <- function() {
+get_unauthorized_distribution <- function(config = NULL) {
   # Load DHS unauthorized age distribution (from Phase 5B)
   unauth_dist <- tryCatch({
     source(here::here("R/data_acquisition/acs_foreign_born.R"), local = TRUE)
@@ -1140,18 +1146,17 @@ get_unauthorized_distribution <- function() {
     return(NULL)
   })
 
+  # Get config values for population ratio conversion
+  o_cfg <- if (!is.null(config)) config$immigration$o_immigration else NULL
+  unauth_total <- o_cfg$total_unauthorized %||% 11000000
+  total_o <- o_cfg$total_o_population %||% 13000000
+
   if (is.null(unauth_dist)) {
-    # =========================================================================
-    # HARDCODED FALLBACK VALUES
-    # =========================================================================
-    # Used when DHS unauthorized data cannot be loaded.
-    # 85% unauthorized is a rough approximation (11M of 13M total O)
-    # =========================================================================
-    cli::cli_alert_warning("Using default unauthorized distribution (HARDCODED fallback)")
+    cli::cli_alert_warning("Using default unauthorized distribution (fallback)")
     ages <- 0:100
     sexes <- c("male", "female")
     result <- data.table::CJ(age = ages, sex = sexes)
-    result[, unauth_pct := 0.85]  # HARDCODED: Default to 85% unauthorized
+    result[, unauth_pct := unauth_total / total_o]  # ~0.846
     return(result)
   }
 
@@ -1172,17 +1177,9 @@ get_unauthorized_distribution <- function() {
   # Merge
   result <- merge(result, unauth_dist[, .(age_group, unauthorized_pct)],
                   by = "age_group", all.x = TRUE)
-  result[is.na(unauthorized_pct), unauthorized_pct := 0.25]  # HARDCODED fallback
+  result[is.na(unauthorized_pct), unauthorized_pct := 0.25]
 
-  # ===========================================================================
-  # HARDCODED: Population ratio conversion
-  # ===========================================================================
-  # unauthorized_pct here is share of total unauthorized, not share of O
-  # Convert to approximate share of O population
-  # Source: DHS unauthorized ~11M, nonimmigrant ~2M, Total O ~13M
-  # ===========================================================================
-  unauth_total <- 11000000  # HARDCODED: DHS unauthorized estimate
-  total_o <- 13000000       # HARDCODED: Total O population estimate
+  # Population ratio conversion: unauthorized share → share of total O
   result[, unauth_pct := unauthorized_pct * (unauth_total / total_o)]
 
   result[, .(age, sex, unauth_pct)]
@@ -1247,32 +1244,42 @@ project_o_immigration <- function(total_o, odist) {
 #'
 #' @export
 get_tr_o_immigration_assumptions <- function(years = 2022:2099, config = NULL) {
-  # Check for user-provided configuration
+  # Check for legacy user-provided data.table override
   if (!is.null(config) && !is.null(config$o_immigration_by_year)) {
-    cli::cli_alert_info("Using user-provided O immigration assumptions")
+    cli::cli_alert_info("Using user-provided O immigration assumptions (data.table override)")
     user_config <- config$o_immigration_by_year
     result <- user_config[year %in% years]
     return(result)
   }
 
-  # =========================================================================
-  # HARDCODED VALUES FROM TR2025
-  # =========================================================================
-  # Source: TR2025 Section 1.5 - Temporary or Unlawfully Present Immigration
-  # These values represent Trustees' assumptions for total O immigration.
-  # =========================================================================
+  # Read from config YAML: immigration.o_immigration section
+  o_config <- config$immigration$o_immigration
+  if (is.null(o_config)) {
+    cli::cli_abort(c(
+      "Missing O immigration config section",
+      "i" = "Expected {.field immigration.o_immigration} in config YAML",
+      "i" = "Required keys: {.field total_by_year}, {.field ultimate_gross_o}"
+    ))
+  }
 
-  cli::cli_alert_info("Using TR2025 O immigration assumptions (HARDCODED)")
+  total_by_year <- o_config$total_by_year
+  ultimate <- o_config$ultimate_gross_o
+  if (is.null(ultimate)) {
+    cli::cli_abort("Missing {.field immigration.o_immigration.ultimate_gross_o} in config")
+  }
 
   result <- data.table::data.table(year = years)
 
-  result[, total_o := data.table::fcase(
-    year == 2022, 2200000,   # HARDCODED: TR2025 estimate
-    year == 2023, 2700000,   # HARDCODED: TR2025 estimate
-    year == 2024, 2600000,   # HARDCODED: TR2025 estimate
-    year == 2025, 2000000,   # HARDCODED: TR2025 estimate
-    year >= 2026, 1350000    # HARDCODED: TR2025 ultimate level
-  )]
+  # Apply year-specific totals from config, fall back to ultimate
+  result[, total_o := ultimate]
+  if (!is.null(total_by_year)) {
+    for (yr_str in names(total_by_year)) {
+      yr <- as.integer(yr_str)
+      result[year == yr, total_o := total_by_year[[yr_str]]]
+    }
+  }
+
+  cli::cli_alert_info("O immigration assumptions: {length(years)} years, ultimate={format(ultimate, big.mark=',')}")
 
   result
 }
