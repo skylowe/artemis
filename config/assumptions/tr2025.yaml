@@ -571,24 +571,33 @@ marriage:
   # Interpolation method: "beers" (TR2025) or "uniform" (legacy)
   interpolation_method: "beers"
 
-  # SS area factor override (null = compute from historical population cache)
+  # SS area factor: ratio of SS area population to U.S. resident population.
+  # Computed dynamically from historical population cache (~1.019 to ~1.027).
+  # Set to a numeric value to override (e.g., 1.02); null = compute from cache.
   ss_area_factor_override: null
 
   # Same-sex marriage configuration
-  # NOTE: TR2025 uses state-level data (2004-2012) we don't have access to
-  # We use ACS PUMS instead - documented methodology deviation
+  # DEVIATION: TR2025 Input #15 uses state vital statistics (2004-2012) for
+  # same-sex marriage counts. These are not centrally published. ARTEMIS uses
+  # ACS PUMS prevalence patterns (reference_years below) with a linear ramp
+  # for 2004-2014 (pre-Obergefell). To swap data source, replace the
+  # fetch_acs_same_sex_grids() function and update reference_years.
   same_sex:
     reference_years: [2015, 2016, 2017, 2018, 2019]
-    default_fraction: 0.045
-    default_mm_share: 0.459
-    default_ff_share: 0.541
-    min_count_threshold: 10
+    default_fraction: 0.045       # Overall SS fraction from ACS 2015-2019
+    default_mm_share: 0.459       # Male-male share of SS marriages (ACS)
+    default_ff_share: 0.541       # Female-female share (ACS)
+    min_count_threshold: 10       # Min cell count before using overall fraction
 
   # Prior marital status differentials (TR2025 Step 11)
+  # DEVIATION: TR2025 Input #10 uses MRA-specific unmarried population by
+  # prior status (1982-1988). Not in NBER public archive. ARTEMIS uses CPS
+  # national unmarried population as a proxy. To swap, implement an MRA
+  # population loader and change population_source to "mra".
   prior_status:
     years: [1979, 1981, 1982, 1983, 1984, 1985, 1986, 1987, 1988]
     n_statuses: 3
-    population_source: "cps"  # "cps" or "mra" (MRA not publicly available)
+    population_source: "cps"  # "cps" (national proxy) or "mra" (if available)
 
 # Divorce Configuration (TR2025 Intermediate Assumptions)
 # =========================================================================

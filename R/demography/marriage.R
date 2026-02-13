@@ -8,6 +8,41 @@
 #' - AMR^z: Age-adjusted central marriage rate (Eq 1.6.2)
 #' - MarGrid: 87×87 matrix of marriage rates (ages 14-100+)
 #'
+#' @section Methodology Deviations from TR2025:
+#'
+#' The following TR2025 inputs are unavailable publicly. ARTEMIS uses the
+#' best available public substitutes. Each deviation is documented with
+#' (a) what TR2025 requires, (b) what ARTEMIS uses, and (c) the config
+#' path for swapping in the correct data if it becomes available.
+#'
+#' \strong{Input #5 — MRA unmarried population (1978-1988):}
+#' TR2025 uses unmarried men and women counts from Marriage Registration Area
+#' (MRA) states for 1978-1988. These are not in the NBER public archive.
+#' ARTEMIS uses CPS national unmarried population (Input #14) as the
+#' denominator for base MarGrid rate computation. Impact: rates reflect
+#' national rather than MRA-specific marriage propensity. The SS area factor
+#' partially compensates when scaling to NCHS totals.
+#'
+#' \strong{Input #7 — MRA-to-national total adjustment (1957-1988):}
+#' TR2025 uses MRA marriage totals minus marriages in states not included in
+#' the MRA unmarried population count, for calibrating the MRA-to-U.S.
+#' scaling. The MRA state composition by year is not publicly documented.
+#' ARTEMIS omits this adjustment; the SS area factor (computed from
+#' historical population components) partially compensates.
+#'
+#' \strong{Input #10 — MRA unmarried population by prior status (1982-1988):}
+#' TR2025 uses MRA-specific unmarried population by age, sex, and prior
+#' marital status for computing rate-based differentials (Step 11). Not in
+#' the NBER archive. ARTEMIS uses CPS national unmarried population by prior
+#' status as a proxy. Config: \code{marriage.prior_status.population_source}.
+#'
+#' \strong{Input #15 — State vital statistics same-sex marriages (2004-2012):}
+#' TR2025 uses same-sex marriage counts from state vital statistics offices
+#' for 2004-2012 (pre-Obergefell). These are not centrally published.
+#' ARTEMIS uses ACS PUMS (2015-2022) to estimate same-sex prevalence
+#' patterns, with a linear ramp for 2004-2014.
+#' Config: \code{marriage.same_sex.reference_years}.
+#'
 #' @name marriage
 NULL
 
