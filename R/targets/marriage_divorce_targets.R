@@ -123,7 +123,8 @@ create_marriage_divorce_targets <- function() {
         acs_end = config_assumptions$marriage$acs_end,
         include_same_sex = TRUE,
         include_prior_status = TRUE,
-        force_recompute = FALSE
+        force_recompute = FALSE,
+        config = config_assumptions
       )
     ),
 

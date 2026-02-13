@@ -527,9 +527,11 @@ marriage:
   # Per 100,000 unmarried couples (geometric mean of male and female)
   ultimate_amr: 4000
 
-  # Year when ultimate AMR is reached (year 25 from first projection year)
-  # 2023 + 24 = 2047
-  ultimate_year: 2047
+  # Year when ultimate AMR is reached
+  # TR2025 Section 1.6.a, Input #3: "The AMR reaches its ultimate value in the
+  # 25th year of the 75-year projection period." The 75-year projection period
+  # is 2025-2099 (Section 0). So: 2025 + 24 = 2049.
+  ultimate_year: 2049
 
   # Age range for MarGrid
   min_age: 14
@@ -539,11 +541,54 @@ marriage:
   acs_start: 2008
   acs_end: 2022
 
+  # TR2025 Section 1.6.b, Input #13: standard population year
+  standard_population_year: 2010
+
+  # Convergence: AMR(t) = ultimate + (starting - ultimate) * (1 - progress)^exponent
+  # TR2025 Section 1.6.c Step 8: "annual rate of change decreases in absolute value"
+  convergence_exponent: 2
+
+  # Starting AMR = weighted avg of last N historical years
+  # TR2025 Section 1.6.c Step 7: "weighted average of the rates for the past five
+  # historical data years"
+  starting_amr:
+    n_years: 5
+    weights: null  # null = equal weights; TR2025 says "weighted" but doesn't publish weights
+
+  # Whittaker-Henderson smoothing parameters
+  # TR2025 Section 1.6.c: "graduated using the two-dimensional Whittaker-Henderson method"
+  smoothing:
+    base:
+      h_param: 1.0
+      w_param: 1.0
+    historical:
+      h_param: 0.5
+      w_param: 0.5
+    max_iter: 100
+    tol: 1.0e-6
+    d: 2
+
+  # Interpolation method: "beers" (TR2025) or "uniform" (legacy)
+  interpolation_method: "beers"
+
+  # SS area factor override (null = compute from historical population cache)
+  ss_area_factor_override: null
+
   # Same-sex marriage configuration
   # NOTE: TR2025 uses state-level data (2004-2012) we don't have access to
   # We use ACS PUMS instead - documented methodology deviation
   same_sex:
     reference_years: [2015, 2016, 2017, 2018, 2019]
+    default_fraction: 0.045
+    default_mm_share: 0.459
+    default_ff_share: 0.541
+    min_count_threshold: 10
+
+  # Prior marital status differentials (TR2025 Step 11)
+  prior_status:
+    years: [1979, 1981, 1982, 1983, 1984, 1985, 1986, 1987, 1988]
+    n_statuses: 3
+    population_source: "cps"  # "cps" or "mra" (MRA not publicly available)
 
 # Divorce Configuration (TR2025 Intermediate Assumptions)
 # =========================================================================

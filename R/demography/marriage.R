@@ -2000,7 +2000,7 @@ project_amr <- function(starting_amr,
   } else {
     # Fallback defaults
     if (is.null(start_year)) start_year <- 2023
-    if (is.null(ultimate_year)) ultimate_year <- 2047
+    if (is.null(ultimate_year)) ultimate_year <- 2049
     if (is.null(end_year)) end_year <- 2099
     if (is.null(ultimate_amr)) ultimate_amr <- 4000
   }
@@ -2140,7 +2140,7 @@ project_marriage_rates <- function(base_margrid,
   } else {
     # Fallback defaults
     if (is.null(start_year)) start_year <- 2023
-    if (is.null(ultimate_year)) ultimate_year <- 2047
+    if (is.null(ultimate_year)) ultimate_year <- 2049
     if (is.null(end_year)) end_year <- 2099
     if (is.null(ultimate_amr)) ultimate_amr <- 4000
   }
@@ -2168,7 +2168,16 @@ project_marriage_rates <- function(base_margrid,
   # =========================================================================
   # STEP 1: Calculate starting AMR
   # =========================================================================
-  starting_amr <- calculate_starting_amr(historical_amr, n_years = 5)
+  # Read starting AMR params from config if available
+  sa_n_years <- 5
+  sa_weights <- NULL
+  if (!is.null(config) && !is.null(config$marriage$starting_amr)) {
+    sa_n_years <- config$marriage$starting_amr$n_years %||% 5
+    sa_weights <- config$marriage$starting_amr$weights
+  }
+  starting_amr <- calculate_starting_amr(historical_amr,
+                                          n_years = sa_n_years,
+                                          weights = sa_weights)
 
   # =========================================================================
   # STEP 2: Project AMR to ultimate
@@ -2701,12 +2710,15 @@ separate_marriage_types <- function(marriage_rates,
 #' @param prior_status_data Prior marital status data (1979, 1981-88)
 #'   From fetch_nchs_marriages_by_prior_status_1978_1988()
 #' @param ultimate_amr Ultimate AMR target (default: 4000)
-#' @param ultimate_year Year when ultimate is reached (default: 2047)
+#' @param ultimate_year Year when ultimate is reached (default: 2049)
 #' @param end_year Final projection year (default: 2099)
 #' @param include_same_sex Logical: separate same-sex rates (default: TRUE)
 #' @param include_prior_status Logical: apply prior status differentials (default: TRUE)
 #' @param cache_dir Directory for caching results
 #' @param force_recompute Force recomputation even if cache exists
+#' @param config List: optional configuration object. When provided, reads
+#'   smoothing params, convergence exponent, starting AMR params, standard
+#'   population year, and interpolation method from config.
 #'
 #' @return list with:
 #'   - historical_rates: Rate matrices for 1989-2022
@@ -2731,7 +2743,7 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
                                      same_sex_data = NULL,
                                      same_sex_fraction = 0.045,
                                      ultimate_amr = 4000,
-                                     ultimate_year = 2047,
+                                     ultimate_year = 2049,
                                      end_year = 2099,
                                      min_age = 14,
                                      max_age = 100,
@@ -2740,7 +2752,8 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
                                      include_same_sex = TRUE,
                                      include_prior_status = TRUE,
                                      cache_dir = here::here("data/cache/marriage"),
-                                     force_recompute = FALSE) {
+                                     force_recompute = FALSE,
+                                     config = NULL) {
 
   # Check for complete cached result
   cache_file <- file.path(cache_dir, "marriage_projection_complete.rds")
@@ -2761,28 +2774,61 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
   # =========================================================================
   cli::cli_h2("Step 1: Building Base MarGrid (1978-1988)")
 
+  # Read config-driven parameters with fallback defaults
+  base_smooth_params <- list(h_param = 1, w_param = 1)
+  hist_smooth_params <- list(h_param = 0.5, w_param = 0.5)
+  interp_method <- "beers"
+  std_year <- 2010
+  convergence_exp <- 2
+  starting_amr_n_years <- 5
+  starting_amr_weights <- NULL
+  prior_status_years <- c(1979, 1981:1988)
+
+  if (!is.null(config) && !is.null(config$marriage)) {
+    mc <- config$marriage
+    if (!is.null(mc$smoothing$base)) {
+      base_smooth_params$h_param <- mc$smoothing$base$h_param %||% 1
+      base_smooth_params$w_param <- mc$smoothing$base$w_param %||% 1
+    }
+    if (!is.null(mc$smoothing$historical)) {
+      hist_smooth_params$h_param <- mc$smoothing$historical$h_param %||% 0.5
+      hist_smooth_params$w_param <- mc$smoothing$historical$w_param %||% 0.5
+    }
+    interp_method <- mc$interpolation_method %||% "beers"
+    std_year <- mc$standard_population_year %||% 2010
+    convergence_exp <- mc$convergence_exponent %||% 2
+    if (!is.null(mc$starting_amr)) {
+      starting_amr_n_years <- mc$starting_amr$n_years %||% 5
+      starting_amr_weights <- mc$starting_amr$weights
+    }
+    if (!is.null(mc$prior_status$years)) {
+      prior_status_years <- mc$prior_status$years
+    }
+  }
+
   margrid_result <- build_base_margrid(
     nchs_marriages = nchs_marriages_1978_1988,
     cps_unmarried = cps_unmarried,
     years = 1978:1988,
-    smooth = TRUE
+    smooth = TRUE,
+    smooth_params = base_smooth_params
   )
   base_margrid <- margrid_result$margrid
 
   # =========================================================================
   # STEP 2: Build standard population grid
   # =========================================================================
-  cli::cli_h2("Step 2: Building Standard Population Grid (2010)")
+  cli::cli_h2("Step 2: Building Standard Population Grid ({std_year})")
 
   # Ensure year column exists
   std_pop <- data.table::copy(standard_pop_by_group)
   if (!"year" %in% names(std_pop)) {
-    std_pop[, year := 2010]
+    std_pop[, year := std_year]
   }
 
   standard_pop_grid <- build_standard_population_grid(
     unmarried_pop = std_pop,
-    std_year = 2010,
+    std_year = std_year,
     min_age = min_age,
     max_age = max_age
   )
@@ -2820,8 +2866,10 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
     ultimate_amr = ultimate_amr,
     ultimate_year = ultimate_year,
     end_year = end_year,
+    convergence_exp = convergence_exp,
     cache_dir = cache_dir,
-    force_recompute = force_recompute
+    force_recompute = force_recompute,
+    config = config
   )
 
   # Combine all rates
@@ -2838,7 +2886,7 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
 
     status_differentials <- calculate_prior_status_differentials(
       marriages_by_status = prior_status_data,
-      years = c(1979, 1981:1988)
+      years = prior_status_years
     )
 
     status_result <- apply_prior_status_rates(

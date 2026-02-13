@@ -23,7 +23,7 @@ MARGRID_SIZE <- 87
 
 # TR2025 AMR assumptions
 TR2025_ULTIMATE_AMR <- 4000   # per 100,000 unmarried couples
-TR2025_ULTIMATE_YEAR <- 2047  # Year 25 from 2023
+TR2025_ULTIMATE_YEAR <- 2049  # Year 25 of 75-year projection period (2025 + 24)
 
 # =============================================================================
 # NCHS VALIDATION TARGETS
