@@ -1362,7 +1362,8 @@ calculate_historical_rates_1989_1995 <- function(base_margrid,
                                                    nchs_us_totals,
                                                    unmarried_pop_grid,
                                                    ss_area_factor = NULL,
-                                                   smooth = TRUE) {
+                                                   smooth = TRUE,
+                                                   same_sex_estimates = NULL) {
   checkmate::assert_matrix(base_margrid, mode = "numeric")
   checkmate::assert_data_table(nchs_subset)
   checkmate::assert_data_table(nchs_us_totals)
@@ -1397,6 +1398,19 @@ calculate_historical_rates_1989_1995 <- function(base_margrid,
     if (length(nchs_total) == 0 || is.na(nchs_total)) {
       cli::cli_warn("No NCHS total for {yr}, using MRA sum")
       nchs_total <- sum(yr_data$marriages, na.rm = TRUE)
+    }
+
+    # Per TR2025 Step 6: subtract same-sex marriages before computing rates
+    ss_count <- 0
+    if (!is.null(same_sex_estimates)) {
+      ss_row <- same_sex_estimates[year == yr]
+      if (nrow(ss_row) > 0 && !is.na(ss_row$ss_marriages)) {
+        ss_count <- ss_row$ss_marriages
+        nchs_total <- nchs_total - ss_count
+        if (ss_count > 0) {
+          cli::cli_alert_info("  Subtracted {format(ss_count, big.mark=',')} same-sex marriages from {yr} total")
+        }
+      }
     }
 
     # Get SS area factor (calculate dynamically if not provided)
@@ -1491,6 +1505,8 @@ align_nchs_subset_age_groups <- function(nchs_data) {
 #' @param unmarried_pop_grid Matrix: unmarried population for scaling
 #' @param ss_area_factor Numeric or NULL: SS area adjustment factor. If NULL
 #'   (default), calculates dynamically from historical population data.
+#' @param same_sex_estimates data.table or NULL: estimated same-sex marriages by year.
+#'   If provided, same-sex count is subtracted from NCHS total before scaling (TR2025 Step 6).
 #'
 #' @return list of interpolated rate matrices by year
 #'
@@ -1502,7 +1518,8 @@ interpolate_marriage_grids <- function(grid_start,
                                          years,
                                          nchs_us_totals = NULL,
                                          unmarried_pop_grid = NULL,
-                                         ss_area_factor = NULL) {
+                                         ss_area_factor = NULL,
+                                         same_sex_estimates = NULL) {
   checkmate::assert_matrix(grid_start, mode = "numeric")
   checkmate::assert_matrix(grid_end, mode = "numeric")
   checkmate::assert_integerish(years)
@@ -1533,6 +1550,14 @@ interpolate_marriage_grids <- function(grid_start,
     if (!is.null(nchs_us_totals) && !is.null(unmarried_pop_grid)) {
       nchs_total <- nchs_us_totals[year == yr, total_marriages]
       if (length(nchs_total) > 0 && !is.na(nchs_total)) {
+        # Per TR2025 Step 6: subtract same-sex marriages before computing rates
+        if (!is.null(same_sex_estimates)) {
+          ss_row <- same_sex_estimates[year == yr]
+          if (nrow(ss_row) > 0 && !is.na(ss_row$ss_marriages) && ss_row$ss_marriages > 0) {
+            nchs_total <- nchs_total - ss_row$ss_marriages
+            cli::cli_alert_info("  Subtracted {format(ss_row$ss_marriages, big.mark=',')} same-sex marriages from {yr} total")
+          }
+        }
         ss_total <- nchs_total * yr_factor
         interpolated_grid <- scale_margrid_to_total(
           interpolated_grid, unmarried_pop_grid, ss_total
@@ -1595,7 +1620,8 @@ calculate_historical_rates_2008_2022 <- function(base_margrid,
                                                    nchs_us_totals,
                                                    unmarried_pop_grid,
                                                    ss_area_factor = NULL,
-                                                   smooth = TRUE) {
+                                                   smooth = TRUE,
+                                                   same_sex_estimates = NULL) {
   checkmate::assert_matrix(base_margrid, mode = "numeric")
   checkmate::assert_list(acs_grids)
   checkmate::assert_data_table(nchs_us_totals)
@@ -1630,6 +1656,19 @@ calculate_historical_rates_2008_2022 <- function(base_margrid,
       # Use ACS total if NCHS not available
       cli::cli_warn("No NCHS total for {yr}, using ACS sum")
       nchs_total <- sum(acs_grid, na.rm = TRUE)
+    }
+
+    # Per TR2025 Step 6: subtract same-sex marriages before computing rates
+    ss_count <- 0
+    if (!is.null(same_sex_estimates)) {
+      ss_row <- same_sex_estimates[year == yr]
+      if (nrow(ss_row) > 0 && !is.na(ss_row$ss_marriages)) {
+        ss_count <- ss_row$ss_marriages
+        nchs_total <- nchs_total - ss_count
+        if (ss_count > 0) {
+          cli::cli_alert_info("  Subtracted {format(ss_count, big.mark=',')} same-sex marriages from {yr} total")
+        }
+      }
     }
 
     # Get SS area factor (calculate dynamically if not provided)
@@ -1759,7 +1798,8 @@ calculate_historical_period <- function(base_margrid,
                                           ss_area_factor = NULL,
                                           smooth = TRUE,
                                           cache_dir = here::here("data/cache/marriage"),
-                                          force_recompute = FALSE) {
+                                          force_recompute = FALSE,
+                                          same_sex_estimates = NULL) {
   # Check for cached results
   cache_file <- file.path(cache_dir, sprintf("historical_rates_1989_%d.rds", acs_end))
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
@@ -1789,7 +1829,8 @@ calculate_historical_period <- function(base_margrid,
     nchs_us_totals = nchs_us_totals,
     unmarried_pop_grid = unmarried_pop_grid,
     ss_area_factor = ss_area_factor,
-    smooth = smooth
+    smooth = smooth,
+    same_sex_estimates = same_sex_estimates
   )
 
   # =========================================================================
@@ -1805,7 +1846,8 @@ calculate_historical_period <- function(base_margrid,
     nchs_us_totals = nchs_us_totals,
     unmarried_pop_grid = unmarried_pop_grid,
     ss_area_factor = ss_area_factor,
-    smooth = smooth
+    smooth = smooth,
+    same_sex_estimates = same_sex_estimates
   )
 
   # =========================================================================
@@ -1828,7 +1870,8 @@ calculate_historical_period <- function(base_margrid,
     years = interpolation_years,
     nchs_us_totals = nchs_us_totals,
     unmarried_pop_grid = unmarried_pop_grid,
-    ss_area_factor = ss_area_factor
+    ss_area_factor = ss_area_factor,
+    same_sex_estimates = same_sex_estimates
   )
 
   # =========================================================================
@@ -2460,6 +2503,49 @@ apply_prior_status_rates <- function(marriage_rates,
   )
 }
 
+#' Estimate same-sex marriage counts by year for historical period
+#'
+#' @description
+#' Per TR2025 Section 1.6.c Step 6: "We also subtract out same-sex marriages
+#' from the NCHS data, as we handle those in a later step."
+#'
+#' Estimates the number of same-sex marriages for each historical year:
+#' - Pre-2004: 0 (no legal same-sex marriage in any U.S. state)
+#' - 2004-2014: linear ramp from 0 to `default_fraction` as states legalized
+#' - 2015+: uses `default_fraction` (post-Obergefell nationwide legalization)
+#'
+#' @param nchs_us_totals data.table with year and total_marriages columns
+#' @param config List: optional config with same_sex.default_fraction
+#'
+#' @return data.table with year, total_marriages, ss_marriages, os_marriages
+#'
+#' @keywords internal
+estimate_same_sex_marriages_by_year <- function(nchs_us_totals, config = NULL) {
+  ss_fraction <- 0.045
+  if (!is.null(config) && !is.null(config$marriage$same_sex$default_fraction)) {
+    ss_fraction <- config$marriage$same_sex$default_fraction
+  }
+
+  dt <- data.table::copy(nchs_us_totals)
+
+  dt[, ss_fraction := data.table::fifelse(
+    year < 2004, 0,
+    data.table::fifelse(
+      year < 2015,
+      ss_fraction * (year - 2004) / (2015 - 2004),
+      ss_fraction
+    )
+  )]
+  dt[, ss_marriages := round(total_marriages * ss_fraction)]
+  dt[, os_marriages := total_marriages - ss_marriages]
+
+  cli::cli_alert_info(
+    "Estimated same-sex marriages: 0 (pre-2004), {round(ss_fraction * 100, 1)}% (2015+)"
+  )
+
+  dt
+}
+
 #' Separate same-sex and opposite-sex marriage rates
 #'
 #' @description
@@ -2834,6 +2920,15 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
   )
 
   # =========================================================================
+  # STEP 2B: Estimate same-sex marriages by year (TR2025 Step 6)
+  # =========================================================================
+  same_sex_estimates <- estimate_same_sex_marriages_by_year(
+    nchs_us_totals = nchs_us_totals,
+    config = config
+  )
+  cli::cli_alert_info("Same-sex subtraction: {sum(same_sex_estimates$ss_marriages)} total across {nrow(same_sex_estimates[ss_marriages > 0])} years")
+
+  # =========================================================================
   # STEP 3: Calculate historical rates (1989-2022)
   # =========================================================================
   cli::cli_h2("Step 3: Calculating Historical Rates (1989-2022)")
@@ -2847,7 +2942,8 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
     acs_start = acs_start,
     acs_end = acs_end,
     cache_dir = cache_dir,
-    force_recompute = force_recompute
+    force_recompute = force_recompute,
+    same_sex_estimates = same_sex_estimates
   )
 
   # =========================================================================
