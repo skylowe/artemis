@@ -194,6 +194,16 @@ mod_config_editor_ui <- function(id) {
             value = 0.25,
             step = 0.01
           )
+        ),
+
+        selectInput(
+          ns("o_population_method"),
+          "O-Population Method",
+          choices = c(
+            "Residual + V.A2 levels (default)" = "residual",
+            "V.A2 flows only" = "va2_flows"
+          ),
+          selected = "residual"
         )
       )
     ),
@@ -219,16 +229,6 @@ mod_config_editor_ui <- function(id) {
             "SSA TR2025 (all ages)" = "ssa"
           ),
           selected = "hybrid"
-        ),
-
-        selectInput(
-          ns("o_population_method"),
-          "O-Population Method",
-          choices = c(
-            "Residual + V.A2 levels (default)" = "residual",
-            "V.A2 flows only" = "va2_flows"
-          ),
-          selected = "residual"
         )
       )
     ),
