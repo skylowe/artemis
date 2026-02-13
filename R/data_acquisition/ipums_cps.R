@@ -354,3 +354,115 @@ submit_cps_unmarried_extract <- function(years = 1962:1995,
     wait_for_extract = FALSE
   )
 }
+
+#' Extract CPS unmarried population by prior marital status
+#'
+#' @description
+#' Loads the existing CPS extract and disaggregates the unmarried population
+#' by prior marital status (single/never-married, divorced, widowed).
+#'
+#' Used for TR2025 Step 11: computing rate-based prior status differentials.
+#' TR2025 uses MRA-specific population (Input #10), but CPS national data is
+#' the best publicly available substitute.
+#'
+#' @param years Integer vector: years to extract (default: c(1979, 1981:1988)
+#'   matching Input #9 prior status marriage years)
+#' @param cache_dir Character: directory containing the CPS extract
+#'
+#' @return data.table with columns: year, age_group, sex, prior_status, unmarried_population
+#'
+#' @export
+extract_cps_unmarried_by_prior_status <- function(
+    years = c(1979, 1981:1988),
+    cache_dir = here::here("data/cache/ipums_cps")
+) {
+  # Check for cached result
+  cache_file <- file.path(cache_dir, "cps_unmarried_by_prior_status.rds")
+  if (file.exists(cache_file)) {
+    cli::cli_alert_success("Loading cached CPS unmarried population by prior status")
+    data <- readRDS(cache_file)
+    return(data[year %in% years])
+  }
+
+  # Load raw CPS extract
+  extract_path <- file.path(cache_dir, "cps_extract_2")
+  xml_file <- file.path(extract_path, "cps_00002.xml")
+
+  if (!file.exists(xml_file)) {
+    cli::cli_abort(c(
+      "CPS extract not found at {.path {extract_path}}",
+      "i" = "Run fetch_cps_unmarried_population() first to download the extract"
+    ))
+  }
+
+  if (!requireNamespace("ipumsr", quietly = TRUE)) {
+    cli::cli_abort("Package {.pkg ipumsr} is required")
+  }
+
+  cli::cli_alert_info("Reading CPS microdata for prior status disaggregation...")
+  data <- ipumsr::read_ipums_micro(xml_file)
+  dt <- data.table::as.data.table(data)
+
+  # Filter to requested years
+  if ("YEAR" %in% names(dt)) {
+    dt[, year := as.integer(YEAR)]
+  }
+  dt <- dt[year %in% years]
+
+  # Map MARST to prior marital status
+  # IPUMS MARST: 1=Married spouse present, 2=Married spouse absent,
+  #              3=Separated, 4=Divorced, 5=Widowed, 6=Never married
+  # Unmarried prior statuses:
+  #   single (never-married) = 6
+  #   divorced (incl separated) = 3, 4
+  #   widowed = 5
+  dt[, prior_status := NA_character_]
+  dt[MARST == 6, prior_status := "single"]
+  dt[MARST %in% c(3, 4), prior_status := "divorced"]
+  dt[MARST == 5, prior_status := "widowed"]
+
+  # Filter to unmarried only
+  dt <- dt[!is.na(prior_status)]
+
+  # Map SEX codes
+  dt[SEX == 1, sex := "male"]
+  dt[SEX == 2, sex := "female"]
+
+  # Assign age groups (same as CPS_MARRIAGE_AGE_GROUPS)
+  dt[, age_group := NA_character_]
+  for (grp_name in names(CPS_MARRIAGE_AGE_GROUPS)) {
+    ages <- CPS_MARRIAGE_AGE_GROUPS[[grp_name]]
+    dt[AGE %in% ages, age_group := grp_name]
+  }
+
+  # Filter to valid data
+  dt <- dt[!is.na(age_group) & !is.na(sex)]
+
+  # Use appropriate weight variable
+  weight_var <- if ("ASECWT" %in% names(dt)) "ASECWT" else "WTFINL"
+  if (!(weight_var %in% names(dt))) {
+    cli::cli_warn("Weight variable not found, using unweighted counts")
+    dt[, weight := 1]
+  } else {
+    dt[, weight := get(weight_var)]
+  }
+
+  # Aggregate by year, age group, sex, prior status
+  result <- dt[, .(unmarried_population = sum(weight, na.rm = TRUE)),
+               by = .(year, age_group, sex, prior_status)]
+
+  # Order properly
+  age_group_order <- names(CPS_MARRIAGE_AGE_GROUPS)
+  result[, age_group := factor(age_group, levels = age_group_order)]
+  data.table::setorder(result, year, sex, age_group, prior_status)
+  result[, age_group := as.character(age_group)]
+
+  cli::cli_alert_success("Extracted CPS unmarried population by prior status: {nrow(result)} rows")
+  cli::cli_alert_info("Years: {paste(sort(unique(result$year)), collapse=', ')}")
+
+  # Cache
+  saveRDS(result, cache_file)
+  cli::cli_alert_success("Cached to {.path {cache_file}}")
+
+  result
+}

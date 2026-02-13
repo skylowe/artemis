@@ -81,6 +81,14 @@ create_marriage_divorce_targets <- function() {
     ),
 
     targets::tar_target(
+      cps_unmarried_by_prior_status,
+      extract_cps_unmarried_by_prior_status(
+        years = config_assumptions$marriage$prior_status$years
+      ),
+      cue = targets::tar_cue(mode = "thorough")
+    ),
+
+    targets::tar_target(
       acs_same_sex_grids,
       fetch_acs_same_sex_grids(years = 2015:2022),
       cue = targets::tar_cue(mode = "thorough")
@@ -112,15 +120,10 @@ create_marriage_divorce_targets <- function() {
         nchs_us_totals = nchs_us_total_marriages,
         standard_pop_by_group = standard_pop_2010,
         prior_status_data = nchs_prior_status_1978_1988,
+        unmarried_pop_by_status = cps_unmarried_by_prior_status,
         same_sex_data = acs_same_sex_grids,
         same_sex_fraction = same_sex_fraction,
-        ultimate_amr = config_assumptions$marriage$ultimate_amr,
-        ultimate_year = config_assumptions$marriage$ultimate_year,
-        end_year = config_assumptions$metadata$projection_period$end_year,
-        min_age = config_assumptions$marriage$min_age,
-        max_age = config_assumptions$marriage$max_age,
-        acs_start = config_assumptions$marriage$acs_start,
-        acs_end = config_assumptions$marriage$acs_end,
+        config = config_assumptions,
         include_same_sex = TRUE,
         include_prior_status = TRUE,
         force_recompute = FALSE

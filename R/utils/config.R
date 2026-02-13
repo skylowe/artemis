@@ -389,7 +389,7 @@ proj_period <- get_config_with_default(
     projection_end = proj_period$end_year,
     ultimate_year = get_config_with_default(
       comp_config, "ultimate_year",
-      default = 2047
+      default = 2049
     )
   )
 }

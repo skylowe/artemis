@@ -8,6 +8,41 @@
 #' - AMR^z: Age-adjusted central marriage rate (Eq 1.6.2)
 #' - MarGrid: 87×87 matrix of marriage rates (ages 14-100+)
 #'
+#' @section Methodology Deviations from TR2025:
+#'
+#' The following TR2025 inputs are unavailable publicly. ARTEMIS uses the
+#' best available public substitutes. Each deviation is documented with
+#' (a) what TR2025 requires, (b) what ARTEMIS uses, and (c) the config
+#' path for swapping in the correct data if it becomes available.
+#'
+#' \strong{Input #5 — MRA unmarried population (1978-1988):}
+#' TR2025 uses unmarried men and women counts from Marriage Registration Area
+#' (MRA) states for 1978-1988. These are not in the NBER public archive.
+#' ARTEMIS uses CPS national unmarried population (Input #14) as the
+#' denominator for base MarGrid rate computation. Impact: rates reflect
+#' national rather than MRA-specific marriage propensity. The SS area factor
+#' partially compensates when scaling to NCHS totals.
+#'
+#' \strong{Input #7 — MRA-to-national total adjustment (1957-1988):}
+#' TR2025 uses MRA marriage totals minus marriages in states not included in
+#' the MRA unmarried population count, for calibrating the MRA-to-U.S.
+#' scaling. The MRA state composition by year is not publicly documented.
+#' ARTEMIS omits this adjustment; the SS area factor (computed from
+#' historical population components) partially compensates.
+#'
+#' \strong{Input #10 — MRA unmarried population by prior status (1982-1988):}
+#' TR2025 uses MRA-specific unmarried population by age, sex, and prior
+#' marital status for computing rate-based differentials (Step 11). Not in
+#' the NBER archive. ARTEMIS uses CPS national unmarried population by prior
+#' status as a proxy. Config: \code{marriage.prior_status.population_source}.
+#'
+#' \strong{Input #15 — State vital statistics same-sex marriages (2004-2012):}
+#' TR2025 uses same-sex marriage counts from state vital statistics offices
+#' for 2004-2012 (pre-Obergefell). These are not centrally published.
+#' ARTEMIS uses ACS PUMS (2015-2022) to estimate same-sex prevalence
+#' patterns, with a linear ramp for 2004-2014.
+#' Config: \code{marriage.same_sex.reference_years}.
+#'
 #' @name marriage
 NULL
 
@@ -72,20 +107,32 @@ MARRIAGE_AGE_GROUPS <- list(
 #' and territory populations have changed relative to the U.S. total.
 #'
 #' @export
-get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache")) {
-  # Try to load cached historical population components
+get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache"),
+                               config = NULL) {
+  # Check for config override first
+  if (!is.null(config) && !is.null(config$marriage$ss_area_factor_override)) {
+    override <- config$marriage$ss_area_factor_override
+    cli::cli_alert_warn("Using config SS area factor override: {round(override, 5)}")
+    return(override)
+  }
+
+  # Load from historical population cache
   cache_file <- file.path(cache_dir, "historical_population", "ss_population_1940_2022.rds")
 
   if (!file.exists(cache_file)) {
-    cli::cli_warn("Historical population cache not found at {cache_file}. Using fallback factor 1.02.")
-    return(1.02)
+    cli::cli_abort(c(
+      "Historical population cache not found at {.path {cache_file}}",
+      "i" = "Run the historical population subprocess first, or set {.field marriage.ss_area_factor_override} in config"
+    ))
   }
 
   pop_data <- readRDS(cache_file)
 
   if (!"components" %in% names(pop_data)) {
-    cli::cli_warn("Historical population cache missing components. Using fallback factor 1.02.")
-    return(1.02)
+    cli::cli_abort(c(
+      "Historical population cache missing {.field components}",
+      "i" = "Regenerate the historical population cache, or set {.field marriage.ss_area_factor_override} in config"
+    ))
   }
 
   components <- data.table::as.data.table(pop_data$components)
@@ -112,8 +159,11 @@ get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache")
   factor_val <- components[year == target_year, total / census_usaf]
 
   if (length(factor_val) == 0 || is.na(factor_val)) {
-    cli::cli_warn("No data for year {target_year}. Using fallback factor 1.02.")
-    return(1.02)
+    cli::cli_abort(c(
+      "No SS area factor data for year {target_year}",
+      "i" = "Available years: {min_year}-{max_year}",
+      "i" = "Set {.field marriage.ss_area_factor_override} in config as a workaround"
+    ))
   }
 
   factor_val
@@ -131,24 +181,34 @@ get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache")
 #' @return Named numeric vector with SS area factors keyed by year
 #'
 #' @export
-get_ss_area_factors <- function(years, cache_dir = here::here("data/cache")) {
+get_ss_area_factors <- function(years, cache_dir = here::here("data/cache"),
+                                config = NULL) {
+  # Check for config override first
+  if (!is.null(config) && !is.null(config$marriage$ss_area_factor_override)) {
+    override <- config$marriage$ss_area_factor_override
+    cli::cli_alert_warn("Using config SS area factor override: {round(override, 5)} for all years")
+    factors <- rep(override, length(years))
+    names(factors) <- as.character(years)
+    return(factors)
+  }
+
   # Load cache once for efficiency
   cache_file <- file.path(cache_dir, "historical_population", "ss_population_1940_2022.rds")
 
   if (!file.exists(cache_file)) {
-    cli::cli_warn("Historical population cache not found. Using fallback factor 1.02 for all years.")
-    factors <- rep(1.02, length(years))
-    names(factors) <- as.character(years)
-    return(factors)
+    cli::cli_abort(c(
+      "Historical population cache not found at {.path {cache_file}}",
+      "i" = "Run the historical population subprocess first, or set {.field marriage.ss_area_factor_override} in config"
+    ))
   }
 
   pop_data <- readRDS(cache_file)
 
   if (!"components" %in% names(pop_data)) {
-    cli::cli_warn("Historical population cache missing components. Using fallback factor 1.02.")
-    factors <- rep(1.02, length(years))
-    names(factors) <- as.character(years)
-    return(factors)
+    cli::cli_abort(c(
+      "Historical population cache missing {.field components}",
+      "i" = "Regenerate the historical population cache, or set {.field marriage.ss_area_factor_override} in config"
+    ))
   }
 
   components <- data.table::as.data.table(pop_data$components)
@@ -164,7 +224,9 @@ get_ss_area_factors <- function(years, cache_dir = here::here("data/cache")) {
       return(components[year == max_year, ss_area_factor])
     } else {
       f <- components[year == yr, ss_area_factor]
-      if (length(f) == 0 || is.na(f)) return(1.02)
+      if (length(f) == 0 || is.na(f)) {
+        cli::cli_abort("No SS area factor data for year {yr}")
+      }
       return(f)
     }
   })
@@ -288,85 +350,231 @@ get_age_range <- function(age_group) {
   list(min = parts[1], max = parts[2])
 }
 
-#' H.S. Beers ordinary interpolation coefficients for 5-year age groups
+#' Marriage age group definitions for MarGrid (8-category)
 #'
 #' @description
-#' Standard Beers coefficients for interpolating 5-year age group data
-#' to single years. These are the "ordinary" minimized fifth difference
-#' coefficients from Shryock & Siegel.
+#' The 8 age groups used in the marriage grid, with min, max, and width.
+#' Used for Beers interpolation pre-processing, standard population grid,
+#' age group aggregation, and MarGrid adjustment. Defined once here and
+#' referenced throughout the file.
 #'
 #' @keywords internal
-BEERS_COEFFICIENTS <- list(
-  # First age group (needs special handling)
-  first = matrix(c(
-    0.3333, -0.1636, -0.0210,  0.0796, -0.0283,
-    0.2595, -0.0780,  0.0130,  0.0100, -0.0045,
-    0.1924,  0.0064,  0.0184, -0.0256,  0.0084,
-    0.1329,  0.0844,  0.0054, -0.0356,  0.0129,
-    0.0819,  0.1508, -0.0158, -0.0284,  0.0115
-  ), nrow = 5, byrow = TRUE),
-
-  # Interior age groups
-  interior = matrix(c(
-    0.0404,  0.2000, -0.0344, -0.0128,  0.0068,
-    0.0093,  0.2268, -0.0402,  0.0028,  0.0013,
-   -0.0108,  0.2272, -0.0248,  0.0112, -0.0028,
-   -0.0198,  0.1992,  0.0172,  0.0072, -0.0038,
-   -0.0191,  0.1468,  0.0822, -0.0084, -0.0015
-  ), nrow = 5, byrow = TRUE),
-
-  # Last age group (needs special handling)
-  last = matrix(c(
-   -0.0115,  0.0284,  0.0158, -0.1508,  0.1181,
-   -0.0129,  0.0356, -0.0054, -0.0844,  0.0671,
-   -0.0084,  0.0256, -0.0184, -0.0064,  0.0076,
-    0.0045, -0.0100, -0.0130,  0.0780, -0.0595,
-    0.0283, -0.0796,  0.0210,  0.1636, -0.1333
-  ), nrow = 5, byrow = TRUE)
+MARGRID_AGE_GROUPS <- list(
+  "14-19" = list(min = 14, max = 19, width = 6),
+  "20-24" = list(min = 20, max = 24, width = 5),
+  "25-29" = list(min = 25, max = 29, width = 5),
+  "30-34" = list(min = 30, max = 34, width = 5),
+  "35-44" = list(min = 35, max = 44, width = 10),
+  "45-54" = list(min = 45, max = 54, width = 10),
+  "55-64" = list(min = 55, max = 64, width = 10),
+  "65+"   = list(min = 65, max = 100, width = 36)
 )
 
-#' Apply 1D Beers interpolation to age group totals
+#' Apply correct H.S. Beers interpolation to standard 5-year pseudo-groups
 #'
 #' @description
-#' Converts 5-year age group totals to single-year estimates using
-#' H.S. Beers ordinary interpolation method.
+#' Applies H.S. Beers ordinary interpolation to a vector of standard 5-year
+#' group totals. Uses the canonical coefficients from
+#' `historical_marital_status.R:get_beers_coefficients()`.
 #'
-#' @param group_values Numeric vector of age group totals (must be 5-year groups)
-#' @param group_widths Numeric vector of group widths (e.g., c(5, 5, 5, ...))
+#' @param group_totals Numeric vector of 5-year group totals (>= 6 groups)
 #'
-#' @return Numeric vector of single-year values
+#' @return Numeric vector of single-year values (length = n_groups * 5)
 #' @keywords internal
-beers_interpolate_1d <- function(group_values, group_widths = NULL) {
-  n_groups <- length(group_values)
+apply_beers_standard <- function(group_totals) {
+  n_groups <- length(group_totals)
 
-  if (n_groups < 3) {
-    # Not enough groups for Beers, use uniform
-    if (is.null(group_widths)) group_widths <- rep(5, n_groups)
-    result <- unlist(lapply(seq_along(group_values), function(i) {
-      rep(group_values[i] / group_widths[i], group_widths[i])
-    }))
-    return(result)
+  if (n_groups < 6) {
+    cli::cli_abort("Beers interpolation requires at least 6 groups, got {n_groups}")
   }
 
-  # Assume 5-year groups for standard Beers
-  # For non-standard groups, fall back to proportional allocation
-  if (is.null(group_widths)) {
-    group_widths <- rep(5, n_groups)
+  coef <- get_beers_coefficients()
+  n_single <- n_groups * 5
+  result <- numeric(n_single)
+
+  # Opening coefficients: first 10 single years from first 6 groups
+  for (i in 1:10) {
+    result[i] <- sum(coef$opening[i, ] * group_totals[1:6])
   }
 
-  # Simple proportional allocation within groups
-  # (Full Beers implementation requires careful handling of boundary conditions)
-  result <- numeric(sum(group_widths))
-  idx <- 1
+  # Interior coefficients: single years 11 to (n_single - 10)
+  # Each application produces 5 single years from a sliding window of 6 groups
+  for (j in seq(11, n_single - 10, by = 5)) {
+    # Determine which group center we're in (1-indexed)
+    g <- (j - 1) %/% 5 + 1
 
-  for (i in seq_along(group_values)) {
-    width <- group_widths[i]
-    # Distribute group value across single years
-    # Use a simple smooth allocation
-    single_year_value <- group_values[i] / width
-    result[idx:(idx + width - 1)] <- single_year_value
-    idx <- idx + width
+    # Window of 6 groups, clamped to valid range
+    g1 <- max(1, g - 2)
+    g2 <- min(n_groups, g1 + 5)
+    g1 <- g2 - 5  # Ensure exactly 6 groups
+
+    for (k in 0:4) {
+      result[j + k] <- sum(coef$interior[k + 1, ] * group_totals[g1:g2])
+    }
   }
+
+  # Closing coefficients: last 10 single years from last 6 groups
+  for (i in 1:10) {
+    result[n_single - 10 + i] <- sum(coef$closing[i, ] * group_totals[(n_groups - 5):n_groups])
+  }
+
+  result
+}
+
+#' Pre-process marriage age groups into standard 5-year pseudo-groups
+#'
+#' @description
+#' Converts the 8 non-standard marriage age groups into ~17 standard 5-year
+#' pseudo-groups suitable for Beers interpolation. Non-standard groups are
+#' split via uniform allocation:
+#' - 14-19 (6yr) -> 15-19 (5yr), with age 14 handled separately
+#' - 35-44 (10yr) -> 35-39, 40-44
+#' - 45-54 (10yr) -> 45-49, 50-54
+#' - 55-64 (10yr) -> 55-59, 60-64
+#' - 65+ (36yr) -> 65-69, 70-74, ..., 95-99 (7 sub-groups)
+#'
+#' @param group_totals Named numeric vector of group totals (rate * width)
+#'   Names must match MARGRID_AGE_GROUPS (e.g., "14-19", "20-24", ...)
+#'
+#' @return List with:
+#'   - pseudo_totals: numeric vector of 17 pseudo-group totals
+#'   - pseudo_labels: character vector of pseudo-group labels
+#'   - age14_value: estimated value for age 14 (1/6 of 14-19 total)
+#' @keywords internal
+preprocess_marriage_to_5year <- function(group_totals) {
+  # Expected 8 groups in order
+  expected <- names(MARGRID_AGE_GROUPS)
+  if (is.null(names(group_totals))) {
+    names(group_totals) <- expected
+  }
+
+  pseudo_totals <- numeric(0)
+  pseudo_labels <- character(0)
+
+  # Age 14 gets 1/6 of the 14-19 total (handled separately after Beers)
+  total_14_19 <- group_totals["14-19"]
+  age14_value <- total_14_19 / 6
+
+  # 15-19: remaining 5/6 of 14-19 total
+  pseudo_totals <- c(pseudo_totals, total_14_19 * 5 / 6)
+  pseudo_labels <- c(pseudo_labels, "15-19")
+
+  # 20-24, 25-29, 30-34: already 5-year groups, pass through
+  for (g in c("20-24", "25-29", "30-34")) {
+    pseudo_totals <- c(pseudo_totals, group_totals[g])
+    pseudo_labels <- c(pseudo_labels, g)
+  }
+
+  # 35-44: split into 35-39 and 40-44 (uniform)
+  total_35_44 <- group_totals["35-44"]
+  pseudo_totals <- c(pseudo_totals, total_35_44 / 2, total_35_44 / 2)
+  pseudo_labels <- c(pseudo_labels, "35-39", "40-44")
+
+  # 45-54: split into 45-49 and 50-54
+  total_45_54 <- group_totals["45-54"]
+  pseudo_totals <- c(pseudo_totals, total_45_54 / 2, total_45_54 / 2)
+  pseudo_labels <- c(pseudo_labels, "45-49", "50-54")
+
+  # 55-64: split into 55-59 and 60-64
+  total_55_64 <- group_totals["55-64"]
+  pseudo_totals <- c(pseudo_totals, total_55_64 / 2, total_55_64 / 2)
+  pseudo_labels <- c(pseudo_labels, "55-59", "60-64")
+
+  # 65+: split into 7 sub-groups of 5 years each (65-69 through 95-99)
+  # Original width = 36 (ages 65-100), 7 sub-groups of 5 = 35 years
+  # Age 100 is handled separately after Beers
+  total_65_plus <- group_totals["65+"]
+  n_sub <- 7
+  sub_total <- total_65_plus * 5 / 36  # Each sub-group gets 5/36 of total
+  for (start in seq(65, 95, by = 5)) {
+    pseudo_totals <- c(pseudo_totals, sub_total)
+    pseudo_labels <- c(pseudo_labels, paste0(start, "-", start + 4))
+  }
+
+  names(pseudo_totals) <- pseudo_labels
+
+  list(
+    pseudo_totals = pseudo_totals,
+    pseudo_labels = pseudo_labels,
+    age14_value = age14_value,
+    age100_share = total_65_plus / 36  # 1/36 of 65+ total for age 100
+  )
+}
+
+#' Apply 1D Beers interpolation to marriage age groups
+#'
+#' @description
+#' Converts 8 non-standard marriage age groups to 87 single-year values
+#' (ages 14-100) using H.S. Beers ordinary interpolation. Pre-processes
+#' groups into standard 5-year pseudo-groups, applies Beers, extrapolates
+#' boundary ages, and re-normalizes to preserve original group totals.
+#'
+#' @param group_rates Numeric vector of 8 group-level rates
+#' @param group_names Character vector of group names (default: MARGRID_AGE_GROUPS names)
+#'
+#' @return Named numeric vector of 87 single-year values (ages 14-100)
+#' @keywords internal
+beers_interpolate_marriage_1d <- function(group_rates, group_names = NULL) {
+  if (is.null(group_names)) {
+    group_names <- names(MARGRID_AGE_GROUPS)
+  }
+  names(group_rates) <- group_names
+
+  # Get group widths
+  group_widths <- sapply(MARGRID_AGE_GROUPS, function(g) g$width)
+
+  # Convert rates to group totals (rate * width)
+  group_totals <- group_rates * group_widths
+
+  # Pre-process into 17 standard 5-year pseudo-groups
+
+  pp <- preprocess_marriage_to_5year(group_totals)
+
+  # Apply Beers to 17 pseudo-groups -> 85 single-year values (ages 15-99)
+  beers_result <- apply_beers_standard(pp$pseudo_totals)
+
+  # Enforce non-negativity
+  beers_result <- pmax(beers_result, 0)
+
+  # Build full 87-value result (ages 14-100)
+  result <- numeric(87)
+  names(result) <- as.character(14:100)
+
+  # Ages 15-99 from Beers (85 values)
+  result[as.character(15:99)] <- beers_result
+
+  # Age 14: linear extrapolation from ages 15-16
+  if (beers_result[1] > 0 && beers_result[2] > 0) {
+    result["14"] <- max(0, 2 * beers_result[1] - beers_result[2])
+  } else {
+    result["14"] <- beers_result[1]  # Same as age 15 if extrapolation fails
+  }
+
+  # Age 100: extrapolation from ages 98-99
+  n_beers <- length(beers_result)
+  if (beers_result[n_beers] > 0) {
+    result["100"] <- max(0, 2 * beers_result[n_beers] - beers_result[n_beers - 1])
+  } else {
+    result["100"] <- 0
+  }
+
+  # Re-normalize within each original group to preserve group totals
+  for (grp_name in group_names) {
+    grp <- MARGRID_AGE_GROUPS[[grp_name]]
+    ages <- grp$min:grp$max
+    age_chars <- as.character(ages)
+    current_sum <- sum(result[age_chars])
+    target_sum <- group_totals[grp_name]
+
+    if (current_sum > 0 && target_sum > 0) {
+      result[age_chars] <- result[age_chars] * (target_sum / current_sum)
+    } else if (target_sum == 0) {
+      result[age_chars] <- 0
+    }
+  }
+
+  # Enforce non-negativity after re-normalization
+  result <- pmax(result, 0)
 
   result
 }
@@ -375,10 +583,14 @@ beers_interpolate_1d <- function(group_values, group_widths = NULL) {
 #'
 #' @description
 #' Converts marriage rates by age group to single-year ages using
-#' two-dimensional H.S. Beers interpolation per TR2025 methodology.
+#' two-dimensional H.S. Beers interpolation per TR2025 Section 1.6.a:
+#' "The age-of-husband crossed with age-of-wife marriage grid rates are
+#' transformed from age grouped numbers to single year of age figures
+#' from ages 14 to 100+ for both husband and wife using the two-dimensional
+#' H.S. Beers method of interpolation."
 #'
-#' The method applies Beers interpolation first along husband ages,
-#' then along wife ages, preserving the overall structure.
+#' The method applies Beers interpolation first along husband ages (rows),
+#' then along wife ages (columns).
 #'
 #' @param rates_by_group data.table with husband_age_group, wife_age_group, rate
 #' @param min_age Minimum output age (default: 14)
@@ -388,23 +600,9 @@ beers_interpolate_1d <- function(group_values, group_widths = NULL) {
 #'
 #' @export
 beers_interpolate_2d <- function(rates_by_group, min_age = 14, max_age = 100) {
-  # Get unique age groups in order
-  h_groups <- unique(rates_by_group$husband_age_group)
-  w_groups <- unique(rates_by_group$wife_age_group)
+  group_names <- names(MARGRID_AGE_GROUPS)
 
-  # Define age group structure
-  age_group_info <- list(
-    "14-19" = list(min = 14, max = 19, width = 6),
-    "20-24" = list(min = 20, max = 24, width = 5),
-    "25-29" = list(min = 25, max = 29, width = 5),
-    "30-34" = list(min = 30, max = 34, width = 5),
-    "35-44" = list(min = 35, max = 44, width = 10),
-    "45-54" = list(min = 45, max = 54, width = 10),
-    "55-64" = list(min = 55, max = 64, width = 10),
-    "65+"   = list(min = 65, max = 100, width = 36)
-  )
-
-  # Create rate matrix by age groups
+  # Create 8x8 rate matrix by age groups
   rate_matrix <- data.table::dcast(rates_by_group,
                                     husband_age_group ~ wife_age_group,
                                     value.var = "rate",
@@ -414,47 +612,47 @@ beers_interpolate_2d <- function(rates_by_group, min_age = 14, max_age = 100) {
   rate_mat <- as.matrix(rate_matrix)
   rownames(rate_mat) <- h_group_order
 
-  # For each husband age group, expand to single years
-  # Then for each wife age group, expand to single years
+  # Ensure column order matches MARGRID_AGE_GROUPS
+  w_groups_present <- intersect(group_names, colnames(rate_mat))
+  rate_mat <- rate_mat[intersect(group_names, rownames(rate_mat)),
+                       w_groups_present, drop = FALSE]
 
-  # Build single-year grid
+  n_groups <- nrow(rate_mat)
   all_ages <- min_age:max_age
   n_ages <- length(all_ages)
 
-  # Initialize output matrix
+  # =========================================================================
+  # FIRST PASS: Interpolate husband dimension (rows) for each wife group
+  # =========================================================================
+  # Result: 87 husband ages x 8 wife groups
+  intermediate <- matrix(0, nrow = n_ages, ncol = ncol(rate_mat))
+  rownames(intermediate) <- all_ages
+  colnames(intermediate) <- colnames(rate_mat)
+
+  for (col in seq_len(ncol(rate_mat))) {
+    # Get column of group rates (one rate per husband age group)
+    col_rates <- rate_mat[, col]
+    # Apply 1D Beers to expand from 8 husband groups to 87 husband ages
+    intermediate[, col] <- beers_interpolate_marriage_1d(col_rates, group_names)
+  }
+
+  # =========================================================================
+  # SECOND PASS: Interpolate wife dimension (columns) for each husband age
+  # =========================================================================
+  # Result: 87 x 87
   single_year_mat <- matrix(0, nrow = n_ages, ncol = n_ages)
   rownames(single_year_mat) <- all_ages
   colnames(single_year_mat) <- all_ages
 
-  # Map single ages to groups
-  age_to_group <- function(age) {
-    for (grp in names(age_group_info)) {
-      info <- age_group_info[[grp]]
-      if (age >= info$min && age <= info$max) return(grp)
-    }
-    NA_character_
+  for (row in seq_len(n_ages)) {
+    # Get row of rates (one rate per wife age group)
+    row_rates <- intermediate[row, ]
+    # Apply 1D Beers to expand from 8 wife groups to 87 wife ages
+    single_year_mat[row, ] <- beers_interpolate_marriage_1d(row_rates, group_names)
   }
 
-  # For simplicity, use proportional allocation within groups
-
-  # (preserves group totals when summed)
-  for (h_age in all_ages) {
-    h_grp <- age_to_group(h_age)
-    if (is.na(h_grp) || !(h_grp %in% rownames(rate_mat))) next
-    h_width <- age_group_info[[h_grp]]$width
-
-    for (w_age in all_ages) {
-      w_grp <- age_to_group(w_age)
-      if (is.na(w_grp) || !(w_grp %in% colnames(rate_mat))) next
-      w_width <- age_group_info[[w_grp]]$width
-
-      # Get group rate
-      group_rate <- rate_mat[h_grp, w_grp]
-
-      # Allocate to single year (rate is per person, so same for all in group)
-      single_year_mat[as.character(h_age), as.character(w_age)] <- group_rate
-    }
-  }
+  # Enforce non-negativity
+  single_year_mat[single_year_mat < 0] <- 0
 
   # Convert back to data.table
   result <- data.table::as.data.table(single_year_mat, keep.rownames = "husband_age")
@@ -476,16 +674,18 @@ beers_interpolate_2d <- function(rates_by_group, min_age = 14, max_age = 100) {
 #' @param rates_by_group data.table with husband_age_group, wife_age_group, rate
 #' @param min_age Minimum age for output (default: 14)
 #' @param max_age Maximum age for output (default: 100)
-#' @param method Interpolation method: "beers" or "uniform" (default: "beers")
+#' @param method Interpolation method: "beers" (TR2025, default) or "uniform" (legacy)
 #'
 #' @return data.table with husband_age, wife_age, rate
 #' @keywords internal
 expand_age_groups <- function(rates_by_group, min_age = 14, max_age = 100,
                                method = "beers") {
   if (method == "uniform") {
+    cli::cli_alert_info("Using UNIFORM age group expansion (legacy method)")
     return(expand_age_groups_uniform(rates_by_group, min_age, max_age))
   }
 
+  cli::cli_alert_info("Using H.S. Beers 2D interpolation (TR2025 method)")
   beers_interpolate_2d(rates_by_group, min_age, max_age)
 }
 
@@ -496,17 +696,10 @@ expand_age_groups_uniform <- function(rates_by_group, min_age = 14, max_age = 10
   all_ages <- min_age:max_age
   grid <- data.table::CJ(husband_age = all_ages, wife_age = all_ages)
 
-  # Define age group mapping
-  age_group_info <- list(
-    "14-19" = c(14, 19), "20-24" = c(20, 24), "25-29" = c(25, 29),
-    "30-34" = c(30, 34), "35-44" = c(35, 44), "45-54" = c(45, 54),
-    "55-64" = c(55, 64), "65+" = c(65, 100)
-  )
-
   map_to_group <- function(age) {
-    for (grp_name in names(age_group_info)) {
-      range <- age_group_info[[grp_name]]
-      if (age >= range[1] && age <= range[2]) return(grp_name)
+    for (grp_name in names(MARGRID_AGE_GROUPS)) {
+      info <- MARGRID_AGE_GROUPS[[grp_name]]
+      if (age >= info$min && age <= info$max) return(grp_name)
     }
     NA_character_
   }
@@ -998,22 +1191,10 @@ build_standard_population_grid <- function(unmarried_pop,
   male_lookup <- setNames(male_pop$unmarried_population, male_pop$age_group)
   female_lookup <- setNames(female_pop$unmarried_population, female_pop$age_group)
 
-  # Age group definitions with widths
-  age_group_info <- list(
-    "14-19" = list(min = 14, max = 19, width = 6),
-    "20-24" = list(min = 20, max = 24, width = 5),
-    "25-29" = list(min = 25, max = 29, width = 5),
-    "30-34" = list(min = 30, max = 34, width = 5),
-    "35-44" = list(min = 35, max = 44, width = 10),
-    "45-54" = list(min = 45, max = 54, width = 10),
-    "55-64" = list(min = 55, max = 64, width = 10),
-    "65+"   = list(min = 65, max = 100, width = 36)
-  )
-
-  # Map single ages to age groups
+  # Map single ages to age groups using canonical definition
   map_to_group <- function(age) {
-    for (grp in names(age_group_info)) {
-      info <- age_group_info[[grp]]
+    for (grp in names(MARGRID_AGE_GROUPS)) {
+      info <- MARGRID_AGE_GROUPS[[grp]]
       if (age >= info$min && age <= info$max) return(grp)
     }
     NA_character_
@@ -1034,7 +1215,7 @@ build_standard_population_grid <- function(unmarried_pop,
 
     h_pop_total <- male_lookup[h_group]
     if (is.na(h_pop_total)) h_pop_total <- 0
-    h_width <- age_group_info[[h_group]]$width
+    h_width <- MARGRID_AGE_GROUPS[[h_group]]$width
     h_pop_single <- h_pop_total / h_width
 
     for (j in seq_along(ages)) {
@@ -1044,7 +1225,7 @@ build_standard_population_grid <- function(unmarried_pop,
 
       w_pop_total <- female_lookup[w_group]
       if (is.na(w_pop_total)) w_pop_total <- 0
-      w_width <- age_group_info[[w_group]]$width
+      w_width <- MARGRID_AGE_GROUPS[[w_group]]$width
       w_pop_single <- w_pop_total / w_width
 
       # Geometric mean of single-year populations
@@ -1243,7 +1424,8 @@ calculate_historical_rates_1989_1995 <- function(base_margrid,
                                                    nchs_us_totals,
                                                    unmarried_pop_grid,
                                                    ss_area_factor = NULL,
-                                                   smooth = TRUE) {
+                                                   smooth = TRUE,
+                                                   same_sex_estimates = NULL) {
   checkmate::assert_matrix(base_margrid, mode = "numeric")
   checkmate::assert_data_table(nchs_subset)
   checkmate::assert_data_table(nchs_us_totals)
@@ -1278,6 +1460,19 @@ calculate_historical_rates_1989_1995 <- function(base_margrid,
     if (length(nchs_total) == 0 || is.na(nchs_total)) {
       cli::cli_warn("No NCHS total for {yr}, using MRA sum")
       nchs_total <- sum(yr_data$marriages, na.rm = TRUE)
+    }
+
+    # Per TR2025 Step 6: subtract same-sex marriages before computing rates
+    ss_count <- 0
+    if (!is.null(same_sex_estimates)) {
+      ss_row <- same_sex_estimates[year == yr]
+      if (nrow(ss_row) > 0 && !is.na(ss_row$ss_marriages)) {
+        ss_count <- ss_row$ss_marriages
+        nchs_total <- nchs_total - ss_count
+        if (ss_count > 0) {
+          cli::cli_alert_info("  Subtracted {format(ss_count, big.mark=',')} same-sex marriages from {yr} total")
+        }
+      }
     }
 
     # Get SS area factor (calculate dynamically if not provided)
@@ -1372,6 +1567,8 @@ align_nchs_subset_age_groups <- function(nchs_data) {
 #' @param unmarried_pop_grid Matrix: unmarried population for scaling
 #' @param ss_area_factor Numeric or NULL: SS area adjustment factor. If NULL
 #'   (default), calculates dynamically from historical population data.
+#' @param same_sex_estimates data.table or NULL: estimated same-sex marriages by year.
+#'   If provided, same-sex count is subtracted from NCHS total before scaling (TR2025 Step 6).
 #'
 #' @return list of interpolated rate matrices by year
 #'
@@ -1383,7 +1580,8 @@ interpolate_marriage_grids <- function(grid_start,
                                          years,
                                          nchs_us_totals = NULL,
                                          unmarried_pop_grid = NULL,
-                                         ss_area_factor = NULL) {
+                                         ss_area_factor = NULL,
+                                         same_sex_estimates = NULL) {
   checkmate::assert_matrix(grid_start, mode = "numeric")
   checkmate::assert_matrix(grid_end, mode = "numeric")
   checkmate::assert_integerish(years)
@@ -1414,6 +1612,14 @@ interpolate_marriage_grids <- function(grid_start,
     if (!is.null(nchs_us_totals) && !is.null(unmarried_pop_grid)) {
       nchs_total <- nchs_us_totals[year == yr, total_marriages]
       if (length(nchs_total) > 0 && !is.na(nchs_total)) {
+        # Per TR2025 Step 6: subtract same-sex marriages before computing rates
+        if (!is.null(same_sex_estimates)) {
+          ss_row <- same_sex_estimates[year == yr]
+          if (nrow(ss_row) > 0 && !is.na(ss_row$ss_marriages) && ss_row$ss_marriages > 0) {
+            nchs_total <- nchs_total - ss_row$ss_marriages
+            cli::cli_alert_info("  Subtracted {format(ss_row$ss_marriages, big.mark=',')} same-sex marriages from {yr} total")
+          }
+        }
         ss_total <- nchs_total * yr_factor
         interpolated_grid <- scale_margrid_to_total(
           interpolated_grid, unmarried_pop_grid, ss_total
@@ -1476,7 +1682,8 @@ calculate_historical_rates_2008_2022 <- function(base_margrid,
                                                    nchs_us_totals,
                                                    unmarried_pop_grid,
                                                    ss_area_factor = NULL,
-                                                   smooth = TRUE) {
+                                                   smooth = TRUE,
+                                                   same_sex_estimates = NULL) {
   checkmate::assert_matrix(base_margrid, mode = "numeric")
   checkmate::assert_list(acs_grids)
   checkmate::assert_data_table(nchs_us_totals)
@@ -1511,6 +1718,19 @@ calculate_historical_rates_2008_2022 <- function(base_margrid,
       # Use ACS total if NCHS not available
       cli::cli_warn("No NCHS total for {yr}, using ACS sum")
       nchs_total <- sum(acs_grid, na.rm = TRUE)
+    }
+
+    # Per TR2025 Step 6: subtract same-sex marriages before computing rates
+    ss_count <- 0
+    if (!is.null(same_sex_estimates)) {
+      ss_row <- same_sex_estimates[year == yr]
+      if (nrow(ss_row) > 0 && !is.na(ss_row$ss_marriages)) {
+        ss_count <- ss_row$ss_marriages
+        nchs_total <- nchs_total - ss_count
+        if (ss_count > 0) {
+          cli::cli_alert_info("  Subtracted {format(ss_count, big.mark=',')} same-sex marriages from {yr} total")
+        }
+      }
     }
 
     # Get SS area factor (calculate dynamically if not provided)
@@ -1571,28 +1791,19 @@ aggregate_grid_to_age_groups <- function(grid) {
     ages <- seq_len(nrow(grid)) + 14  # Assume starting at 15 if no names
   }
 
-  # Define age group mapping
-  age_group_defs <- list(
-    "14-19" = 14:19,
-    "20-24" = 20:24,
-    "25-29" = 25:29,
-    "30-34" = 30:34,
-    "35-44" = 35:44,
-    "45-54" = 45:54,
-    "55-64" = 55:64,
-    "65+"   = 65:120
-  )
-
+  # Use canonical MARGRID_AGE_GROUPS definition
   results <- list()
 
-  for (h_group in names(age_group_defs)) {
-    h_ages <- age_group_defs[[h_group]]
+  for (h_group in names(MARGRID_AGE_GROUPS)) {
+    h_info <- MARGRID_AGE_GROUPS[[h_group]]
+    h_ages <- h_info$min:h_info$max
     h_idx <- which(ages %in% h_ages)
 
     if (length(h_idx) == 0) next
 
-    for (w_group in names(age_group_defs)) {
-      w_ages <- age_group_defs[[w_group]]
+    for (w_group in names(MARGRID_AGE_GROUPS)) {
+      w_info <- MARGRID_AGE_GROUPS[[w_group]]
+      w_ages <- w_info$min:w_info$max
       w_idx <- which(ages %in% w_ages)
 
       if (length(w_idx) == 0) next
@@ -1649,7 +1860,8 @@ calculate_historical_period <- function(base_margrid,
                                           ss_area_factor = NULL,
                                           smooth = TRUE,
                                           cache_dir = here::here("data/cache/marriage"),
-                                          force_recompute = FALSE) {
+                                          force_recompute = FALSE,
+                                          same_sex_estimates = NULL) {
   # Check for cached results
   cache_file <- file.path(cache_dir, sprintf("historical_rates_1989_%d.rds", acs_end))
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
@@ -1679,7 +1891,8 @@ calculate_historical_period <- function(base_margrid,
     nchs_us_totals = nchs_us_totals,
     unmarried_pop_grid = unmarried_pop_grid,
     ss_area_factor = ss_area_factor,
-    smooth = smooth
+    smooth = smooth,
+    same_sex_estimates = same_sex_estimates
   )
 
   # =========================================================================
@@ -1695,7 +1908,8 @@ calculate_historical_period <- function(base_margrid,
     nchs_us_totals = nchs_us_totals,
     unmarried_pop_grid = unmarried_pop_grid,
     ss_area_factor = ss_area_factor,
-    smooth = smooth
+    smooth = smooth,
+    same_sex_estimates = same_sex_estimates
   )
 
   # =========================================================================
@@ -1718,7 +1932,8 @@ calculate_historical_period <- function(base_margrid,
     years = interpolation_years,
     nchs_us_totals = nchs_us_totals,
     unmarried_pop_grid = unmarried_pop_grid,
-    ss_area_factor = ss_area_factor
+    ss_area_factor = ss_area_factor,
+    same_sex_estimates = same_sex_estimates
   )
 
   # =========================================================================
@@ -1862,38 +2077,22 @@ calculate_starting_amr <- function(historical_amr, n_years = 5, weights = NULL) 
 #' where progress(t) = (t - start_year) / (ultimate_year - start_year)
 #'
 #' @param starting_amr Numeric: starting AMR value
-#' @param ultimate_amr Numeric: ultimate AMR value (default: 4000, or from config)
-#' @param start_year Integer: first projection year (default: 2023, or from config)
-#' @param ultimate_year Integer: year when ultimate is reached (default: 2047, or from config)
-#' @param end_year Integer: final projection year (default: 2099, or from config)
-#' @param convergence_exp Numeric: exponent for convergence curve (default: 2)
+#' @param ultimate_amr Numeric: ultimate AMR value
+#' @param start_year Integer: first projection year
+#' @param ultimate_year Integer: year when ultimate is reached
+#' @param end_year Integer: final projection year
+#' @param convergence_exp Numeric: exponent for convergence curve.
 #'   Higher values = more gradual early change, faster late change
-#' @param config List: optional configuration object to derive year parameters
 #'
 #' @return data.table with year and projected_amr columns
 #'
 #' @export
 project_amr <- function(starting_amr,
-                        ultimate_amr = NULL,
-                        start_year = NULL,
-                        ultimate_year = NULL,
-                        end_year = NULL,
-                        convergence_exp = 2,
-                        config = NULL) {
-  # Derive parameters from config if not provided
-  if (!is.null(config)) {
-    years <- get_projection_years(config, "marriage")
-    if (is.null(start_year)) start_year <- years$projection_start
-    if (is.null(end_year)) end_year <- years$projection_end
-    if (is.null(ultimate_year)) ultimate_year <- years$ultimate_year
-    if (is.null(ultimate_amr)) ultimate_amr <- config$marriage$ultimate_amr %||% 4000
-  } else {
-    # Fallback defaults
-    if (is.null(start_year)) start_year <- 2023
-    if (is.null(ultimate_year)) ultimate_year <- 2047
-    if (is.null(end_year)) end_year <- 2099
-    if (is.null(ultimate_amr)) ultimate_amr <- 4000
-  }
+                        ultimate_amr,
+                        start_year,
+                        ultimate_year,
+                        end_year,
+                        convergence_exp) {
   checkmate::assert_number(starting_amr, lower = 0)
   checkmate::assert_number(ultimate_amr, lower = 0)
   checkmate::assert_integerish(start_year)
@@ -1994,14 +2193,15 @@ scale_margrid_to_target_amr <- function(base_margrid, target_amr, standard_pop_g
 #' @param base_margrid Matrix: base MarGrid to scale
 #' @param historical_amr data.table: historical AMR values for starting calculation
 #' @param standard_pop_grid Matrix: 2010 standard population for AMR calculation
-#' @param ultimate_amr Numeric: ultimate AMR target (default: 4000, or from config)
-#' @param start_year Integer: first projection year (default: 2023, or from config)
-#' @param ultimate_year Integer: year when ultimate is reached (default: 2047, or from config)
-#' @param end_year Integer: final projection year (default: 2099, or from config)
-#' @param convergence_exp Numeric: convergence exponent (default: 2)
+#' @param ultimate_amr Numeric: ultimate AMR target
+#' @param start_year Integer: first projection year
+#' @param ultimate_year Integer: year when ultimate is reached
+#' @param end_year Integer: final projection year
+#' @param convergence_exp Numeric: convergence exponent
+#' @param starting_amr_n_years Integer: number of years for starting AMR average
+#' @param starting_amr_weights Numeric vector or NULL: weights for starting AMR average
 #' @param cache_dir Character: directory for caching results
 #' @param force_recompute Logical: force recomputation even if cache exists
-#' @param config List: optional configuration object to derive year parameters
 #'
 #' @return list with:
 #'   - rates: List of rate matrices by year (2023-2099)
@@ -2012,29 +2212,15 @@ scale_margrid_to_target_amr <- function(base_margrid, target_amr, standard_pop_g
 project_marriage_rates <- function(base_margrid,
                                     historical_amr,
                                     standard_pop_grid,
-                                    ultimate_amr = NULL,
-                                    start_year = NULL,
-                                    ultimate_year = NULL,
-                                    end_year = NULL,
-                                    convergence_exp = 2,
+                                    ultimate_amr,
+                                    start_year,
+                                    ultimate_year,
+                                    end_year,
+                                    convergence_exp,
+                                    starting_amr_n_years,
+                                    starting_amr_weights = NULL,
                                     cache_dir = here::here("data/cache/marriage"),
-                                    force_recompute = FALSE,
-                                    config = NULL) {
-  # Derive parameters from config if not provided
-  if (!is.null(config)) {
-    years <- get_projection_years(config, "marriage")
-    if (is.null(start_year)) start_year <- years$projection_start
-    if (is.null(end_year)) end_year <- years$projection_end
-    if (is.null(ultimate_year)) ultimate_year <- years$ultimate_year
-    if (is.null(ultimate_amr)) ultimate_amr <- config$marriage$ultimate_amr %||% 4000
-  } else {
-    # Fallback defaults
-    if (is.null(start_year)) start_year <- 2023
-    if (is.null(ultimate_year)) ultimate_year <- 2047
-    if (is.null(end_year)) end_year <- 2099
-    if (is.null(ultimate_amr)) ultimate_amr <- 4000
-  }
-
+                                    force_recompute = FALSE) {
   # Check for cached results
   cache_file <- file.path(cache_dir, get_cache_filename("projected_rates", start_year, end_year))
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
@@ -2058,7 +2244,9 @@ project_marriage_rates <- function(base_margrid,
   # =========================================================================
   # STEP 1: Calculate starting AMR
   # =========================================================================
-  starting_amr <- calculate_starting_amr(historical_amr, n_years = 5)
+  starting_amr <- calculate_starting_amr(historical_amr,
+                                          n_years = starting_amr_n_years,
+                                          weights = starting_amr_weights)
 
   # =========================================================================
   # STEP 2: Project AMR to ultimate
@@ -2130,19 +2318,25 @@ project_marriage_rates <- function(base_margrid,
 #' Calculate prior marital status differentials
 #'
 #' @description
-#' Per TR2025: "Future relative differences in marriage rates by prior marital
-#' status are assumed to be the same as the average of those experienced during
-#' 1979 and 1981-88."
+#' Per TR2025 Step 11: "Future relative differences in marriage rates by prior
+#' marital status are assumed to be the same as the average of those experienced
+#' during 1979 and 1981-88 (derived from Inputs #9, #10, and #11)."
 #'
-#' Calculates relative marriage rate differentials by prior marital status
-#' (single, widowed, divorced) using NCHS 1979, 1981-1988 data.
+#' Computes rate-based differentials using marriage counts (Input #9) and
+#' unmarried population by prior status (Input #10):
+#'   rate_status = marriages_status / population_status
+#'   rate_overall = total_marriages / total_population
+#'   relative_rate = rate_status / rate_overall
 #'
-#' The differential is the ratio of marriage rate for each status to the
-#' overall marriage rate within each age group and sex.
+#' Note: TR2025 uses MRA-specific population (Input #10). ARTEMIS uses CPS
+#' national population as the best publicly available substitute.
 #'
-#' @param marriages_by_status data.table with prior status marriage counts
+#' @param marriages_by_status data.table with prior status marriage counts (Input #9)
 #'   From fetch_nchs_marriages_by_prior_status_1978_1988()
 #'   Required columns: year, age_group, sex, prior_status, marriages
+#' @param unmarried_pop_by_status data.table: unmarried population by prior status
+#'   (Input #10 proxy). From extract_cps_unmarried_by_prior_status().
+#'   Required columns: year, age_group, sex, prior_status, unmarried_population
 #' @param years Years to use for averaging (default: c(1979, 1981:1988) per TR2025)
 #'
 #' @return data.table with columns: age_group, sex, prior_status, relative_rate
@@ -2150,55 +2344,90 @@ project_marriage_rates <- function(base_margrid,
 #'
 #' @export
 calculate_prior_status_differentials <- function(marriages_by_status,
+                                                   unmarried_pop_by_status,
                                                    years = c(1979, 1981:1988)) {
   checkmate::assert_data_table(marriages_by_status)
+  checkmate::assert_data_table(unmarried_pop_by_status)
   checkmate::assert_names(names(marriages_by_status),
                           must.include = c("year", "age_group", "sex", "prior_status", "marriages"))
+  checkmate::assert_names(names(unmarried_pop_by_status),
+                          must.include = c("year", "age_group", "sex", "prior_status", "unmarried_population"))
 
   cli::cli_h2("Calculating Prior Marital Status Differentials")
+  cli::cli_alert_info("Using rate-based differentials (TR2025 method: Inputs #9 + #10)")
 
   # Filter to specified years
   dt <- marriages_by_status[year %in% years]
-  cli::cli_alert_info("Using {length(unique(dt$year))} years: {paste(unique(dt$year), collapse=', ')}")
+  pop_dt <- unmarried_pop_by_status[year %in% years]
 
-  # Calculate total marriages by age group, sex, and year (across all statuses)
-  totals_by_group <- dt[, .(total_marriages = sum(marriages, na.rm = TRUE)),
-                         by = .(year, age_group, sex)]
+  # Find overlapping years
+  common_years <- intersect(unique(dt$year), unique(pop_dt$year))
+  if (length(common_years) == 0) {
+    cli::cli_abort("No overlapping years between marriage data and population data")
+  }
+  cli::cli_alert_info("Using {length(common_years)} years: {paste(sort(common_years), collapse=', ')}")
 
   # Calculate marriages by age group, sex, year, and prior status
-  by_status <- dt[, .(status_marriages = sum(marriages, na.rm = TRUE)),
-                   by = .(year, age_group, sex, prior_status)]
+  by_status <- dt[year %in% common_years,
+                  .(status_marriages = sum(marriages, na.rm = TRUE)),
+                  by = .(year, age_group, sex, prior_status)]
 
-  # Merge to get proportion of each status
-  merged <- merge(by_status, totals_by_group, by = c("year", "age_group", "sex"))
-  merged[, proportion := status_marriages / total_marriages]
+  # Calculate total marriages by age group, sex, and year
+  totals_by_group <- dt[year %in% common_years,
+                        .(total_marriages = sum(marriages, na.rm = TRUE)),
+                        by = .(year, age_group, sex)]
 
-  # Average proportions across years
-  avg_proportions <- merged[, .(
-    avg_proportion = mean(proportion, na.rm = TRUE),
+  # Align NCHS age groups to CPS age groups
+  # NCHS uses "12-17" and "18-19", CPS uses "14-19"
+  by_status[age_group %in% c("12-17", "18-19"), age_group := "14-19"]
+  by_status <- by_status[, .(status_marriages = sum(status_marriages, na.rm = TRUE)),
+                          by = .(year, age_group, sex, prior_status)]
+
+  totals_by_group[age_group %in% c("12-17", "18-19"), age_group := "14-19"]
+  totals_by_group <- totals_by_group[, .(total_marriages = sum(total_marriages, na.rm = TRUE)),
+                                      by = .(year, age_group, sex)]
+
+  # Total unmarried population by age group, sex, year
+  pop_totals <- pop_dt[year %in% common_years,
+                       .(total_population = sum(unmarried_population, na.rm = TRUE)),
+                       by = .(year, age_group, sex)]
+
+  # Status-specific population
+  pop_by_status <- pop_dt[year %in% common_years,
+                          .(status_population = sum(unmarried_population, na.rm = TRUE)),
+                          by = .(year, age_group, sex, prior_status)]
+
+  # Compute status-specific marriage rate: marriages / population
+  merged_status <- merge(by_status, pop_by_status,
+                         by = c("year", "age_group", "sex", "prior_status"),
+                         all.x = TRUE)
+  merged_status[, status_rate := data.table::fifelse(
+    is.na(status_population) | status_population == 0, 0,
+    status_marriages / status_population
+  )]
+
+  # Compute overall marriage rate: total marriages / total population
+  merged_overall <- merge(totals_by_group, pop_totals,
+                          by = c("year", "age_group", "sex"),
+                          all.x = TRUE)
+  merged_overall[, overall_rate := data.table::fifelse(
+    is.na(total_population) | total_population == 0, 0,
+    total_marriages / total_population
+  )]
+
+  # Compute relative rate = status_rate / overall_rate per year
+  merged_all <- merge(merged_status,
+                      merged_overall[, .(year, age_group, sex, overall_rate)],
+                      by = c("year", "age_group", "sex"))
+  merged_all[, relative_rate := data.table::fifelse(
+    overall_rate == 0, 1, status_rate / overall_rate
+  )]
+
+  # Average relative rates across years
+  result <- merged_all[, .(
+    relative_rate = mean(relative_rate, na.rm = TRUE),
     n_years = .N
   ), by = .(age_group, sex, prior_status)]
-
-  # Calculate relative rates
-
-  # The relative rate is: status_proportion / (1/3)
-  # This means if a status has 50% of marriages, relative_rate = 1.5
-  # And sum of (relative_rate × base_rate × population_share) ≈ base_rate
-
-  # Actually, per TR2025, we want rates to reflect actual likelihood differences
-  # The relative rate should be normalized so weighted sum = 1
-  # relative_rate = proportion / (1/n_statuses) = proportion × n_statuses
-
-  n_statuses <- 3  # single, widowed, divorced
-  avg_proportions[, relative_rate := avg_proportion * n_statuses]
-
-  # Normalize within each age_group × sex so sum = n_statuses
-  # (This ensures weighted average of relative rates = 1)
-  avg_proportions[, sum_relative := sum(relative_rate), by = .(age_group, sex)]
-  avg_proportions[, relative_rate := relative_rate * n_statuses / sum_relative]
-
-  result <- avg_proportions[, .(age_group, sex, prior_status, relative_rate,
-                                 avg_proportion)]
 
   # Order properly
   age_order <- c("12-17", "14-19", "18-19", "20-24", "25-29", "30-34",
@@ -2341,6 +2570,49 @@ apply_prior_status_rates <- function(marriage_rates,
   )
 }
 
+#' Estimate same-sex marriage counts by year for historical period
+#'
+#' @description
+#' Per TR2025 Section 1.6.c Step 6: "We also subtract out same-sex marriages
+#' from the NCHS data, as we handle those in a later step."
+#'
+#' Estimates the number of same-sex marriages for each historical year:
+#' - Pre-2004: 0 (no legal same-sex marriage in any U.S. state)
+#' - 2004-2014: linear ramp from 0 to `default_fraction` as states legalized
+#' - 2015+: uses `default_fraction` (post-Obergefell nationwide legalization)
+#'
+#' @param nchs_us_totals data.table with year and total_marriages columns
+#' @param config List: optional config with same_sex.default_fraction
+#'
+#' @return data.table with year, total_marriages, ss_marriages, os_marriages
+#'
+#' @keywords internal
+estimate_same_sex_marriages_by_year <- function(nchs_us_totals, config) {
+  ss_fraction <- require_config_value(
+    config, "marriage", "same_sex", "default_fraction",
+    name = "same-sex marriage fraction"
+  )
+
+  dt <- data.table::copy(nchs_us_totals)
+
+  dt[, ss_fraction := data.table::fifelse(
+    year < 2004, 0,
+    data.table::fifelse(
+      year < 2015,
+      ss_fraction * (year - 2004) / (2015 - 2004),
+      ss_fraction
+    )
+  )]
+  dt[, ss_marriages := round(total_marriages * ss_fraction)]
+  dt[, os_marriages := total_marriages - ss_marriages]
+
+  cli::cli_alert_info(
+    "Estimated same-sex marriages: 0 (pre-2004), {round(ss_fraction * 100, 1)}% (2015+)"
+  )
+
+  dt
+}
+
 #' Separate same-sex and opposite-sex marriage rates
 #'
 #' @description
@@ -2360,7 +2632,10 @@ apply_prior_status_rates <- function(marriage_rates,
 #' @param same_sex_data Result from fetch_acs_same_sex_grids() (optional, legacy)
 #'   Used to calculate prevalence grids if prevalence_grids not provided
 #' @param opposite_sex_grids ACS opposite-sex grids (needed if using same_sex_data)
-#' @param same_sex_fraction Fallback fraction if no data provided (default: 0.045)
+#' @param same_sex_fraction Numeric or NULL: overall same-sex fraction.
+#'   If NULL, reads from config$marriage$same_sex$default_fraction.
+#' @param config List or NULL: configuration object. Required when same_sex_fraction
+#'   is NULL, or for MM/FF share defaults in constant-fraction fallback.
 #' @param years Years to process (default: all years)
 #'
 #' @return List with:
@@ -2376,9 +2651,22 @@ separate_marriage_types <- function(marriage_rates,
                                      prevalence_grids = NULL,
                                      same_sex_data = NULL,
                                      opposite_sex_grids = NULL,
-                                     same_sex_fraction = 0.045,
+                                     same_sex_fraction = NULL,
+                                     config = NULL,
                                      years = NULL) {
   checkmate::assert_list(marriage_rates)
+
+  # Resolve same-sex fraction from config (no hardcoded fallback)
+  if (is.null(same_sex_fraction)) {
+    if (!is.null(config) && !is.null(config$marriage$same_sex$default_fraction)) {
+      same_sex_fraction <- config$marriage$same_sex$default_fraction
+    } else {
+      cli::cli_abort(c(
+        "same_sex_fraction not provided and not found in config",
+        "i" = "Set {.field marriage.same_sex.default_fraction} in config, or pass same_sex_fraction explicitly"
+      ))
+    }
+  }
 
   if (is.null(years)) {
     years <- as.integer(names(marriage_rates))
@@ -2499,6 +2787,7 @@ separate_marriage_types <- function(marriage_rates,
       marriage_rates = marriage_rates,
       prevalence_grids = prev_grids,
       same_sex_fraction = same_sex_fraction,
+      config = config,
       years = years
     ))
 
@@ -2516,11 +2805,15 @@ separate_marriage_types <- function(marriage_rates,
       mm_share <- sum(totals[sex_combo == "male_male", marriages]) / total_ss
       ff_share <- sum(totals[sex_combo == "female_female", marriages]) / total_ss
       cli::cli_alert_info("Using ACS-derived MM/FF split: {round(mm_share*100, 1)}% / {round(ff_share*100, 1)}%")
+    } else if (!is.null(config) && !is.null(config$marriage$same_sex$default_mm_share)) {
+      mm_share <- config$marriage$same_sex$default_mm_share
+      ff_share <- config$marriage$same_sex$default_ff_share
+      cli::cli_alert_info("Using config MM/FF split: {round(mm_share*100, 1)}% / {round(ff_share*100, 1)}%")
     } else {
-      # Default from ACS 2015-2022 average (documented in CLAUDE.md)
-      mm_share <- 0.459
-      ff_share <- 0.541
-      cli::cli_alert_info("Using default MM/FF split: {round(mm_share*100, 1)}% / {round(ff_share*100, 1)}%")
+      cli::cli_abort(c(
+        "MM/FF share not available from data or config",
+        "i" = "Set {.field marriage.same_sex.default_mm_share} and {.field marriage.same_sex.default_ff_share} in config"
+      ))
     }
 
     for (yr in years) {
@@ -2590,9 +2883,14 @@ separate_marriage_types <- function(marriage_rates,
 #'   From get_2010_standard_population()
 #' @param prior_status_data Prior marital status data (1979, 1981-88)
 #'   From fetch_nchs_marriages_by_prior_status_1978_1988()
-#' @param ultimate_amr Ultimate AMR target (default: 4000)
-#' @param ultimate_year Year when ultimate is reached (default: 2047)
-#' @param end_year Final projection year (default: 2099)
+#' @param unmarried_pop_by_status data.table or NULL: CPS unmarried population
+#'   by prior status (Input #10 proxy). From extract_cps_unmarried_by_prior_status().
+#'   When provided, enables TR2025-compliant rate-based differentials.
+#' @param same_sex_data ACS same-sex marriage grids
+#' @param same_sex_fraction Numeric: overall same-sex marriage fraction
+#' @param config List: configuration object (required). All projection parameters
+#'   (ultimate_amr, ultimate_year, end_year, smoothing, convergence, etc.) are
+#'   read from config$marriage.
 #' @param include_same_sex Logical: separate same-sex rates (default: TRUE)
 #' @param include_prior_status Logical: apply prior status differentials (default: TRUE)
 #' @param cache_dir Directory for caching results
@@ -2618,15 +2916,10 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
                                      nchs_us_totals,
                                      standard_pop_by_group,
                                      prior_status_data = NULL,
+                                     unmarried_pop_by_status = NULL,  # Required when include_prior_status = TRUE
                                      same_sex_data = NULL,
-                                     same_sex_fraction = 0.045,
-                                     ultimate_amr = 4000,
-                                     ultimate_year = 2047,
-                                     end_year = 2099,
-                                     min_age = 14,
-                                     max_age = 100,
-                                     acs_start = 2008,
-                                     acs_end = 2022,
+                                     same_sex_fraction = NULL,
+                                     config,
                                      include_same_sex = TRUE,
                                      include_prior_status = TRUE,
                                      cache_dir = here::here("data/cache/marriage"),
@@ -2651,31 +2944,70 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
   # =========================================================================
   cli::cli_h2("Step 1: Building Base MarGrid (1978-1988)")
 
+  # Read config-driven parameters (config is required)
+  if (is.null(config) || is.null(config$marriage)) {
+    cli::cli_abort("config with marriage section is required for run_marriage_projection()")
+  }
+  mc <- config$marriage
+
+  base_smooth_params <- list(
+    h_param = require_config_value(config, "marriage", "smoothing", "base", "h_param"),
+    w_param = require_config_value(config, "marriage", "smoothing", "base", "w_param")
+  )
+  hist_smooth_params <- list(
+    h_param = require_config_value(config, "marriage", "smoothing", "historical", "h_param"),
+    w_param = require_config_value(config, "marriage", "smoothing", "historical", "w_param")
+  )
+  interp_method <- require_config_value(config, "marriage", "interpolation_method")
+  std_year <- require_config_value(config, "marriage", "standard_population_year")
+  convergence_exp <- require_config_value(config, "marriage", "convergence_exponent")
+  starting_amr_n_years <- require_config_value(config, "marriage", "starting_amr", "n_years")
+  starting_amr_weights <- mc$starting_amr$weights
+  prior_status_years <- require_config_value(config, "marriage", "prior_status", "years")
+  ultimate_amr <- require_config_value(config, "marriage", "ultimate_amr")
+  ultimate_year <- require_config_value(config, "marriage", "ultimate_year")
+  start_year <- require_config_value(config, "metadata", "projection_period", "start_year")
+  end_year <- require_config_value(config, "metadata", "projection_period", "end_year")
+  min_age <- require_config_value(config, "marriage", "min_age")
+  max_age <- require_config_value(config, "marriage", "max_age")
+  acs_start <- require_config_value(config, "marriage", "acs_start")
+  acs_end <- require_config_value(config, "marriage", "acs_end")
+
   margrid_result <- build_base_margrid(
     nchs_marriages = nchs_marriages_1978_1988,
     cps_unmarried = cps_unmarried,
     years = 1978:1988,
-    smooth = TRUE
+    smooth = TRUE,
+    smooth_params = base_smooth_params
   )
   base_margrid <- margrid_result$margrid
 
   # =========================================================================
   # STEP 2: Build standard population grid
   # =========================================================================
-  cli::cli_h2("Step 2: Building Standard Population Grid (2010)")
+  cli::cli_h2("Step 2: Building Standard Population Grid ({std_year})")
 
   # Ensure year column exists
   std_pop <- data.table::copy(standard_pop_by_group)
   if (!"year" %in% names(std_pop)) {
-    std_pop[, year := 2010]
+    std_pop[, year := std_year]
   }
 
   standard_pop_grid <- build_standard_population_grid(
     unmarried_pop = std_pop,
-    std_year = 2010,
+    std_year = std_year,
     min_age = min_age,
     max_age = max_age
   )
+
+  # =========================================================================
+  # STEP 2B: Estimate same-sex marriages by year (TR2025 Step 6)
+  # =========================================================================
+  same_sex_estimates <- estimate_same_sex_marriages_by_year(
+    nchs_us_totals = nchs_us_totals,
+    config = config
+  )
+  cli::cli_alert_info("Same-sex subtraction: {sum(same_sex_estimates$ss_marriages)} total across {nrow(same_sex_estimates[ss_marriages > 0])} years")
 
   # =========================================================================
   # STEP 3: Calculate historical rates (1989-2022)
@@ -2691,7 +3023,8 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
     acs_start = acs_start,
     acs_end = acs_end,
     cache_dir = cache_dir,
-    force_recompute = force_recompute
+    force_recompute = force_recompute,
+    same_sex_estimates = same_sex_estimates
   )
 
   # =========================================================================
@@ -2708,8 +3041,12 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
     historical_amr = historical_result$amr,
     standard_pop_grid = standard_pop_grid,
     ultimate_amr = ultimate_amr,
+    start_year = start_year,
     ultimate_year = ultimate_year,
     end_year = end_year,
+    convergence_exp = convergence_exp,
+    starting_amr_n_years = starting_amr_n_years,
+    starting_amr_weights = starting_amr_weights,
     cache_dir = cache_dir,
     force_recompute = force_recompute
   )
@@ -2728,7 +3065,8 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
 
     status_differentials <- calculate_prior_status_differentials(
       marriages_by_status = prior_status_data,
-      years = c(1979, 1981:1988)
+      unmarried_pop_by_status = unmarried_pop_by_status,
+      years = prior_status_years
     )
 
     status_result <- apply_prior_status_rates(
@@ -2772,7 +3110,8 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
       prevalence_grids = prevalence_grids,
       same_sex_data = same_sex_data,
       opposite_sex_grids = acs_grids,
-      same_sex_fraction = same_sex_fraction
+      same_sex_fraction = same_sex_fraction,
+      config = config
     )
     opposite_sex_rates <- sex_result$opposite_sex
     same_sex_rates <- sex_result$same_sex
@@ -2813,7 +3152,7 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
     standard_pop_grid = standard_pop_grid,
 
     # Metadata
-    projection_years = 2023:end_year,
+    projection_years = start_year:end_year,
     historical_years = as.integer(names(historical_result$rates)),
     computed_at = Sys.time(),
     elapsed_minutes = as.numeric(elapsed)
