@@ -72,20 +72,32 @@ MARRIAGE_AGE_GROUPS <- list(
 #' and territory populations have changed relative to the U.S. total.
 #'
 #' @export
-get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache")) {
-  # Try to load cached historical population components
+get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache"),
+                               config = NULL) {
+  # Check for config override first
+  if (!is.null(config) && !is.null(config$marriage$ss_area_factor_override)) {
+    override <- config$marriage$ss_area_factor_override
+    cli::cli_alert_warn("Using config SS area factor override: {round(override, 5)}")
+    return(override)
+  }
+
+  # Load from historical population cache
   cache_file <- file.path(cache_dir, "historical_population", "ss_population_1940_2022.rds")
 
   if (!file.exists(cache_file)) {
-    cli::cli_warn("Historical population cache not found at {cache_file}. Using fallback factor 1.02.")
-    return(1.02)
+    cli::cli_abort(c(
+      "Historical population cache not found at {.path {cache_file}}",
+      "i" = "Run the historical population subprocess first, or set {.field marriage.ss_area_factor_override} in config"
+    ))
   }
 
   pop_data <- readRDS(cache_file)
 
   if (!"components" %in% names(pop_data)) {
-    cli::cli_warn("Historical population cache missing components. Using fallback factor 1.02.")
-    return(1.02)
+    cli::cli_abort(c(
+      "Historical population cache missing {.field components}",
+      "i" = "Regenerate the historical population cache, or set {.field marriage.ss_area_factor_override} in config"
+    ))
   }
 
   components <- data.table::as.data.table(pop_data$components)
@@ -112,8 +124,11 @@ get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache")
   factor_val <- components[year == target_year, total / census_usaf]
 
   if (length(factor_val) == 0 || is.na(factor_val)) {
-    cli::cli_warn("No data for year {target_year}. Using fallback factor 1.02.")
-    return(1.02)
+    cli::cli_abort(c(
+      "No SS area factor data for year {target_year}",
+      "i" = "Available years: {min_year}-{max_year}",
+      "i" = "Set {.field marriage.ss_area_factor_override} in config as a workaround"
+    ))
   }
 
   factor_val
@@ -131,24 +146,34 @@ get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache")
 #' @return Named numeric vector with SS area factors keyed by year
 #'
 #' @export
-get_ss_area_factors <- function(years, cache_dir = here::here("data/cache")) {
+get_ss_area_factors <- function(years, cache_dir = here::here("data/cache"),
+                                config = NULL) {
+  # Check for config override first
+  if (!is.null(config) && !is.null(config$marriage$ss_area_factor_override)) {
+    override <- config$marriage$ss_area_factor_override
+    cli::cli_alert_warn("Using config SS area factor override: {round(override, 5)} for all years")
+    factors <- rep(override, length(years))
+    names(factors) <- as.character(years)
+    return(factors)
+  }
+
   # Load cache once for efficiency
   cache_file <- file.path(cache_dir, "historical_population", "ss_population_1940_2022.rds")
 
   if (!file.exists(cache_file)) {
-    cli::cli_warn("Historical population cache not found. Using fallback factor 1.02 for all years.")
-    factors <- rep(1.02, length(years))
-    names(factors) <- as.character(years)
-    return(factors)
+    cli::cli_abort(c(
+      "Historical population cache not found at {.path {cache_file}}",
+      "i" = "Run the historical population subprocess first, or set {.field marriage.ss_area_factor_override} in config"
+    ))
   }
 
   pop_data <- readRDS(cache_file)
 
   if (!"components" %in% names(pop_data)) {
-    cli::cli_warn("Historical population cache missing components. Using fallback factor 1.02.")
-    factors <- rep(1.02, length(years))
-    names(factors) <- as.character(years)
-    return(factors)
+    cli::cli_abort(c(
+      "Historical population cache missing {.field components}",
+      "i" = "Regenerate the historical population cache, or set {.field marriage.ss_area_factor_override} in config"
+    ))
   }
 
   components <- data.table::as.data.table(pop_data$components)
@@ -164,7 +189,9 @@ get_ss_area_factors <- function(years, cache_dir = here::here("data/cache")) {
       return(components[year == max_year, ss_area_factor])
     } else {
       f <- components[year == yr, ss_area_factor]
-      if (length(f) == 0 || is.na(f)) return(1.02)
+      if (length(f) == 0 || is.na(f)) {
+        cli::cli_abort("No SS area factor data for year {yr}")
+      }
       return(f)
     }
   })
@@ -2525,11 +2552,11 @@ apply_prior_status_rates <- function(marriage_rates,
 #' @return data.table with year, total_marriages, ss_marriages, os_marriages
 #'
 #' @keywords internal
-estimate_same_sex_marriages_by_year <- function(nchs_us_totals, config = NULL) {
-  ss_fraction <- 0.045
-  if (!is.null(config) && !is.null(config$marriage$same_sex$default_fraction)) {
-    ss_fraction <- config$marriage$same_sex$default_fraction
-  }
+estimate_same_sex_marriages_by_year <- function(nchs_us_totals, config) {
+  ss_fraction <- require_config_value(
+    config, "marriage", "same_sex", "default_fraction",
+    name = "same-sex marriage fraction"
+  )
 
   dt <- data.table::copy(nchs_us_totals)
 
@@ -2570,7 +2597,10 @@ estimate_same_sex_marriages_by_year <- function(nchs_us_totals, config = NULL) {
 #' @param same_sex_data Result from fetch_acs_same_sex_grids() (optional, legacy)
 #'   Used to calculate prevalence grids if prevalence_grids not provided
 #' @param opposite_sex_grids ACS opposite-sex grids (needed if using same_sex_data)
-#' @param same_sex_fraction Fallback fraction if no data provided (default: 0.045)
+#' @param same_sex_fraction Numeric or NULL: overall same-sex fraction.
+#'   If NULL, reads from config$marriage$same_sex$default_fraction.
+#' @param config List or NULL: configuration object. Required when same_sex_fraction
+#'   is NULL, or for MM/FF share defaults in constant-fraction fallback.
 #' @param years Years to process (default: all years)
 #'
 #' @return List with:
@@ -2586,9 +2616,22 @@ separate_marriage_types <- function(marriage_rates,
                                      prevalence_grids = NULL,
                                      same_sex_data = NULL,
                                      opposite_sex_grids = NULL,
-                                     same_sex_fraction = 0.045,
+                                     same_sex_fraction = NULL,
+                                     config = NULL,
                                      years = NULL) {
   checkmate::assert_list(marriage_rates)
+
+  # Resolve same-sex fraction from config (no hardcoded fallback)
+  if (is.null(same_sex_fraction)) {
+    if (!is.null(config) && !is.null(config$marriage$same_sex$default_fraction)) {
+      same_sex_fraction <- config$marriage$same_sex$default_fraction
+    } else {
+      cli::cli_abort(c(
+        "same_sex_fraction not provided and not found in config",
+        "i" = "Set {.field marriage.same_sex.default_fraction} in config, or pass same_sex_fraction explicitly"
+      ))
+    }
+  }
 
   if (is.null(years)) {
     years <- as.integer(names(marriage_rates))
@@ -2709,6 +2752,7 @@ separate_marriage_types <- function(marriage_rates,
       marriage_rates = marriage_rates,
       prevalence_grids = prev_grids,
       same_sex_fraction = same_sex_fraction,
+      config = config,
       years = years
     ))
 
@@ -2726,11 +2770,15 @@ separate_marriage_types <- function(marriage_rates,
       mm_share <- sum(totals[sex_combo == "male_male", marriages]) / total_ss
       ff_share <- sum(totals[sex_combo == "female_female", marriages]) / total_ss
       cli::cli_alert_info("Using ACS-derived MM/FF split: {round(mm_share*100, 1)}% / {round(ff_share*100, 1)}%")
+    } else if (!is.null(config) && !is.null(config$marriage$same_sex$default_mm_share)) {
+      mm_share <- config$marriage$same_sex$default_mm_share
+      ff_share <- config$marriage$same_sex$default_ff_share
+      cli::cli_alert_info("Using config MM/FF split: {round(mm_share*100, 1)}% / {round(ff_share*100, 1)}%")
     } else {
-      # Default from ACS 2015-2022 average (documented in CLAUDE.md)
-      mm_share <- 0.459
-      ff_share <- 0.541
-      cli::cli_alert_info("Using default MM/FF split: {round(mm_share*100, 1)}% / {round(ff_share*100, 1)}%")
+      cli::cli_abort(c(
+        "MM/FF share not available from data or config",
+        "i" = "Set {.field marriage.same_sex.default_mm_share} and {.field marriage.same_sex.default_ff_share} in config"
+      ))
     }
 
     for (yr in years) {
@@ -2835,7 +2883,7 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
                                      prior_status_data = NULL,
                                      unmarried_pop_by_status = NULL,  # Required when include_prior_status = TRUE
                                      same_sex_data = NULL,
-                                     same_sex_fraction = 0.045,
+                                     same_sex_fraction = NULL,
                                      config,
                                      include_same_sex = TRUE,
                                      include_prior_status = TRUE,
@@ -3027,7 +3075,8 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
       prevalence_grids = prevalence_grids,
       same_sex_data = same_sex_data,
       opposite_sex_grids = acs_grids,
-      same_sex_fraction = same_sex_fraction
+      same_sex_fraction = same_sex_fraction,
+      config = config
     )
     opposite_sex_rates <- sex_result$opposite_sex
     same_sex_rates <- sex_result$same_sex
