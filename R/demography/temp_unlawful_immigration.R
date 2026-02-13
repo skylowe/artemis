@@ -611,13 +611,16 @@ get_nonimmigrant_age_distribution <- function() {
 #' @param o_immigration data.table with O immigration by year, age, sex
 #' @param reference_years Years for ODIST average (default: 2015:2019)
 #' @param use_interpolation Logical: use historical interpolation (default: TRUE)
+#' @param dhs_ni_stock Optional data.table with DHS nonimmigrant stock by
+#'   age group and sex, passed through to anchor point calculation.
 #'
 #' @return data.table with ODIST by age, sex, type
 #'
 #' @export
 calculate_odist_with_interpolation <- function(o_immigration,
                                                 reference_years = 2015:2019,
-                                                use_interpolation = TRUE) {
+                                                use_interpolation = TRUE,
+                                                dhs_ni_stock = NULL) {
   checkmate::assert_data_table(o_immigration)
 
   cli::cli_h3("Calculating ODIST with historical type interpolation")
@@ -641,7 +644,7 @@ calculate_odist_with_interpolation <- function(o_immigration,
   }
 
   # Get anchor points for interpolation
-  anchor_points <- get_type_anchor_points()
+  anchor_points <- get_type_anchor_points(dhs_ni_stock = dhs_ni_stock)
 
   # For each year, get interpolated type splits and apply to O immigration
   results <- list()

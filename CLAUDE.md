@@ -180,6 +180,10 @@ sudo systemctl restart jupyterhub
 5. **Marriage:** Same-sex separation uses ACS PUMS prevalence (2015-2022) instead of state-level data (2004-2012).
 6. **Divorce:** ACS PUMS data (2018-2022) for DivGrid adjustment instead of 18-state health department data.
 7. **O-population stock (Eq 1.4.3):** TR2025 builds stock directly from residuals, then modifies stock levels. ARTEMIS uses V.A2 o_net totals for annual stock levels and residuals only for age-sex distribution shape. This is because ARTEMIS component inputs (immigration distributions, AOS ratios) differ from OCACT's internal data, causing residual-built stocks to diverge pre-2000. Configurable via `historical_population.o_population.method` (`"residual"` default, `"va2_flows"` alternative).
+8. **ACS undercount (O immigration):** Uses single calibrated factor per age group instead of TR2025's three-component model (ACS-DHS gap, PUMS-Census gap, PR foreign-born). Individual components not published by SSA. Configurable via `immigration.o_immigration.acs_undercount_factors`.
+9. **O departure rates:** Approximated via multiplicative adjustments on a single base rate schedule instead of TR2025's separate rate tables from the 2014 TR stock build-up. Actual SSA internal rates (Inputs #26-30) not published. Configurable via `immigration.o_immigration.departure_rates`.
+10. **DHS admissions NI calibration:** Not implemented (placeholder). I-94 detail data at required age/sex granularity not publicly available.
+11. **NI "other in" factor:** Not implemented (placeholder). DHS parolee/EWI data not available at required granularity.
 
 ## Key Rules
 1. **Real data only** - No synthetic/mock data. Tasks are not complete until working with real API/file data.

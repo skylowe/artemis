@@ -680,7 +680,8 @@ run_full_o_projection <- function(historical_o_pop,
                                    mortality_qx,
                                    undercount_factors = NULL,
                                    projection_years = 2023:2099,
-                                   config = NULL) {
+                                   config = NULL,
+                                   dhs_ni_stock = NULL) {
 
   cli::cli_h1("Temporary or Unlawfully Present Immigration Projection")
   cli::cli_alert_info("Projection years: {min(projection_years)}-{max(projection_years)}")
@@ -719,7 +720,7 @@ run_full_o_projection <- function(historical_o_pop,
 
   # Add type dimension if missing
   if (!"type" %in% names(starting_pop)) {
-    starting_pop <- add_type_dimension(starting_pop, year = start_year)
+    starting_pop <- add_type_dimension(starting_pop, year = start_year, config = config)
   }
 
   cli::cli_alert_success(
@@ -743,7 +744,8 @@ run_full_o_projection <- function(historical_o_pop,
     # Calculate ODIST with historical type interpolation
     odist <- calculate_odist_with_interpolation(
       o_historical,
-      reference_years = 2015:2019
+      reference_years = 2015:2019,
+      dhs_ni_stock = dhs_ni_stock
     )
   } else {
     cli::cli_abort(c(

@@ -329,6 +329,40 @@ create_immigration_targets <- function() {
     ),
 
     # ==========================================================================
+    # O IMMIGRATION STATIC DATA (CSV)
+    # ==========================================================================
+
+    # Overstay percentages by age (from Warren & Kerwin 2017, DHS reports)
+    targets::tar_target(
+      o_overstay_percentages,
+      load_overstay_percentages()
+    ),
+
+    # Nonimmigrant age distribution (from DHS Yearbook visa composition)
+    targets::tar_target(
+      o_ni_age_distribution,
+      load_nonimmigrant_age_distribution()
+    ),
+
+    # DHS anchor point totals for type interpolation (2010, 2015)
+    targets::tar_target(
+      o_dhs_anchor_points,
+      load_dhs_anchor_points()
+    ),
+
+    # Base departure rates by age/type/sex
+    targets::tar_target(
+      o_base_departure_rates,
+      load_base_departure_rates()
+    ),
+
+    # DACA historical stock (2013-2022 USCIS data)
+    targets::tar_target(
+      daca_historical_stock,
+      load_daca_historical_stock()
+    ),
+
+    # ==========================================================================
     # O IMMIGRATION SUBPROCESS
     # ==========================================================================
 
@@ -371,7 +405,8 @@ create_immigration_targets <- function() {
         undercount_factors = acs_undercount_factors,
         projection_years = config_assumptions$metadata$projection_period$start_year:
                            config_assumptions$metadata$projection_period$end_year,
-        config = config_assumptions
+        config = config_assumptions,
+        dhs_ni_stock = dhs_nonimmigrant_stock
       )
     ),
 
