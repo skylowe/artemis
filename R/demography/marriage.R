@@ -288,85 +288,231 @@ get_age_range <- function(age_group) {
   list(min = parts[1], max = parts[2])
 }
 
-#' H.S. Beers ordinary interpolation coefficients for 5-year age groups
+#' Marriage age group definitions for MarGrid (8-category)
 #'
 #' @description
-#' Standard Beers coefficients for interpolating 5-year age group data
-#' to single years. These are the "ordinary" minimized fifth difference
-#' coefficients from Shryock & Siegel.
+#' The 8 age groups used in the marriage grid, with min, max, and width.
+#' Used for Beers interpolation pre-processing, standard population grid,
+#' age group aggregation, and MarGrid adjustment. Defined once here and
+#' referenced throughout the file.
 #'
 #' @keywords internal
-BEERS_COEFFICIENTS <- list(
-  # First age group (needs special handling)
-  first = matrix(c(
-    0.3333, -0.1636, -0.0210,  0.0796, -0.0283,
-    0.2595, -0.0780,  0.0130,  0.0100, -0.0045,
-    0.1924,  0.0064,  0.0184, -0.0256,  0.0084,
-    0.1329,  0.0844,  0.0054, -0.0356,  0.0129,
-    0.0819,  0.1508, -0.0158, -0.0284,  0.0115
-  ), nrow = 5, byrow = TRUE),
-
-  # Interior age groups
-  interior = matrix(c(
-    0.0404,  0.2000, -0.0344, -0.0128,  0.0068,
-    0.0093,  0.2268, -0.0402,  0.0028,  0.0013,
-   -0.0108,  0.2272, -0.0248,  0.0112, -0.0028,
-   -0.0198,  0.1992,  0.0172,  0.0072, -0.0038,
-   -0.0191,  0.1468,  0.0822, -0.0084, -0.0015
-  ), nrow = 5, byrow = TRUE),
-
-  # Last age group (needs special handling)
-  last = matrix(c(
-   -0.0115,  0.0284,  0.0158, -0.1508,  0.1181,
-   -0.0129,  0.0356, -0.0054, -0.0844,  0.0671,
-   -0.0084,  0.0256, -0.0184, -0.0064,  0.0076,
-    0.0045, -0.0100, -0.0130,  0.0780, -0.0595,
-    0.0283, -0.0796,  0.0210,  0.1636, -0.1333
-  ), nrow = 5, byrow = TRUE)
+MARGRID_AGE_GROUPS <- list(
+  "14-19" = list(min = 14, max = 19, width = 6),
+  "20-24" = list(min = 20, max = 24, width = 5),
+  "25-29" = list(min = 25, max = 29, width = 5),
+  "30-34" = list(min = 30, max = 34, width = 5),
+  "35-44" = list(min = 35, max = 44, width = 10),
+  "45-54" = list(min = 45, max = 54, width = 10),
+  "55-64" = list(min = 55, max = 64, width = 10),
+  "65+"   = list(min = 65, max = 100, width = 36)
 )
 
-#' Apply 1D Beers interpolation to age group totals
+#' Apply correct H.S. Beers interpolation to standard 5-year pseudo-groups
 #'
 #' @description
-#' Converts 5-year age group totals to single-year estimates using
-#' H.S. Beers ordinary interpolation method.
+#' Applies H.S. Beers ordinary interpolation to a vector of standard 5-year
+#' group totals. Uses the canonical coefficients from
+#' `historical_marital_status.R:get_beers_coefficients()`.
 #'
-#' @param group_values Numeric vector of age group totals (must be 5-year groups)
-#' @param group_widths Numeric vector of group widths (e.g., c(5, 5, 5, ...))
+#' @param group_totals Numeric vector of 5-year group totals (>= 6 groups)
 #'
-#' @return Numeric vector of single-year values
+#' @return Numeric vector of single-year values (length = n_groups * 5)
 #' @keywords internal
-beers_interpolate_1d <- function(group_values, group_widths = NULL) {
-  n_groups <- length(group_values)
+apply_beers_standard <- function(group_totals) {
+  n_groups <- length(group_totals)
 
-  if (n_groups < 3) {
-    # Not enough groups for Beers, use uniform
-    if (is.null(group_widths)) group_widths <- rep(5, n_groups)
-    result <- unlist(lapply(seq_along(group_values), function(i) {
-      rep(group_values[i] / group_widths[i], group_widths[i])
-    }))
-    return(result)
+  if (n_groups < 6) {
+    cli::cli_abort("Beers interpolation requires at least 6 groups, got {n_groups}")
   }
 
-  # Assume 5-year groups for standard Beers
-  # For non-standard groups, fall back to proportional allocation
-  if (is.null(group_widths)) {
-    group_widths <- rep(5, n_groups)
+  coef <- get_beers_coefficients()
+  n_single <- n_groups * 5
+  result <- numeric(n_single)
+
+  # Opening coefficients: first 10 single years from first 6 groups
+  for (i in 1:10) {
+    result[i] <- sum(coef$opening[i, ] * group_totals[1:6])
   }
 
-  # Simple proportional allocation within groups
-  # (Full Beers implementation requires careful handling of boundary conditions)
-  result <- numeric(sum(group_widths))
-  idx <- 1
+  # Interior coefficients: single years 11 to (n_single - 10)
+  # Each application produces 5 single years from a sliding window of 6 groups
+  for (j in seq(11, n_single - 10, by = 5)) {
+    # Determine which group center we're in (1-indexed)
+    g <- (j - 1) %/% 5 + 1
 
-  for (i in seq_along(group_values)) {
-    width <- group_widths[i]
-    # Distribute group value across single years
-    # Use a simple smooth allocation
-    single_year_value <- group_values[i] / width
-    result[idx:(idx + width - 1)] <- single_year_value
-    idx <- idx + width
+    # Window of 6 groups, clamped to valid range
+    g1 <- max(1, g - 2)
+    g2 <- min(n_groups, g1 + 5)
+    g1 <- g2 - 5  # Ensure exactly 6 groups
+
+    for (k in 0:4) {
+      result[j + k] <- sum(coef$interior[k + 1, ] * group_totals[g1:g2])
+    }
   }
+
+  # Closing coefficients: last 10 single years from last 6 groups
+  for (i in 1:10) {
+    result[n_single - 10 + i] <- sum(coef$closing[i, ] * group_totals[(n_groups - 5):n_groups])
+  }
+
+  result
+}
+
+#' Pre-process marriage age groups into standard 5-year pseudo-groups
+#'
+#' @description
+#' Converts the 8 non-standard marriage age groups into ~17 standard 5-year
+#' pseudo-groups suitable for Beers interpolation. Non-standard groups are
+#' split via uniform allocation:
+#' - 14-19 (6yr) -> 15-19 (5yr), with age 14 handled separately
+#' - 35-44 (10yr) -> 35-39, 40-44
+#' - 45-54 (10yr) -> 45-49, 50-54
+#' - 55-64 (10yr) -> 55-59, 60-64
+#' - 65+ (36yr) -> 65-69, 70-74, ..., 95-99 (7 sub-groups)
+#'
+#' @param group_totals Named numeric vector of group totals (rate * width)
+#'   Names must match MARGRID_AGE_GROUPS (e.g., "14-19", "20-24", ...)
+#'
+#' @return List with:
+#'   - pseudo_totals: numeric vector of 17 pseudo-group totals
+#'   - pseudo_labels: character vector of pseudo-group labels
+#'   - age14_value: estimated value for age 14 (1/6 of 14-19 total)
+#' @keywords internal
+preprocess_marriage_to_5year <- function(group_totals) {
+  # Expected 8 groups in order
+  expected <- names(MARGRID_AGE_GROUPS)
+  if (is.null(names(group_totals))) {
+    names(group_totals) <- expected
+  }
+
+  pseudo_totals <- numeric(0)
+  pseudo_labels <- character(0)
+
+  # Age 14 gets 1/6 of the 14-19 total (handled separately after Beers)
+  total_14_19 <- group_totals["14-19"]
+  age14_value <- total_14_19 / 6
+
+  # 15-19: remaining 5/6 of 14-19 total
+  pseudo_totals <- c(pseudo_totals, total_14_19 * 5 / 6)
+  pseudo_labels <- c(pseudo_labels, "15-19")
+
+  # 20-24, 25-29, 30-34: already 5-year groups, pass through
+  for (g in c("20-24", "25-29", "30-34")) {
+    pseudo_totals <- c(pseudo_totals, group_totals[g])
+    pseudo_labels <- c(pseudo_labels, g)
+  }
+
+  # 35-44: split into 35-39 and 40-44 (uniform)
+  total_35_44 <- group_totals["35-44"]
+  pseudo_totals <- c(pseudo_totals, total_35_44 / 2, total_35_44 / 2)
+  pseudo_labels <- c(pseudo_labels, "35-39", "40-44")
+
+  # 45-54: split into 45-49 and 50-54
+  total_45_54 <- group_totals["45-54"]
+  pseudo_totals <- c(pseudo_totals, total_45_54 / 2, total_45_54 / 2)
+  pseudo_labels <- c(pseudo_labels, "45-49", "50-54")
+
+  # 55-64: split into 55-59 and 60-64
+  total_55_64 <- group_totals["55-64"]
+  pseudo_totals <- c(pseudo_totals, total_55_64 / 2, total_55_64 / 2)
+  pseudo_labels <- c(pseudo_labels, "55-59", "60-64")
+
+  # 65+: split into 7 sub-groups of 5 years each (65-69 through 95-99)
+  # Original width = 36 (ages 65-100), 7 sub-groups of 5 = 35 years
+  # Age 100 is handled separately after Beers
+  total_65_plus <- group_totals["65+"]
+  n_sub <- 7
+  sub_total <- total_65_plus * 5 / 36  # Each sub-group gets 5/36 of total
+  for (start in seq(65, 95, by = 5)) {
+    pseudo_totals <- c(pseudo_totals, sub_total)
+    pseudo_labels <- c(pseudo_labels, paste0(start, "-", start + 4))
+  }
+
+  names(pseudo_totals) <- pseudo_labels
+
+  list(
+    pseudo_totals = pseudo_totals,
+    pseudo_labels = pseudo_labels,
+    age14_value = age14_value,
+    age100_share = total_65_plus / 36  # 1/36 of 65+ total for age 100
+  )
+}
+
+#' Apply 1D Beers interpolation to marriage age groups
+#'
+#' @description
+#' Converts 8 non-standard marriage age groups to 87 single-year values
+#' (ages 14-100) using H.S. Beers ordinary interpolation. Pre-processes
+#' groups into standard 5-year pseudo-groups, applies Beers, extrapolates
+#' boundary ages, and re-normalizes to preserve original group totals.
+#'
+#' @param group_rates Numeric vector of 8 group-level rates
+#' @param group_names Character vector of group names (default: MARGRID_AGE_GROUPS names)
+#'
+#' @return Named numeric vector of 87 single-year values (ages 14-100)
+#' @keywords internal
+beers_interpolate_marriage_1d <- function(group_rates, group_names = NULL) {
+  if (is.null(group_names)) {
+    group_names <- names(MARGRID_AGE_GROUPS)
+  }
+  names(group_rates) <- group_names
+
+  # Get group widths
+  group_widths <- sapply(MARGRID_AGE_GROUPS, function(g) g$width)
+
+  # Convert rates to group totals (rate * width)
+  group_totals <- group_rates * group_widths
+
+  # Pre-process into 17 standard 5-year pseudo-groups
+
+  pp <- preprocess_marriage_to_5year(group_totals)
+
+  # Apply Beers to 17 pseudo-groups -> 85 single-year values (ages 15-99)
+  beers_result <- apply_beers_standard(pp$pseudo_totals)
+
+  # Enforce non-negativity
+  beers_result <- pmax(beers_result, 0)
+
+  # Build full 87-value result (ages 14-100)
+  result <- numeric(87)
+  names(result) <- as.character(14:100)
+
+  # Ages 15-99 from Beers (85 values)
+  result[as.character(15:99)] <- beers_result
+
+  # Age 14: linear extrapolation from ages 15-16
+  if (beers_result[1] > 0 && beers_result[2] > 0) {
+    result["14"] <- max(0, 2 * beers_result[1] - beers_result[2])
+  } else {
+    result["14"] <- beers_result[1]  # Same as age 15 if extrapolation fails
+  }
+
+  # Age 100: extrapolation from ages 98-99
+  n_beers <- length(beers_result)
+  if (beers_result[n_beers] > 0) {
+    result["100"] <- max(0, 2 * beers_result[n_beers] - beers_result[n_beers - 1])
+  } else {
+    result["100"] <- 0
+  }
+
+  # Re-normalize within each original group to preserve group totals
+  for (grp_name in group_names) {
+    grp <- MARGRID_AGE_GROUPS[[grp_name]]
+    ages <- grp$min:grp$max
+    age_chars <- as.character(ages)
+    current_sum <- sum(result[age_chars])
+    target_sum <- group_totals[grp_name]
+
+    if (current_sum > 0 && target_sum > 0) {
+      result[age_chars] <- result[age_chars] * (target_sum / current_sum)
+    } else if (target_sum == 0) {
+      result[age_chars] <- 0
+    }
+  }
+
+  # Enforce non-negativity after re-normalization
+  result <- pmax(result, 0)
 
   result
 }
@@ -375,10 +521,14 @@ beers_interpolate_1d <- function(group_values, group_widths = NULL) {
 #'
 #' @description
 #' Converts marriage rates by age group to single-year ages using
-#' two-dimensional H.S. Beers interpolation per TR2025 methodology.
+#' two-dimensional H.S. Beers interpolation per TR2025 Section 1.6.a:
+#' "The age-of-husband crossed with age-of-wife marriage grid rates are
+#' transformed from age grouped numbers to single year of age figures
+#' from ages 14 to 100+ for both husband and wife using the two-dimensional
+#' H.S. Beers method of interpolation."
 #'
-#' The method applies Beers interpolation first along husband ages,
-#' then along wife ages, preserving the overall structure.
+#' The method applies Beers interpolation first along husband ages (rows),
+#' then along wife ages (columns).
 #'
 #' @param rates_by_group data.table with husband_age_group, wife_age_group, rate
 #' @param min_age Minimum output age (default: 14)
@@ -388,23 +538,9 @@ beers_interpolate_1d <- function(group_values, group_widths = NULL) {
 #'
 #' @export
 beers_interpolate_2d <- function(rates_by_group, min_age = 14, max_age = 100) {
-  # Get unique age groups in order
-  h_groups <- unique(rates_by_group$husband_age_group)
-  w_groups <- unique(rates_by_group$wife_age_group)
+  group_names <- names(MARGRID_AGE_GROUPS)
 
-  # Define age group structure
-  age_group_info <- list(
-    "14-19" = list(min = 14, max = 19, width = 6),
-    "20-24" = list(min = 20, max = 24, width = 5),
-    "25-29" = list(min = 25, max = 29, width = 5),
-    "30-34" = list(min = 30, max = 34, width = 5),
-    "35-44" = list(min = 35, max = 44, width = 10),
-    "45-54" = list(min = 45, max = 54, width = 10),
-    "55-64" = list(min = 55, max = 64, width = 10),
-    "65+"   = list(min = 65, max = 100, width = 36)
-  )
-
-  # Create rate matrix by age groups
+  # Create 8x8 rate matrix by age groups
   rate_matrix <- data.table::dcast(rates_by_group,
                                     husband_age_group ~ wife_age_group,
                                     value.var = "rate",
@@ -414,47 +550,47 @@ beers_interpolate_2d <- function(rates_by_group, min_age = 14, max_age = 100) {
   rate_mat <- as.matrix(rate_matrix)
   rownames(rate_mat) <- h_group_order
 
-  # For each husband age group, expand to single years
-  # Then for each wife age group, expand to single years
+  # Ensure column order matches MARGRID_AGE_GROUPS
+  w_groups_present <- intersect(group_names, colnames(rate_mat))
+  rate_mat <- rate_mat[intersect(group_names, rownames(rate_mat)),
+                       w_groups_present, drop = FALSE]
 
-  # Build single-year grid
+  n_groups <- nrow(rate_mat)
   all_ages <- min_age:max_age
   n_ages <- length(all_ages)
 
-  # Initialize output matrix
+  # =========================================================================
+  # FIRST PASS: Interpolate husband dimension (rows) for each wife group
+  # =========================================================================
+  # Result: 87 husband ages x 8 wife groups
+  intermediate <- matrix(0, nrow = n_ages, ncol = ncol(rate_mat))
+  rownames(intermediate) <- all_ages
+  colnames(intermediate) <- colnames(rate_mat)
+
+  for (col in seq_len(ncol(rate_mat))) {
+    # Get column of group rates (one rate per husband age group)
+    col_rates <- rate_mat[, col]
+    # Apply 1D Beers to expand from 8 husband groups to 87 husband ages
+    intermediate[, col] <- beers_interpolate_marriage_1d(col_rates, group_names)
+  }
+
+  # =========================================================================
+  # SECOND PASS: Interpolate wife dimension (columns) for each husband age
+  # =========================================================================
+  # Result: 87 x 87
   single_year_mat <- matrix(0, nrow = n_ages, ncol = n_ages)
   rownames(single_year_mat) <- all_ages
   colnames(single_year_mat) <- all_ages
 
-  # Map single ages to groups
-  age_to_group <- function(age) {
-    for (grp in names(age_group_info)) {
-      info <- age_group_info[[grp]]
-      if (age >= info$min && age <= info$max) return(grp)
-    }
-    NA_character_
+  for (row in seq_len(n_ages)) {
+    # Get row of rates (one rate per wife age group)
+    row_rates <- intermediate[row, ]
+    # Apply 1D Beers to expand from 8 wife groups to 87 wife ages
+    single_year_mat[row, ] <- beers_interpolate_marriage_1d(row_rates, group_names)
   }
 
-  # For simplicity, use proportional allocation within groups
-
-  # (preserves group totals when summed)
-  for (h_age in all_ages) {
-    h_grp <- age_to_group(h_age)
-    if (is.na(h_grp) || !(h_grp %in% rownames(rate_mat))) next
-    h_width <- age_group_info[[h_grp]]$width
-
-    for (w_age in all_ages) {
-      w_grp <- age_to_group(w_age)
-      if (is.na(w_grp) || !(w_grp %in% colnames(rate_mat))) next
-      w_width <- age_group_info[[w_grp]]$width
-
-      # Get group rate
-      group_rate <- rate_mat[h_grp, w_grp]
-
-      # Allocate to single year (rate is per person, so same for all in group)
-      single_year_mat[as.character(h_age), as.character(w_age)] <- group_rate
-    }
-  }
+  # Enforce non-negativity
+  single_year_mat[single_year_mat < 0] <- 0
 
   # Convert back to data.table
   result <- data.table::as.data.table(single_year_mat, keep.rownames = "husband_age")
@@ -476,16 +612,18 @@ beers_interpolate_2d <- function(rates_by_group, min_age = 14, max_age = 100) {
 #' @param rates_by_group data.table with husband_age_group, wife_age_group, rate
 #' @param min_age Minimum age for output (default: 14)
 #' @param max_age Maximum age for output (default: 100)
-#' @param method Interpolation method: "beers" or "uniform" (default: "beers")
+#' @param method Interpolation method: "beers" (TR2025, default) or "uniform" (legacy)
 #'
 #' @return data.table with husband_age, wife_age, rate
 #' @keywords internal
 expand_age_groups <- function(rates_by_group, min_age = 14, max_age = 100,
                                method = "beers") {
   if (method == "uniform") {
+    cli::cli_alert_info("Using UNIFORM age group expansion (legacy method)")
     return(expand_age_groups_uniform(rates_by_group, min_age, max_age))
   }
 
+  cli::cli_alert_info("Using H.S. Beers 2D interpolation (TR2025 method)")
   beers_interpolate_2d(rates_by_group, min_age, max_age)
 }
 
@@ -496,17 +634,10 @@ expand_age_groups_uniform <- function(rates_by_group, min_age = 14, max_age = 10
   all_ages <- min_age:max_age
   grid <- data.table::CJ(husband_age = all_ages, wife_age = all_ages)
 
-  # Define age group mapping
-  age_group_info <- list(
-    "14-19" = c(14, 19), "20-24" = c(20, 24), "25-29" = c(25, 29),
-    "30-34" = c(30, 34), "35-44" = c(35, 44), "45-54" = c(45, 54),
-    "55-64" = c(55, 64), "65+" = c(65, 100)
-  )
-
   map_to_group <- function(age) {
-    for (grp_name in names(age_group_info)) {
-      range <- age_group_info[[grp_name]]
-      if (age >= range[1] && age <= range[2]) return(grp_name)
+    for (grp_name in names(MARGRID_AGE_GROUPS)) {
+      info <- MARGRID_AGE_GROUPS[[grp_name]]
+      if (age >= info$min && age <= info$max) return(grp_name)
     }
     NA_character_
   }
@@ -998,22 +1129,10 @@ build_standard_population_grid <- function(unmarried_pop,
   male_lookup <- setNames(male_pop$unmarried_population, male_pop$age_group)
   female_lookup <- setNames(female_pop$unmarried_population, female_pop$age_group)
 
-  # Age group definitions with widths
-  age_group_info <- list(
-    "14-19" = list(min = 14, max = 19, width = 6),
-    "20-24" = list(min = 20, max = 24, width = 5),
-    "25-29" = list(min = 25, max = 29, width = 5),
-    "30-34" = list(min = 30, max = 34, width = 5),
-    "35-44" = list(min = 35, max = 44, width = 10),
-    "45-54" = list(min = 45, max = 54, width = 10),
-    "55-64" = list(min = 55, max = 64, width = 10),
-    "65+"   = list(min = 65, max = 100, width = 36)
-  )
-
-  # Map single ages to age groups
+  # Map single ages to age groups using canonical definition
   map_to_group <- function(age) {
-    for (grp in names(age_group_info)) {
-      info <- age_group_info[[grp]]
+    for (grp in names(MARGRID_AGE_GROUPS)) {
+      info <- MARGRID_AGE_GROUPS[[grp]]
       if (age >= info$min && age <= info$max) return(grp)
     }
     NA_character_
@@ -1034,7 +1153,7 @@ build_standard_population_grid <- function(unmarried_pop,
 
     h_pop_total <- male_lookup[h_group]
     if (is.na(h_pop_total)) h_pop_total <- 0
-    h_width <- age_group_info[[h_group]]$width
+    h_width <- MARGRID_AGE_GROUPS[[h_group]]$width
     h_pop_single <- h_pop_total / h_width
 
     for (j in seq_along(ages)) {
@@ -1044,7 +1163,7 @@ build_standard_population_grid <- function(unmarried_pop,
 
       w_pop_total <- female_lookup[w_group]
       if (is.na(w_pop_total)) w_pop_total <- 0
-      w_width <- age_group_info[[w_group]]$width
+      w_width <- MARGRID_AGE_GROUPS[[w_group]]$width
       w_pop_single <- w_pop_total / w_width
 
       # Geometric mean of single-year populations
@@ -1571,28 +1690,19 @@ aggregate_grid_to_age_groups <- function(grid) {
     ages <- seq_len(nrow(grid)) + 14  # Assume starting at 15 if no names
   }
 
-  # Define age group mapping
-  age_group_defs <- list(
-    "14-19" = 14:19,
-    "20-24" = 20:24,
-    "25-29" = 25:29,
-    "30-34" = 30:34,
-    "35-44" = 35:44,
-    "45-54" = 45:54,
-    "55-64" = 55:64,
-    "65+"   = 65:120
-  )
-
+  # Use canonical MARGRID_AGE_GROUPS definition
   results <- list()
 
-  for (h_group in names(age_group_defs)) {
-    h_ages <- age_group_defs[[h_group]]
+  for (h_group in names(MARGRID_AGE_GROUPS)) {
+    h_info <- MARGRID_AGE_GROUPS[[h_group]]
+    h_ages <- h_info$min:h_info$max
     h_idx <- which(ages %in% h_ages)
 
     if (length(h_idx) == 0) next
 
-    for (w_group in names(age_group_defs)) {
-      w_ages <- age_group_defs[[w_group]]
+    for (w_group in names(MARGRID_AGE_GROUPS)) {
+      w_info <- MARGRID_AGE_GROUPS[[w_group]]
+      w_ages <- w_info$min:w_info$max
       w_idx <- which(ages %in% w_ages)
 
       if (length(w_idx) == 0) next
