@@ -2256,19 +2256,25 @@ project_marriage_rates <- function(base_margrid,
 #' Calculate prior marital status differentials
 #'
 #' @description
-#' Per TR2025: "Future relative differences in marriage rates by prior marital
-#' status are assumed to be the same as the average of those experienced during
-#' 1979 and 1981-88."
+#' Per TR2025 Step 11: "Future relative differences in marriage rates by prior
+#' marital status are assumed to be the same as the average of those experienced
+#' during 1979 and 1981-88 (derived from Inputs #9, #10, and #11)."
 #'
-#' Calculates relative marriage rate differentials by prior marital status
-#' (single, widowed, divorced) using NCHS 1979, 1981-1988 data.
+#' Computes rate-based differentials using marriage counts (Input #9) and
+#' unmarried population by prior status (Input #10):
+#'   rate_status = marriages_status / population_status
+#'   rate_overall = total_marriages / total_population
+#'   relative_rate = rate_status / rate_overall
 #'
-#' The differential is the ratio of marriage rate for each status to the
-#' overall marriage rate within each age group and sex.
+#' Note: TR2025 uses MRA-specific population (Input #10). ARTEMIS uses CPS
+#' national population as the best publicly available substitute.
 #'
-#' @param marriages_by_status data.table with prior status marriage counts
+#' @param marriages_by_status data.table with prior status marriage counts (Input #9)
 #'   From fetch_nchs_marriages_by_prior_status_1978_1988()
 #'   Required columns: year, age_group, sex, prior_status, marriages
+#' @param unmarried_pop_by_status data.table: unmarried population by prior status
+#'   (Input #10 proxy). From extract_cps_unmarried_by_prior_status().
+#'   Required columns: year, age_group, sex, prior_status, unmarried_population
 #' @param years Years to use for averaging (default: c(1979, 1981:1988) per TR2025)
 #'
 #' @return data.table with columns: age_group, sex, prior_status, relative_rate
@@ -2276,55 +2282,90 @@ project_marriage_rates <- function(base_margrid,
 #'
 #' @export
 calculate_prior_status_differentials <- function(marriages_by_status,
+                                                   unmarried_pop_by_status,
                                                    years = c(1979, 1981:1988)) {
   checkmate::assert_data_table(marriages_by_status)
+  checkmate::assert_data_table(unmarried_pop_by_status)
   checkmate::assert_names(names(marriages_by_status),
                           must.include = c("year", "age_group", "sex", "prior_status", "marriages"))
+  checkmate::assert_names(names(unmarried_pop_by_status),
+                          must.include = c("year", "age_group", "sex", "prior_status", "unmarried_population"))
 
   cli::cli_h2("Calculating Prior Marital Status Differentials")
+  cli::cli_alert_info("Using rate-based differentials (TR2025 method: Inputs #9 + #10)")
 
   # Filter to specified years
   dt <- marriages_by_status[year %in% years]
-  cli::cli_alert_info("Using {length(unique(dt$year))} years: {paste(unique(dt$year), collapse=', ')}")
+  pop_dt <- unmarried_pop_by_status[year %in% years]
 
-  # Calculate total marriages by age group, sex, and year (across all statuses)
-  totals_by_group <- dt[, .(total_marriages = sum(marriages, na.rm = TRUE)),
-                         by = .(year, age_group, sex)]
+  # Find overlapping years
+  common_years <- intersect(unique(dt$year), unique(pop_dt$year))
+  if (length(common_years) == 0) {
+    cli::cli_abort("No overlapping years between marriage data and population data")
+  }
+  cli::cli_alert_info("Using {length(common_years)} years: {paste(sort(common_years), collapse=', ')}")
 
   # Calculate marriages by age group, sex, year, and prior status
-  by_status <- dt[, .(status_marriages = sum(marriages, na.rm = TRUE)),
-                   by = .(year, age_group, sex, prior_status)]
+  by_status <- dt[year %in% common_years,
+                  .(status_marriages = sum(marriages, na.rm = TRUE)),
+                  by = .(year, age_group, sex, prior_status)]
 
-  # Merge to get proportion of each status
-  merged <- merge(by_status, totals_by_group, by = c("year", "age_group", "sex"))
-  merged[, proportion := status_marriages / total_marriages]
+  # Calculate total marriages by age group, sex, and year
+  totals_by_group <- dt[year %in% common_years,
+                        .(total_marriages = sum(marriages, na.rm = TRUE)),
+                        by = .(year, age_group, sex)]
 
-  # Average proportions across years
-  avg_proportions <- merged[, .(
-    avg_proportion = mean(proportion, na.rm = TRUE),
+  # Align NCHS age groups to CPS age groups
+  # NCHS uses "12-17" and "18-19", CPS uses "14-19"
+  by_status[age_group %in% c("12-17", "18-19"), age_group := "14-19"]
+  by_status <- by_status[, .(status_marriages = sum(status_marriages, na.rm = TRUE)),
+                          by = .(year, age_group, sex, prior_status)]
+
+  totals_by_group[age_group %in% c("12-17", "18-19"), age_group := "14-19"]
+  totals_by_group <- totals_by_group[, .(total_marriages = sum(total_marriages, na.rm = TRUE)),
+                                      by = .(year, age_group, sex)]
+
+  # Total unmarried population by age group, sex, year
+  pop_totals <- pop_dt[year %in% common_years,
+                       .(total_population = sum(unmarried_population, na.rm = TRUE)),
+                       by = .(year, age_group, sex)]
+
+  # Status-specific population
+  pop_by_status <- pop_dt[year %in% common_years,
+                          .(status_population = sum(unmarried_population, na.rm = TRUE)),
+                          by = .(year, age_group, sex, prior_status)]
+
+  # Compute status-specific marriage rate: marriages / population
+  merged_status <- merge(by_status, pop_by_status,
+                         by = c("year", "age_group", "sex", "prior_status"),
+                         all.x = TRUE)
+  merged_status[, status_rate := data.table::fifelse(
+    is.na(status_population) | status_population == 0, 0,
+    status_marriages / status_population
+  )]
+
+  # Compute overall marriage rate: total marriages / total population
+  merged_overall <- merge(totals_by_group, pop_totals,
+                          by = c("year", "age_group", "sex"),
+                          all.x = TRUE)
+  merged_overall[, overall_rate := data.table::fifelse(
+    is.na(total_population) | total_population == 0, 0,
+    total_marriages / total_population
+  )]
+
+  # Compute relative rate = status_rate / overall_rate per year
+  merged_all <- merge(merged_status,
+                      merged_overall[, .(year, age_group, sex, overall_rate)],
+                      by = c("year", "age_group", "sex"))
+  merged_all[, relative_rate := data.table::fifelse(
+    overall_rate == 0, 1, status_rate / overall_rate
+  )]
+
+  # Average relative rates across years
+  result <- merged_all[, .(
+    relative_rate = mean(relative_rate, na.rm = TRUE),
     n_years = .N
   ), by = .(age_group, sex, prior_status)]
-
-  # Calculate relative rates
-
-  # The relative rate is: status_proportion / (1/3)
-  # This means if a status has 50% of marriages, relative_rate = 1.5
-  # And sum of (relative_rate × base_rate × population_share) ≈ base_rate
-
-  # Actually, per TR2025, we want rates to reflect actual likelihood differences
-  # The relative rate should be normalized so weighted sum = 1
-  # relative_rate = proportion / (1/n_statuses) = proportion × n_statuses
-
-  n_statuses <- 3  # single, widowed, divorced
-  avg_proportions[, relative_rate := avg_proportion * n_statuses]
-
-  # Normalize within each age_group × sex so sum = n_statuses
-  # (This ensures weighted average of relative rates = 1)
-  avg_proportions[, sum_relative := sum(relative_rate), by = .(age_group, sex)]
-  avg_proportions[, relative_rate := relative_rate * n_statuses / sum_relative]
-
-  result <- avg_proportions[, .(age_group, sex, prior_status, relative_rate,
-                                 avg_proportion)]
 
   # Order properly
   age_order <- c("12-17", "14-19", "18-19", "20-24", "25-29", "30-34",
@@ -2759,6 +2800,9 @@ separate_marriage_types <- function(marriage_rates,
 #'   From get_2010_standard_population()
 #' @param prior_status_data Prior marital status data (1979, 1981-88)
 #'   From fetch_nchs_marriages_by_prior_status_1978_1988()
+#' @param unmarried_pop_by_status data.table or NULL: CPS unmarried population
+#'   by prior status (Input #10 proxy). From extract_cps_unmarried_by_prior_status().
+#'   When provided, enables TR2025-compliant rate-based differentials.
 #' @param same_sex_data ACS same-sex marriage grids
 #' @param same_sex_fraction Numeric: overall same-sex marriage fraction
 #' @param config List: configuration object (required). All projection parameters
@@ -2789,6 +2833,7 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
                                      nchs_us_totals,
                                      standard_pop_by_group,
                                      prior_status_data = NULL,
+                                     unmarried_pop_by_status = NULL,  # Required when include_prior_status = TRUE
                                      same_sex_data = NULL,
                                      same_sex_fraction = 0.045,
                                      config,
@@ -2937,6 +2982,7 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
 
     status_differentials <- calculate_prior_status_differentials(
       marriages_by_status = prior_status_data,
+      unmarried_pop_by_status = unmarried_pop_by_status,
       years = prior_status_years
     )
 
