@@ -50,6 +50,19 @@ calculate_o_immigration <- function(acs_new_arrivals,
   checkmate::assert_data_table(lpr_new_arrivals)
   checkmate::assert_data_table(undercount_factors)
 
+  # Validate critical input data
+  if (nrow(acs_new_arrivals) == 0) {
+    cli::cli_abort("ACS new arrivals data is empty — cannot calculate O immigration")
+  }
+  if (nrow(lpr_new_arrivals) == 0) {
+    cli::cli_abort("LPR new arrivals data is empty — cannot calculate O immigration")
+  }
+  for (req_col in c("year", "age", "sex")) {
+    if (!req_col %in% names(acs_new_arrivals)) {
+      cli::cli_abort("ACS new arrivals missing required column: {.field {req_col}}")
+    }
+  }
+
   # Apply undercount correction to ACS data
   acs_corrected <- apply_undercount_to_acs(acs_new_arrivals, undercount_factors)
 
@@ -212,6 +225,17 @@ calculate_odist <- function(o_immigration,
 
   if (nrow(ref_data) == 0) {
     cli::cli_abort("No O immigration data for reference years {reference_years}")
+  }
+
+  # Validate reference year completeness
+  available_years <- unique(ref_data$year)
+  missing_years <- setdiff(reference_years, available_years)
+  if (length(missing_years) > 0) {
+    cli::cli_abort(c(
+      "ODIST reference period incomplete: missing years {paste(missing_years, collapse=', ')}",
+      "i" = "TR2025 requires all {length(reference_years)} years ({min(reference_years)}-{max(reference_years)})",
+      "i" = "Available years: {paste(sort(available_years), collapse=', ')}"
+    ))
   }
 
   # Calculate average across years by age and sex
@@ -530,6 +554,17 @@ calculate_odist_with_interpolation <- function(o_immigration,
     cli::cli_abort("No O immigration data for reference years {reference_years}")
   }
 
+  # Validate reference year completeness
+  available_years <- unique(ref_data$year)
+  missing_years <- setdiff(reference_years, available_years)
+  if (length(missing_years) > 0) {
+    cli::cli_abort(c(
+      "ODIST reference period incomplete: missing years {paste(missing_years, collapse=', ')}",
+      "i" = "TR2025 requires all {length(reference_years)} years ({min(reference_years)}-{max(reference_years)})",
+      "i" = "Available years: {paste(sort(available_years), collapse=', ')}"
+    ))
+  }
+
   # Get anchor points for interpolation
   anchor_points <- get_type_anchor_points()
 
@@ -555,10 +590,14 @@ calculate_odist_with_interpolation <- function(o_immigration,
     # Merge and apply type splits
     yr_typed <- merge(yr_data, type_splits, by = c("age", "sex"), all.x = TRUE)
 
-    # Fill any missing type splits
-    yr_typed[is.na(type_n), type_n := 0.50]
-    yr_typed[is.na(type_i), type_i := 0.15]
-    yr_typed[is.na(type_v), type_v := 0.35]
+    # Fill any missing type splits (warn on usage)
+    n_missing_yr <- sum(is.na(yr_typed$type_n))
+    if (n_missing_yr > 0) {
+      cli::cli_warn("Year {yr}: type splits missing for {n_missing_yr} rows, using defaults")
+      yr_typed[is.na(type_n), type_n := 0.50]
+      yr_typed[is.na(type_i), type_i := 0.15]
+      yr_typed[is.na(type_v), type_v := 0.35]
+    }
 
     # Create long format with type dimension
     yr_result <- data.table::rbindlist(list(
@@ -880,12 +919,17 @@ apply_type_splits <- function(avg_oi, type_splits) {
   # Merge type splits with O immigration
   merged <- merge(avg_oi, type_splits, by = c("age", "sex"), all.x = TRUE)
 
-  # Fill missing type splits with defaults
-  # HARDCODED FALLBACKS: Used when type splits are missing for some age-sex combinations
-  # Based on overall TR2025 proportions: ~50% never-authorized, ~15% nonimmigrant, ~35% overstay
-  merged[is.na(type_n), type_n := 0.50]  # HARDCODED fallback
-  merged[is.na(type_i), type_i := 0.15]  # HARDCODED fallback
-  merged[is.na(type_v), type_v := 0.35]  # HARDCODED fallback
+  # Fill missing type splits with config defaults (warn on usage)
+  n_missing <- sum(is.na(merged$type_n))
+  if (n_missing > 0) {
+    cli::cli_warn(c(
+      "Type splits missing for {n_missing} age-sex combinations, using config defaults (N=0.50, I=0.15, V=0.35)",
+      "i" = "This may indicate incomplete type split data at some ages"
+    ))
+    merged[is.na(type_n), type_n := 0.50]
+    merged[is.na(type_i), type_i := 0.15]
+    merged[is.na(type_v), type_v := 0.35]
+  }
 
   # Create long format with type dimension
   result <- data.table::rbindlist(list(

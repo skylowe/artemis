@@ -326,7 +326,16 @@ project_o_population_stock <- function(starting_pop,
     merged[is.na(immigration), immigration := 0]
     merged[is.na(emigration), emigration := 0]
     merged[is.na(aos), aos := 0]
-    merged[is.na(qx), qx := 0.01]  # Default mortality rate
+    # Abort on missing qx — silent fills mask data problems
+    n_missing_qx <- sum(is.na(merged$qx))
+    if (n_missing_qx > 0) {
+      missing_ages <- unique(merged[is.na(qx), age])
+      cli::cli_abort(c(
+        "Missing mortality qx for {n_missing_qx} age-sex combinations in O stock projection (year {yr})",
+        "i" = "Missing ages: {paste(head(missing_ages, 10), collapse=', ')}",
+        "i" = "Ensure mortality_qx covers ages 0-99 for both sexes and year {yr}"
+      ))
+    }
 
     # Calculate deaths: OD = qx × OP (after adding immigration, before subtracting outflows)
     # Per TR2025: "Deaths for the temporary or unlawfully present immigrant population
@@ -737,9 +746,11 @@ run_full_o_projection <- function(historical_o_pop,
       reference_years = 2015:2019
     )
   } else {
-    # Use default ODIST
-    cli::cli_alert_warning("No ACS/LPR data provided, using default ODIST")
-    odist <- get_default_odist()
+    cli::cli_abort(c(
+      "ACS new arrivals and LPR new arrivals data are required for ODIST calculation",
+      "i" = "Provide both {.arg acs_new_arrivals} and {.arg lpr_new_arrivals}",
+      "i" = "ODIST cannot be calculated without these inputs — a fabricated default would produce unreliable projections"
+    ))
   }
 
   # -------------------------------------------------------------------------
@@ -884,6 +895,11 @@ calculate_simplified_departure_rates <- function(historical_o_pop,
 #'
 #' @description
 #' Returns default ODIST when ACS/LPR data not available.
+#'
+#' @section Deprecated:
+#' This function produces a fabricated ODIST and should only be used for testing.
+#' In production, `run_full_o_projection()` requires real ACS/LPR data and will
+#' abort if this function would have been called.
 #'
 #' @keywords internal
 get_default_odist <- function() {

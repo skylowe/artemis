@@ -300,8 +300,16 @@ calculate_o_deaths <- function(population, mortality_qx) {
     all.x = TRUE
   )
 
-  # Fill missing qx with small value
-  merged[is.na(qx), qx := 0.001]
+  # Abort on missing qx — silent fills mask data problems
+  n_missing_qx <- sum(is.na(merged$qx))
+  if (n_missing_qx > 0) {
+    missing_ages <- unique(merged[is.na(qx), age])
+    cli::cli_abort(c(
+      "Missing mortality qx for {n_missing_qx} age-sex combinations in O death calc",
+      "i" = "Missing ages: {paste(head(missing_ages, 10), collapse=', ')}",
+      "i" = "Ensure mortality_qx covers ages 0-100 for both sexes"
+    ))
+  }
 
   # Calculate deaths
   merged[, deaths := population * qx]
@@ -1178,7 +1186,15 @@ update_o_population_with_cohorts <- function(current_pop, immigration, emigratio
   # Apply mortality
   aged_pop <- merge(aged_pop, mortality_qx[, .(age, sex, qx)],
                     by = c("age", "sex"), all.x = TRUE)
-  aged_pop[is.na(qx), qx := 0.01]
+  n_missing_qx <- sum(is.na(aged_pop$qx))
+  if (n_missing_qx > 0) {
+    missing_ages <- unique(aged_pop[is.na(qx), age])
+    cli::cli_abort(c(
+      "Missing mortality qx for {n_missing_qx} age-sex combinations in cohort population update",
+      "i" = "Missing ages: {paste(head(missing_ages, 10), collapse=', ')}",
+      "i" = "Ensure mortality_qx covers ages 0-99 for both sexes"
+    ))
+  }
   aged_pop[, deaths := population * qx]
   aged_pop[, population := pmax(0, population - deaths)]
   aged_pop[, c("qx", "deaths") := NULL]
