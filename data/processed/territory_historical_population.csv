@@ -1,0 +1,37 @@
+census_year,territory,population,ss_area_start,source
+1950,PR,2210703,1951,Census PC-S1-15 / Statistical Abstract
+1960,PR,2349544,1951,Census PC-S1-15 / Statistical Abstract
+1970,PR,2712033,1951,Census PC-S1-15 / Statistical Abstract
+1980,PR,3196520,1951,Census PC-S1-15 / Statistical Abstract
+1990,PR,3522037,1951,Census PC-S1-15 / Statistical Abstract
+2000,PR,3808610,1951,Census PC-S1-15 / Statistical Abstract
+2010,PR,3725789,1951,2010 Decennial Census API
+2020,PR,3285874,1951,2020 Decennial Census API
+1950,VI,26665,1951,Census PC-S1-14 / Statistical Abstract
+1960,VI,32099,1951,Census PC-S1-14 / Statistical Abstract
+1970,VI,62468,1951,Census PC-S1-14 / Statistical Abstract
+1980,VI,96569,1951,Census PC-S1-14 / Statistical Abstract
+1990,VI,101809,1951,Census PC-S1-14 / Statistical Abstract
+2000,VI,108612,1951,Census PC-S1-14 / Statistical Abstract
+2010,VI,106405,1951,2010 Island Areas Census
+2020,VI,87146,1951,2020 Island Areas Census
+1950,GU,59498,1951,Census PC-S1-14 / Statistical Abstract
+1960,GU,67044,1951,Census PC-S1-14 / Statistical Abstract
+1970,GU,84996,1951,Census PC-S1-14 / Statistical Abstract
+1980,GU,105979,1951,Census PC-S1-14 / Statistical Abstract
+1990,GU,133152,1951,Census PC-S1-14 / Statistical Abstract
+2000,GU,154805,1951,Census PC-S1-14 / Statistical Abstract
+2010,GU,159358,1951,2010 Island Areas Census
+2020,GU,153836,1951,2020 Island Areas Census
+1960,AS,20051,1961,Census PC-S1-14 / Statistical Abstract
+1970,AS,27259,1961,Census PC-S1-14 / Statistical Abstract
+1980,AS,32297,1961,Census PC-S1-14 / Statistical Abstract
+1990,AS,46773,1961,Census PC-S1-14 / Statistical Abstract
+2000,AS,57291,1961,Census PC-S1-14 / Statistical Abstract
+2010,AS,55519,1961,2010 Island Areas Census
+2020,AS,49710,1961,2020 Island Areas Census
+1980,MP,16780,1978,Statistical Abstract Section 29
+1990,MP,43345,1978,Statistical Abstract Section 29
+2000,MP,69221,1978,Statistical Abstract Section 29
+2010,MP,53883,1978,2010 Island Areas Census
+2020,MP,47329,1978,2020 Island Areas Census

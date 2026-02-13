@@ -1,0 +1,32 @@
+year,employees_overseas,source
+1980,40000,pre-FedScope estimate
+1985,42000,pre-FedScope estimate
+1990,38000,pre-FedScope estimate
+1995,35000,pre-FedScope estimate
+1998,33000,FedScope (early years interpolated)
+1999,33200,FedScope (early years interpolated)
+2000,33400,FedScope (early years interpolated)
+2001,33600,FedScope (early years interpolated)
+2002,33800,FedScope (early years interpolated)
+2003,34000,FedScope (early years interpolated)
+2004,34100,FedScope (early years interpolated)
+2005,34200,FedScope (early years interpolated)
+2006,34300,FedScope (early years interpolated)
+2007,34400,FedScope (early years interpolated)
+2008,34500,FedScope (early years interpolated)
+2009,34622,CRS R43590 Table 2 (2016)
+2010,36007,CRS R43590 Table 2 (2016)
+2011,37168,CRS R43590 Table 2 (2016)
+2012,36108,CRS R43590 Table 2 (2016)
+2013,33486,CRS R43590 Table 2 (2016)
+2014,31354,CRS R43590 Table 2 (2016)
+2015,29173,CRS R43590 Table 2 (2016)
+2016,29200,interpolated
+2017,29300,interpolated
+2018,29407,CRS R43590 Table 2 (2020)
+2019,29500,FedScope trend estimate
+2020,28000,FedScope trend estimate
+2021,28500,FedScope trend estimate
+2022,29500,FedScope trend estimate
+2023,30200,FedScope trend estimate
+2024,30800,Pew Research (OPM March 2024)

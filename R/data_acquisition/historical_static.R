@@ -77,115 +77,15 @@ NULL
 get_pre1980_usaf_population <- function(years = 1940:1979, by_age = FALSE) {
   checkmate::assert_integerish(years, lower = 1940, upper = 1979)
 
-  # ============================================================================
-  # TOTAL POPULATION BY YEAR AND SEX (July 1 estimates)
-  # ============================================================================
-  # Source: Census Bureau Current Population Reports P-25 series
-  # These are intercensal estimates of resident population + armed forces overseas
-  # ============================================================================
-
-  totals <- data.table::data.table(
-    year = 1940:1979,
-    male = c(
-      # 1940-1949 (P-25 No. 311 / Census intercensal)
-      65608000,   # 1940
-      66062000,   # 1941
-      66600000,   # 1942
-      66039000,   # 1943 (wartime)
-      65510000,   # 1944 (wartime)
-      65290000,   # 1945 (wartime)
-      69125000,   # 1946 (demobilization)
-      71250000,   # 1947
-      72535000,   # 1948
-      73750000,   # 1949
-
-      # 1950-1959 (P-25 No. 311)
-      74833000,   # 1950
-      76135000,   # 1951
-      77410000,   # 1952
-      78695000,   # 1953
-      79948000,   # 1954
-      81195000,   # 1955
-      82402000,   # 1956
-      83642000,   # 1957
-      84862000,   # 1958
-      86089000,   # 1959
-
-      # 1960-1969 (P-25 No. 519)
-      87992000,   # 1960
-      89242000,   # 1961
-      90460000,   # 1962
-      91635000,   # 1963
-      92779000,   # 1964
-      93907000,   # 1965
-      95023000,   # 1966
-      96128000,   # 1967
-      97218000,   # 1968
-      98297000,   # 1969
-
-      # 1970-1979 (P-25 No. 917)
-      99912000,   # 1970
-      101165000,  # 1971
-      102423000,  # 1972
-      103564000,  # 1973
-      104615000,  # 1974
-      105658000,  # 1975
-      106700000,  # 1976
-      107750000,  # 1977
-      108800000,  # 1978
-      109850000   # 1979
-    ),
-    female = c(
-      # 1940-1949
-      65875000,   # 1940
-      66713000,   # 1941
-      67700000,   # 1942
-      68880000,   # 1943
-      70050000,   # 1944
-      71200000,   # 1945
-      72350000,   # 1946
-      73550000,   # 1947
-      74750000,   # 1948
-      75950000,   # 1949
-
-      # 1950-1959
-      76139000,   # 1950
-      77462000,   # 1951
-      78776000,   # 1952
-      80115000,   # 1953
-      81455000,   # 1954
-      82785000,   # 1955
-      84102000,   # 1956
-      85444000,   # 1957
-      86790000,   # 1958
-      88143000,   # 1959
-
-      # 1960-1969
-      90600000,   # 1960
-      91937000,   # 1961
-      93253000,   # 1962
-      94535000,   # 1963
-      95810000,   # 1964
-      97082000,   # 1965
-      98356000,   # 1966
-      99625000,   # 1967
-      100900000,  # 1968
-      102178000,  # 1969
-
-      # 1970-1979
-      104309000,  # 1970
-      105675000,  # 1971
-      107044000,  # 1972
-      108291000,  # 1973
-      109465000,  # 1974
-      110628000,  # 1975
-      111800000,  # 1976
-      112977000,  # 1977
-      114150000,  # 1978
-      115320000   # 1979
-    ),
-    source = "Census Bureau P-25 intercensal estimates"
-  )
+  # Load from CSV — see data/processed/pre1980_usaf_population_SOURCE.md for provenance
+  csv_path <- here::here("data/processed/pre1980_usaf_population.csv")
+  if (!file.exists(csv_path)) {
+    cli::cli_abort(c(
+      "Pre-1980 USAF population CSV not found at {.path {csv_path}}",
+      "i" = "Source: Census Bureau P-25 intercensal estimates"
+    ))
+  }
+  totals <- data.table::fread(csv_path)
   totals[, total := male + female]
 
   target_years <- years
@@ -195,67 +95,13 @@ get_pre1980_usaf_population <- function(years = 1940:1979, by_age = FALSE) {
     return(result[, .(year, male, female, total, source)])
   }
 
-  # If by_age = TRUE, expand to age detail using standard age distribution
-  # from decennial census benchmark years
-  cli::cli_alert_info("Expanding to age detail using decennial benchmarks...")
-
-  expanded <- expand_to_age_detail(result, years)
-  return(expanded)
-}
-
-#' Expand population totals to age detail
-#'
-#' @description
-#' Expands yearly population totals to single year of age using
-#' interpolated age distributions from decennial census benchmarks.
-#'
-#' @param totals data.table with year, male, female columns
-#' @param years Years to expand
-#'
-#' @return data.table with year, age, sex, population
-#'
-#' @keywords internal
-expand_to_age_detail <- function(totals, years) {
-  # Get age distributions from decennial years (benchmark proportions)
-  # For simplicity, use linear interpolation between decennial distributions
-  # Full single-year-of-age data would require PE-11 archive files
-
-  # Return structure for future implementation
-  # This is a placeholder - full implementation requires digitized PE-11 data
-
-  cli::cli_alert_warning(
-    "Full single-year-of-age detail requires PE-11 archive data. ",
-    "Returning totals with placeholder age distribution."
-  )
-
-  # Create placeholder with broad age groups
-  age_groups <- data.table::data.table(
-    age_group = c("0-4", "5-14", "15-24", "25-34", "35-44", "45-54", "55-64", "65-74", "75-84", "85+"),
-    age_start = c(0, 5, 15, 25, 35, 45, 55, 65, 75, 85),
-    age_end = c(4, 14, 24, 34, 44, 54, 64, 74, 84, 119),
-    # Approximate proportions for mid-century (1960)
-    male_pct = c(0.11, 0.18, 0.14, 0.13, 0.13, 0.11, 0.09, 0.06, 0.03, 0.01),
-    female_pct = c(0.10, 0.17, 0.13, 0.13, 0.13, 0.11, 0.10, 0.07, 0.04, 0.02)
-  )
-
-  result_list <- lapply(years, function(yr) {
-    yr_total <- totals[year == yr]
-    if (nrow(yr_total) == 0) return(NULL)
-
-    male_total <- yr_total$male
-    female_total <- yr_total$female
-
-    dt <- data.table::data.table(
-      year = yr,
-      age_group = age_groups$age_group,
-      age_start = age_groups$age_start,
-      male = round(male_total * age_groups$male_pct),
-      female = round(female_total * age_groups$female_pct)
-    )
-    dt
-  })
-
-  data.table::rbindlist(result_list)
+  # by_age = TRUE: use SSPopDec for single-year-of-age data
+  # (This code path is not used by the main pipeline — pre-1980 age detail
+  # comes from load_tr_population_by_year() in historical_population.R)
+  cli::cli_abort(c(
+    "Pre-1980 age detail should be loaded from SSPopDec",
+    "i" = "Use load_tr_population_by_year() instead of get_pre1980_usaf_population(by_age = TRUE)"
+  ))
 }
 
 # =============================================================================
@@ -284,53 +130,15 @@ expand_to_age_detail <- function(totals, years) {
 #'
 #' @export
 get_alaska_hawaii_civilian <- function(years = 1940:1949) {
-  # ============================================================================
-  # CIVILIAN POPULATION IN ALASKA AND HAWAII (1940-1949)
-  # ============================================================================
-  # Source: Census Bureau 1950 Census Volume I, Parts 51 and 54
-  # These are civilian population estimates (excluding military stationed there)
-  #
-  # Note: 1940 and 1950 are decennial census counts
-  # Intercensal years are linear interpolations
-  # ============================================================================
-
-  data <- data.table::data.table(
-    year = rep(1940:1949, 2),
-    territory = c(rep("AK", 10), rep("HI", 10)),
-    civilian_population = c(
-      # Alaska civilian population
-      # Source: 1940 Census = 72,524; 1950 Census = 128,643
-      # Linear interpolation for intercensal years
-      72524,    # 1940 (census)
-      78135,    # 1941
-      83746,    # 1942
-      89358,    # 1943
-      94969,    # 1944
-      100580,   # 1945
-      106191,   # 1946
-      111803,   # 1947
-      117414,   # 1948
-      123025,   # 1949
-
-      # Hawaii civilian population
-      # Source: 1940 Census = 423,330; 1950 Census = 499,794
-      # Linear interpolation for intercensal years
-      423330,   # 1940 (census)
-      430976,   # 1941
-      438623,   # 1942
-      446269,   # 1943
-      453916,   # 1944
-      461562,   # 1945
-      469209,   # 1946
-      476855,   # 1947
-      484502,   # 1948
-      492148    # 1949
-    ),
-    source = c(
-      "1940 Census", rep("interpolated", 8), "interpolated",
-      "1940 Census", rep("interpolated", 8), "interpolated"
-    )
-  )
+  # Load from CSV — see data/processed/alaska_hawaii_civilian_SOURCE.md for provenance
+  csv_path <- here::here("data/processed/alaska_hawaii_civilian.csv")
+  if (!file.exists(csv_path)) {
+    cli::cli_abort(c(
+      "Alaska/Hawaii civilian population CSV not found at {.path {csv_path}}",
+      "i" = "Source: Census Bureau 1950 Census Volume I, Parts 51 and 54"
+    ))
+  }
+  data <- data.table::fread(csv_path)
 
   target_years <- years
   data[year %in% target_years]
@@ -392,69 +200,9 @@ get_alaska_hawaii_census <- function() {
 # 1940 AGE 85+ DISTRIBUTION (Input #42)
 # =============================================================================
 
-#' Get assumed December 31, 1940 age 85+ distribution
-#'
-#' @description
-#' Returns the assumed distribution of population aged 85+ for
-#' December 31, 1940. This is used as a starting point for building
-#' up older age populations through the historical period.
-#'
-#' @return data.table with age (85-119), sex, proportion
-#'
-#' @details
-#' Per TR2025 documentation: "Using 2015 TR death rates and historical
-#' populations, an assumed December 31, 1940, 85+ distribution."
-#'
-#' The 85+ population in 1940 was approximately 0.4% of total population.
-#' Distribution within 85+ is based on survival curves.
-#'
-#' @section Methodology:
-#' - Total 85+ in 1940: ~800,000 (from Census)
-#' - Distribution based on period life table survival rates
-#' - Higher concentration at ages 85-89 with rapid decline
-#'
-#' @export
-get_1940_85plus_distribution <- function() {
-  # ============================================================================
-  # 1940 AGE 85+ DISTRIBUTION
-  # ============================================================================
-  # Based on 1940 Census 85+ count and period life table survival patterns
-  # Total 85+: approximately 800,000 (0.6% of 132M total)
-  # Male 85+: ~290,000 (36%)
-  # Female 85+: ~510,000 (64%)
-  # ============================================================================
-
-  # Distribution based on survival curves - rapid decline after 85
-  # These proportions sum to 1.0 within each sex
-
-  ages <- 85:119
-
-  # Survival-based proportions (declining exponentially)
-  # Base survival rate per year above 85: ~0.75 for males, ~0.80 for females
-  male_survival_rate <- 0.72
-  female_survival_rate <- 0.78
-
-  male_prop <- male_survival_rate^(0:(length(ages)-1))
-  male_prop <- male_prop / sum(male_prop)
-
-  female_prop <- female_survival_rate^(0:(length(ages)-1))
-  female_prop <- female_prop / sum(female_prop)
-
-  # Total 85+ population (from 1940 Census)
-  total_85plus_male <- 290000
-  total_85plus_female <- 510000
-
-  data.table::data.table(
-    age = rep(ages, 2),
-    sex = c(rep("male", length(ages)), rep("female", length(ages))),
-    proportion = c(male_prop, female_prop),
-    population = c(
-      round(male_prop * total_85plus_male),
-      round(female_prop * total_85plus_female)
-    ),
-    source = "1940 Census with survival-based distribution"
-  )
-}
+# get_1940_85plus_distribution() — REMOVED in Phase 3
+# 1940 85+ populations now read directly from SSPopDec via
+# load_tr_population_by_year() in historical_population.R
 
 # =============================================================================
 # DOD ARMED FORCES IN TERRITORIES (Input #41)
@@ -484,61 +232,15 @@ get_1940_85plus_distribution <- function() {
 #'
 #' @export
 get_dod_armed_forces_territories <- function(census_years = c(1990, 2000, 2010, 2020)) {
-  # ============================================================================
-  # ARMED FORCES IN U.S. TERRITORIES (Decennial Census Years)
-  # ============================================================================
-  # Source: DoD DMDC, Census Bureau, Statistical Abstract
-  #
-  # Note: Per TR2025, 2020 data assumed same as 2010 until updated
-  # ============================================================================
-
-  data <- data.table::data.table(
-    census_year = c(
-      # 1990
-      1990, 1990, 1990, 1990,
-      # 2000
-      2000, 2000, 2000, 2000,
-      # 2010
-      2010, 2010, 2010, 2010,
-      # 2020 (assumed same as 2010 per TR2025)
-      2020, 2020, 2020, 2020
-    ),
-    territory = rep(c("PR", "VI", "GU", "AS"), 4),
-    armed_forces = c(
-      # 1990 - Cold War era, significant presence
-      # Source: Statistical Abstract 1992, Table 549
-      3500,     # Puerto Rico (Roosevelt Roads, Fort Buchanan)
-      200,      # Virgin Islands (small presence)
-      10500,    # Guam (Andersen AFB, Naval Base Guam)
-      100,      # American Samoa (small presence)
-
-      # 2000 - Post-Cold War reduction
-      # Source: Census 2000 special tabulations
-      2500,     # Puerto Rico
-      150,      # Virgin Islands
-      6700,     # Guam (Pacific realignment)
-      100,      # American Samoa
-
-      # 2010 - Further realignment
-      # Source: Census 2010 special tabulations, DMDC
-      1500,     # Puerto Rico (Roosevelt Roads closed 2004)
-      100,      # Virgin Islands
-      6000,     # Guam (Asia-Pacific rebalance)
-      50,       # American Samoa
-
-      # 2020 - Assumed same as 2010 (per TR2025 documentation)
-      1500,     # Puerto Rico
-      100,      # Virgin Islands
-      6000,     # Guam
-      50        # American Samoa
-    ),
-    source = c(
-      rep("Statistical Abstract / DMDC", 4),
-      rep("Census 2000 special tabulation", 4),
-      rep("Census 2010 / DMDC", 4),
-      rep("Assumed same as 2010 (TR2025)", 4)
-    )
-  )
+  # Load from CSV — see data/processed/dod_armed_forces_territories_SOURCE.md for provenance
+  csv_path <- here::here("data/processed/dod_armed_forces_territories.csv")
+  if (!file.exists(csv_path)) {
+    cli::cli_abort(c(
+      "DoD armed forces territories CSV not found at {.path {csv_path}}",
+      "i" = "Source: DoD DMDC, Census Bureau special tabulations"
+    ))
+  }
+  data <- data.table::fread(csv_path)
 
   target_years <- census_years
   data[census_year %in% target_years]
@@ -576,121 +278,15 @@ get_dod_armed_forces_territories <- function(census_years = c(1990, 2000, 2010, 
 #' @export
 get_territory_historical_population <- function(target_census_year = NULL,
                                                  target_territory = NULL) {
-  # ==========================================================================
-  # TERRITORY POPULATIONS FROM DECENNIAL CENSUSES
-  # ==========================================================================
-  # Source: U.S. Census Bureau, Decennial Census of Population
-  # Values transcribed from official census publications
-  # ==========================================================================
-
-  territory_data <- data.table::data.table(
-    census_year = c(
-      # Puerto Rico (Source: PC-S1-15, Statistical Abstract, 2010/2020 Decennial Census)
-      1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020,
-      # Virgin Islands (Source: PC-S1-14, Statistical Abstract, 2010/2020 Island Areas Census)
-      1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020,
-      # Guam (Source: PC-S1-14, Statistical Abstract, 2010/2020 Island Areas Census)
-      1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020,
-      # American Samoa (Source: PC-S1-14, Statistical Abstract, 2010/2020 Island Areas Census)
-      # Note: 1950 census conducted but AS not in SS area until 1961
-      1960, 1970, 1980, 1990, 2000, 2010, 2020,
-      # Northern Mariana Islands (Source: Statistical Abstract, 2010/2020 Island Areas Census)
-      # Note: First census in CNMI was 1970
-      1980, 1990, 2000, 2010, 2020
-    ),
-    territory = c(
-      rep("PR", 8), rep("VI", 8), rep("GU", 8), rep("AS", 7), rep("MP", 5)
-    ),
-    population = c(
-      # Puerto Rico
-      # Source: 1960 Census PC-S1-15; Statistical Abstract Section 29; 2010/2020 Decennial Census API
-      2210703,  # 1950
-      2349544,  # 1960
-      2712033,  # 1970 (2,722 thousands in StatAb)
-      3196520,  # 1980 (3,210 thousands in StatAb)
-      3522037,  # 1990 (3,537 thousands in StatAb)
-      3808610,  # 2000
-      3725789,  # 2010 (Census API P001001)
-      3285874,  # 2020 (Census API P1_001N)
-
-      # Virgin Islands
-      # Source: 1960 Census PC-S1-14; Statistical Abstract Section 29; 2010/2020 Island Areas Census
-      26665,    # 1950
-      32099,    # 1960
-      62468,    # 1970 (63 thousands in StatAb)
-      96569,    # 1980 (98 thousands in StatAb)
-      101809,   # 1990 (104 thousands in StatAb)
-      108612,   # 2000
-      106405,   # 2010 (2010 Island Areas Census)
-      87146,    # 2020 (2020 Island Areas Census)
-
-      # Guam
-      # Source: 1960 Census PC-S1-14; Statistical Abstract Section 29; 2010/2020 Island Areas Census
-      59498,    # 1950
-      67044,    # 1960
-      84996,    # 1970 (86 thousands in StatAb)
-      105979,   # 1980 (107 thousands in StatAb)
-      133152,   # 1990 (134 thousands in StatAb)
-      154805,   # 2000
-      159358,   # 2010 (2010 Island Areas Census)
-      153836,   # 2020 (2020 Island Areas Census)
-
-      # American Samoa
-      # Source: 1960 Census PC-S1-14; Statistical Abstract Section 29; 2010/2020 Island Areas Census
-      20051,    # 1960 (first census after SS area inclusion)
-      27259,    # 1970 (27 thousands in StatAb)
-      32297,    # 1980 (32 thousands in StatAb)
-      46773,    # 1990 (47 thousands in StatAb)
-      57291,    # 2000
-      55519,    # 2010 (2010 Island Areas Census)
-      49710,    # 2020 (2020 Island Areas Census)
-
-      # Northern Mariana Islands
-      # Source: Statistical Abstract Section 29; 2010/2020 Island Areas Census
-      # Note: Census Bureau first conducted CNMI census in 1970
-      16780,    # 1980 (17 thousands in StatAb)
-      43345,    # 1990 (44 thousands in StatAb)
-      69221,    # 2000
-      53883,    # 2010 (2010 Island Areas Census)
-      47329     # 2020 (2020 Island Areas Census)
-    ),
-    ss_area_start = c(
-      # Puerto Rico - 1951
-      rep(1951L, 8),
-      # Virgin Islands - 1951
-      rep(1951L, 8),
-      # Guam - 1951
-      rep(1951L, 8),
-      # American Samoa - 1961
-      rep(1961L, 7),
-      # Northern Mariana Islands - 1978 (Covenant effective)
-      rep(1978L, 5)
-    ),
-    source = c(
-      # Puerto Rico
-      rep("Census PC-S1-15 / Statistical Abstract", 6),
-      "2010 Decennial Census API",
-      "2020 Decennial Census API",
-      # Virgin Islands
-      rep("Census PC-S1-14 / Statistical Abstract", 6),
-      "2010 Island Areas Census",
-      "2020 Island Areas Census",
-      # Guam
-      rep("Census PC-S1-14 / Statistical Abstract", 6),
-      "2010 Island Areas Census",
-      "2020 Island Areas Census",
-      # American Samoa
-      rep("Census PC-S1-14 / Statistical Abstract", 5),
-      "2010 Island Areas Census",
-      "2020 Island Areas Census",
-      # Northern Mariana Islands
-      rep("Statistical Abstract Section 29", 3),
-      "2010 Island Areas Census",
-      "2020 Island Areas Census"
-    )
-  )
-
-  result <- territory_data
+  # Load from CSV — see data/processed/territory_historical_population_SOURCE.md for provenance
+  csv_path <- here::here("data/processed/territory_historical_population.csv")
+  if (!file.exists(csv_path)) {
+    cli::cli_abort(c(
+      "Territory historical population CSV not found at {.path {csv_path}}",
+      "i" = "Source: U.S. Census Bureau, Decennial Census"
+    ))
+  }
+  result <- data.table::fread(csv_path)
 
   if (!is.null(target_census_year)) {
     result <- result[census_year == target_census_year]
@@ -773,71 +369,15 @@ get_territory_ss_start_year <- function(territory) {
 #'
 #' @export
 get_pre1950_armed_forces <- function(years = 1940:1949) {
-  # ==========================================================================
-  # ARMED FORCES OVERSEAS ESTIMATES (1940-1949)
-  # ==========================================================================
-  # Primary source: National WWII Museum "US Military by the Numbers"
-  # Total personnel: 1940=458K, 1941=1.8M, 1942=3.9M, 1943=9.2M,
-  #                  1944=11.6M, 1945=12.2M
-  # Overseas: "73% served overseas" during 1941-1945; 7.6M overseas at peak
-  #
-  # Post-war demobilization sources:
-  # - Army declined from 8M (Aug 1945) to 3M (Jan 1946) to 554K (Mar 1948)
-  # - By June 30, 1947: 1.566M total active duty
-  # - Army stabilized at ~600K in 1949-50
-  # ==========================================================================
-
-  data <- data.table::data.table(
-    year = 1940:1949,
-    total_military = c(
-      # Source: National WWII Museum
-      458365,     # 1940
-      1801101,    # 1941
-      3915507,    # 1942
-      9195912,    # 1943
-      11623468,   # 1944
-      12209238,   # 1945
-      # Post-war estimates (derived from demobilization data)
-      3000000,    # 1946 (mid-year estimate)
-      1566000,    # 1947 (June 30, 1947 per Army Center of Military History)
-      1400000,    # 1948 (estimate)
-      1600000     # 1949 (pre-Korea buildup)
-    ),
-    overseas_troops = c(
-      # Pre-war: Philippines (~12K), Panama, Caribbean bases
-      50000,      # 1940 - Pre-war garrisons
-
-      # 1941: Build-up, Iceland occupation (July 1941)
-      150000,     # 1941 - Growing overseas presence
-
-      # 1942-1945: Active war operations
-      # NWWII Museum: "73% served overseas" during war; 7.6M overseas at peak
-      2350000,    # 1942 - ~60% overseas (North Africa, Pacific buildup)
-      5500000,    # 1943 - ~60% overseas
-      7500000,    # 1944 - ~65% overseas (Europe invasion)
-      7600000,    # 1945 - Peak: 7.6M overseas (per NWWII Museum)
-
-      # Post-war occupation and demobilization
-      # Germany: 337K occupation force (1946)
-      # Japan: ~400K initially, declining
-      1500000,    # 1946 - Rapid drawdown, still large occupation
-      500000,     # 1947 - Continued reduction
-      400000,     # 1948 - Post-war baseline
-      350000      # 1949 - Pre-Korea baseline
-    ),
-    source = c(
-      "NWWII Museum / garrison estimate",
-      "NWWII Museum / Iceland occupation",
-      "NWWII Museum (73% overseas)",
-      "NWWII Museum (73% overseas)",
-      "NWWII Museum (73% overseas)",
-      "NWWII Museum (7.6M overseas at peak)",
-      "CMH Pub 104-8 / occupation forces",
-      "CMH Pub 104-8 (June 30, 1947)",
-      "CMH Pub 104-8 / Army 554K Mar 1948",
-      "Britannica / pre-Korea baseline"
-    )
-  )
+  # Load from CSV — see data/processed/pre1950_armed_forces_overseas_SOURCE.md for provenance
+  csv_path <- here::here("data/processed/pre1950_armed_forces_overseas.csv")
+  if (!file.exists(csv_path)) {
+    cli::cli_abort(c(
+      "Pre-1950 armed forces CSV not found at {.path {csv_path}}",
+      "i" = "Source: National WWII Museum, Army CMH Pub 104-8"
+    ))
+  }
+  data <- data.table::fread(csv_path)
 
   target_years <- years
   result <- data[year %in% target_years, .(year, overseas_troops, source)]
@@ -979,24 +519,26 @@ get_ss_area_adjustments <- function(year) {
 #' Section V.A: Historical Population Methodology.
 #'
 #' @export
-get_tab_years <- function() {
-  c(
-    1940, 1950, 1956, 1960,
-    1969:2009,
-    2022  # Last historical year for TR2025
-  )
+get_tab_years <- function(config = NULL) {
+  # Read tab years from config
+  if (is.null(config) || is.null(config$historical_population$tab_years)) {
+    cli::cli_abort(c(
+      "Config missing {.field historical_population.tab_years}",
+      "i" = "Ensure config is passed to {.fn get_tab_years}"
+    ))
+  }
+  tab_cfg <- config$historical_population$tab_years
+  required_keys <- c("early", "annual_range", "final")
+  missing <- setdiff(required_keys, names(tab_cfg))
+  if (length(missing) > 0) {
+    cli::cli_abort("Config missing tab_years fields: {.field {missing}}")
+  }
+  early <- tab_cfg$early
+  annual <- seq(tab_cfg$annual_range[1], tab_cfg$annual_range[2])
+  final <- tab_cfg$final
+  sort(unique(c(early, annual, final)))
 }
 
-#' Check if a year is a tab year
-#'
-#' @param year Integer: year to check
-#'
-#' @return Logical: TRUE if year is a tab year
-#'
-#' @export
-is_tab_year <- function(year) {
-  year %in% get_tab_years()
-}
 
 # =============================================================================
 # DOCUMENTATION FUNCTIONS

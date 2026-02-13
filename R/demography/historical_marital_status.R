@@ -318,14 +318,15 @@ get_marital_status_proportions <- function(years = 1940:2022,
   results <- list()
 
   for (yr in years) {
-    if (yr >= 2006 && yr != 2020) {
+    acs_excluded <- config$historical_population$acs_excluded_years
+    if (yr >= 2006 && !yr %in% acs_excluded) {
       # Use ACS data directly
       yr_data <- get_acs_marital_year(yr, acs_data, ages)
     } else if (yr >= 2000 && yr < 2006) {
       # Interpolate between Census 2000 and ACS 2006
       yr_data <- interpolate_marital_proportions(yr, ipums_data, acs_data, ages)
-    } else if (yr == 2020) {
-      # Average 2019 and 2021 due to COVID data issues
+    } else if (yr %in% acs_excluded) {
+      # Average surrounding years for ACS-excluded years (e.g., 2020 COVID)
       yr_data <- average_surrounding_years(yr, acs_data, ages)
     } else {
       # Use IPUMS data with interpolation between censuses
@@ -390,7 +391,9 @@ load_acs_marital_data <- function(cache_dir) {
   cli::cli_alert("Loading ACS PUMS marital status data...")
 
   # Use existing function from acs_pums.R
-  acs_years <- c(2006:2019, 2021:2023)  # Exclude 2020
+  # Build ACS year list excluding config-specified years (e.g., 2020 COVID)
+  acs_excluded <- config$historical_population$acs_excluded_years
+  acs_years <- setdiff(2006:2023, acs_excluded)
 
   acs_data <- fetch_acs_pums_marital_status(
     years = acs_years,
@@ -398,7 +401,9 @@ load_acs_marital_data <- function(cache_dir) {
     cache_dir = file.path(cache_dir, "acs_pums")
   )
 
-  # Aggregate separated into divorced (SSA methodology)
+  # Aggregate separated into divorced per Eq 1.4.2 (total population by marital status).
+  # Note: Eq 1.4.4 (CNI population) keeps separated distinct because ACS PUMS
+  # provides married_spouse_present vs separated detail needed for CNI calculations.
   acs_data[marital_status == "separated", marital_status := "divorced"]
   acs_data <- acs_data[, .(population = sum(population)),
                        by = .(year, age, sex, marital_status)]
@@ -432,7 +437,7 @@ load_ipums_marital_data <- function(cache_dir) {
       ipums_data[, year := as.integer(year)]
     }
 
-    # Aggregate separated into divorced
+    # Aggregate separated into divorced per Eq 1.4.2
     ipums_data[marital_status == "separated", marital_status := "divorced"]
     ipums_data <- ipums_data[, .(population = sum(population)),
                              by = .(year, age, sex, marital_status)]
@@ -586,8 +591,11 @@ average_surrounding_years <- function(target_year, acs_data, ages) {
 #' with marriage grids and preserving total population by age and sex.
 #'
 #' @param marital_pop data.table with preliminary marital populations
-#' @param marriage_grid Matrix of marriages by husband age × wife age (optional)
+#' @param marriage_grid Matrix of marriages by husband age × wife age (unused in
+#'   historical pipeline; grid-based balancing applies only in projected
+#'   population via Eq 1.6.2). Kept for interface compatibility.
 #' @param year Integer: year for marriage balancing
+#' @param config List: configuration (required; reads same_sex_start_year)
 #'
 #' @return data.table with balanced marital populations
 #'
@@ -597,15 +605,26 @@ average_surrounding_years <- function(target_year, acs_data, ages) {
 #' 2. Set married population for each age/sex = marginal total of marriage grid
 #' 3. Adjust other marital statuses to maintain total population
 #'
-#' After 2013 (same-sex marriage recognition), the equality constraint
+#' Step 2 (marriage grid) is not applied in the historical pipeline because
+#' the grid is only constructed during projected population (Eq 1.6.2).
+#' In the historical pipeline, only step 1 (married M=F balancing) is used.
+#'
+#' After same_sex_start_year (from config), the equality constraint
 #' is relaxed since same-sex marriages are allowed.
 #'
 #' @export
 balance_married_populations <- function(marital_pop,
                                         marriage_grid = NULL,
-                                        year = 2022) {
+                                        year,
+                                        config) {
 
   result <- data.table::copy(marital_pop)
+
+  # Read same-sex start year from config
+  if (is.null(config$projected_population$population_status$same_sex_start_year)) {
+    cli::cli_abort("Config missing {.field projected_population.population_status.same_sex_start_year}")
+  }
+  ss_start_year <- config$projected_population$population_status$same_sex_start_year
 
   # Get total population by age and sex
   total_by_age_sex <- result[, .(total = sum(population)), by = .(age, sex)]
@@ -618,8 +637,8 @@ balance_married_populations <- function(marital_pop,
 
   cli::cli_alert_info("Pre-balance: Married males = {format(married_males, big.mark = ',')}, Married females = {format(married_females, big.mark = ',')}")
 
-  # Pre-2013: force married males = married females
-  if (year < 2013) {
+  # Pre-same-sex era: force married males = married females
+  if (year < ss_start_year) {
     # Take average of the two
     target_married <- (married_males + married_females) / 2
 
@@ -825,6 +844,7 @@ calculate_historical_population_marital <- function(total_pop,
                                                     start_year = 1940,
                                                     end_year = 2022,
                                                     ages = 14:100,
+                                                    config = NULL,
                                                     use_cache = TRUE,
                                                     cache_dir = here::here("data/cache"),
                                                     include_same_sex = TRUE) {
@@ -889,11 +909,27 @@ calculate_historical_population_marital <- function(total_pop,
     yr_pop[, c("total_pop", "proportion") := NULL]
 
     # Balance married populations
-    yr_pop <- balance_married_populations(yr_pop, year = yr)
+    yr_pop <- balance_married_populations(yr_pop, year = yr, config = config)
 
     # Incorporate same-sex marriage for 2013+
-    if (include_same_sex && yr >= 2013) {
-      yr_pop <- incorporate_same_sex_marriage(yr_pop, year = yr)
+    # Read same-sex start year and percentages from config
+    ss_cfg <- config$projected_population$population_status
+    if (is.null(ss_cfg)) {
+      cli::cli_abort("Config missing {.field projected_population.population_status}")
+    }
+    required_ss_fields <- c("same_sex_start_year", "gay_percent", "lesbian_percent")
+    missing <- setdiff(required_ss_fields, names(ss_cfg))
+    if (length(missing) > 0) {
+      cli::cli_abort("Config missing population_status fields: {.field {missing}}")
+    }
+    ss_start <- ss_cfg$same_sex_start_year
+    gay_pct <- ss_cfg$gay_percent
+    lesbian_pct <- ss_cfg$lesbian_percent
+
+    if (include_same_sex && yr >= ss_start) {
+      yr_pop <- incorporate_same_sex_marriage(yr_pop, year = yr,
+                                              gay_pct = gay_pct,
+                                              lesbian_pct = lesbian_pct)
     } else {
       yr_pop[, orientation := "heterosexual"]
     }

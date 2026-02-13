@@ -82,7 +82,12 @@ All assumptions live in `config/assumptions/tr2025.yaml`. Key configurable param
 
 ## Running the Pipeline
 
+**Important:** The `config_assumptions` target is cached by `{targets}`. After editing `config/assumptions/tr2025.yaml`, you must invalidate it before running the pipeline or the old config values will be used:
+
 ```bash
+# After editing config YAML, invalidate the config target first
+Rscript -e "targets::tar_invalidate(matches('config_assumptions'))"
+
 # Full pipeline
 Rscript -e "targets::tar_make()"
 
@@ -174,6 +179,7 @@ sudo systemctl restart jupyterhub
 4. **Immigration totals:** V.A2 net immigration totals (~1.3M/yr) are lower than what TR2025 population projections imply (~2.0M/yr), causing ~1.2% population divergence.
 5. **Marriage:** Same-sex separation uses ACS PUMS prevalence (2015-2022) instead of state-level data (2004-2012).
 6. **Divorce:** ACS PUMS data (2018-2022) for DivGrid adjustment instead of 18-state health department data.
+7. **O-population stock (Eq 1.4.3):** TR2025 builds stock directly from residuals, then modifies stock levels. ARTEMIS uses V.A2 o_net totals for annual stock levels and residuals only for age-sex distribution shape. This is because ARTEMIS component inputs (immigration distributions, AOS ratios) differ from OCACT's internal data, causing residual-built stocks to diverge pre-2000. Configurable via `historical_population.o_population.method` (`"residual"` default, `"va2_flows"` alternative).
 
 ## Key Rules
 1. **Real data only** - No synthetic/mock data. Tasks are not complete until working with real API/file data.

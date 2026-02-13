@@ -1111,16 +1111,26 @@ get_tr_lpr_assumptions_va2 <- function(years,
   # Rename columns to match expected format
   # NOTE: In V.A2, LPR Inflow = NEW arrivals only, LPR AOS = Adjustments of Status
   # Total LPR Immigration = NEW + AOS (per TR2025 methodology)
-  # Emigration computed as total_lpr * emigration_ratio (TR2025 Eq 1.3.4)
+  #
+  # Emigration:
+  # - Projected years: emigration_ratio × total_lpr (TR2025 Eq 1.3.4)
+  # - Historical years: use V.A2's actual lpr_outflow values directly.
+  #   The 0.25 formula doesn't hold during IRCA (1989-1993) when AOS spiked
+  #   but outflow didn't scale proportionally. V.A2 historical outflows are
+  #   independently estimated and already account for this.
   result <- result[, .(
     year = year,
     total_lpr = (lpr_inflow + lpr_aos) * 1000,  # Total = NEW + AOS, convert to persons
     lpr_new = lpr_inflow * 1000,                 # NEW arrivals only
     lpr_aos = lpr_aos * 1000,                    # AOS only
-    total_emigration = (lpr_inflow + lpr_aos) * 1000 * emigration_ratio,
-    net_lpr_total = (lpr_inflow + lpr_aos) * 1000 * (1 - emigration_ratio),
+    total_emigration = data.table::fifelse(
+      data_type == "historical",
+      lpr_outflow * 1000,                        # Historical: actual V.A2 outflow
+      (lpr_inflow + lpr_aos) * 1000 * emigration_ratio  # Projected: Eq 1.3.4
+    ),
     data_type = data_type
   )]
+  result[, net_lpr_total := total_lpr - total_emigration]
 
   # Handle NAs (early years may have missing data)
   result[is.na(lpr_new), lpr_new := 0]

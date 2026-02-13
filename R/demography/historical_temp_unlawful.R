@@ -4,25 +4,50 @@
 #' Functions for estimating the historical temporary or unlawfully present
 #' immigrant population (O^z_{x,s}) from 1940 to 2022.
 #'
-#' This module implements Equation 1.4.3 from the TR2025 documentation:
-#'   O^z_{x,s} = O stock built from TR2025 net flows
+#' This module implements Equation 1.4.3 from the TR2025 documentation
+#' (Section 1.4.c):
+#'   O^z_{x,s} = O stock estimated via residual method + stock modification
 #'
-#' @section Methodology:
+#' @section Methodology (TR2025 Section 1.4.c):
 #'
-#' 1. **Load TR2025 O Flows:** Use official OCACT immigration assumptions
-#'    from Table V.A2 which provides o_net (net O population change) by year.
+#' Per TR2025: "For each year, an initial net residual estimate by single year
+#' of age and sex is backed out from estimates of beginning and end of year
+#' populations, births, deaths, LPR immigrants, adjustments of status, and
+#' legal emigrants. These residuals are then modified to ensure reasonableness.
+#' Next, using these modified net residuals, along with deaths [...], an
+#' initial temporary or unlawfully present immigrant stock is built. These
+#' stocks are then modified to ensure reasonableness."
 #'
-#' 2. **Distribute by Age/Sex:** Apply DHS unauthorized age-sex distribution
-#'    to annual net flows to get flows by single year of age and sex.
+#' Two methods are available (config: `historical_population.o_population.method`):
 #'
-#' 3. **Build Up Stock:** Starting from 0 in 1940, accumulate annual net
-#'    flows while applying mortality to get year-end stocks.
+#' **"residual" (default):** Follows the TR2025 4-step process:
 #'
-#' 4. **Validate:** Compare totals against DHS unauthorized estimates.
+#'   1. Compute net residuals from the population accounting identity
+#'   2. Modify residuals for reasonableness (rolling median smoothing + floor at 0)
+#'   3. Build O stock from V.A2 net flows distributed by residual-derived age-sex
+#'      proportions, with mortality/aging applied
+#'   4. Modify stocks for reasonableness (DHS adjustment for 2000+, COVID averaging
+#'      for 2020)
+#'
+#'   **Deviation from TR2025:** Step 3 uses V.A2 o_net totals for annual stock
+#'   change levels rather than building stock directly from raw residuals.
+#'   TR2025 builds stock from residuals and then modifies stock levels; we use
+#'   V.A2 totals for levels and residuals only for age-sex distribution shape.
+#'   This is necessary because our component inputs (ARTEMIS-derived immigration
+#'   distributions, AOS ratios) differ from OCACT's internal data, causing
+#'   residual-built stocks to diverge from plausible levels pre-2000. V.A2
+#'   provides SSA's official O-immigration totals, so using them for levels
+#'   is the most principled approach given public data limitations.
+#'
+#' **"va2_flows" (alternative):** Builds stock directly from V.A2 net flows
+#'   using a static DHS-based age-sex distribution (config-driven). Simpler
+#'   and does not require the total_pop dependency, but uses a fixed age-sex
+#'   distribution for all years rather than data-derived year-varying shapes.
 #'
 #' @section Data Sources:
 #' - TR2025 Table V.A2: Official OCACT immigration assumptions (1940-2100)
-#' - DHS Unauthorized: Age-sex distribution and validation targets
+#' - DHS Unauthorized: Age-sex distribution and validation targets (2000+)
+#' - Census/NCHS/etc: Population and component data for residual calculation
 #' - Mortality (qx): For aging the O population stock
 #'
 #' @name historical_temp_unlawful
@@ -36,17 +61,31 @@ NULL
 #'
 #' @description
 #' Main entry point for calculating the temporary or unlawfully present
-#' immigrant population (O^z_{x,s}) from 1940 to 2022 using TR2025 flows.
+#' immigrant population (O^z_{x,s}) from 1940 to 2022.
+#'
+#' Supports two methods (configurable via `historical_population.o_population.method`):
+#' - `"residual"` (default): Backs out O-population from the population accounting
+#'   identity using total population, births, deaths, LPR immigration, emigration,
+#'   and adjustments of status. Per TR2025 Section 1.4.c.
+#' - `"va2_flows"`: Builds O stock directly from V.A2 net O flows.
 #'
 #' @param start_year Integer: First year (default: 1940)
 #' @param end_year Integer: Last year (default: 2022)
-#' @param ages Integer vector: Ages to include (default: 0:99)
+#' @param ages Integer vector: Ages to include (default: 0:100)
+#' @param config List: Configuration from tr2025.yaml
+#' @param total_pop data.table: Total historical population (from historical_population target).
+#'   Required for "residual" method.
+#' @param lpr_assumptions data.table: LPR assumptions from V.A2 (from lpr_assumptions target).
+#'   Required for "residual" method (provides immigration/emigration/AOS totals).
+#' @param immigration_dist Immigration age-sex distribution (from lpr_distribution target).
+#' @param emigration_dist Emigration age-sex distribution (from emigration_distribution target).
+#' @param births_by_sex data.table: Births by sex (from nchs_births_by_sex target).
 #' @param use_cache Logical: Use cached results if available
 #' @param cache_dir Character: Directory for caching
 #'
 #' @return data.table with columns:
 #'   - year: Calendar year (December 31 reference)
-#'   - age: Single year of age (0-99)
+#'   - age: Single year of age (0-100)
 #'   - sex: "male" or "female"
 #'   - population: O population estimate
 #'   - source: Data source indicator
@@ -54,10 +93,26 @@ NULL
 #' @export
 calculate_historical_temp_unlawful <- function(start_year = 1940,
                                                 end_year = 2022,
-                                                ages = 0:99,
+                                                ages = 0:100,
+                                                config = NULL,
+                                                total_pop = NULL,
+                                                lpr_assumptions = NULL,
+                                                immigration_dist = NULL,
+                                                emigration_dist = NULL,
+                                                births_by_sex = NULL,
                                                 use_cache = TRUE,
                                                 cache_dir = here::here("data/cache")) {
   cli::cli_h1("Calculating Temporary/Unlawfully Present Population (Eq 1.4.3)")
+
+  # Read method from config
+  method <- config$historical_population$o_population$method %||% "residual"
+  if (!method %in% c("residual", "va2_flows")) {
+    cli::cli_abort(c(
+      "Invalid O-population method: {.val {method}}",
+      "i" = "Must be one of: {.val residual}, {.val va2_flows}"
+    ))
+  }
+  cli::cli_alert_info("O-population method: {.val {method}}")
 
   # Check cache
   cache_subdir <- file.path(cache_dir, "historical_population")
@@ -65,7 +120,7 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
 
   cache_file <- file.path(
     cache_subdir,
-    sprintf("o_population_%d_%d.rds", start_year, end_year)
+    sprintf("o_population_%s_%d_%d.rds", method, start_year, end_year)
   )
 
   if (use_cache && file.exists(cache_file)) {
@@ -74,46 +129,137 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
     return(cached)
   }
 
-  # Step 1: Load TR2025 O flows from V.A2
-  cli::cli_h2("Step 1: Loading TR2025 O Flows (Table V.A2)")
-  o_flows <- get_tr_historical_o_flows(
-    years = start_year:end_year,
-    convert_to_persons = TRUE
-  )
-  cli::cli_alert_info("Loaded O flows for {nrow(o_flows)} years")
+  years <- start_year:end_year
 
-  # Show sample O net values
-  sample_yrs <- c(1960, 1970, 1980, 1990, 2000, 2010, 2020)
-  sample_yrs <- sample_yrs[sample_yrs %in% o_flows$year]
-  for (yr in sample_yrs) {
-    o_net <- o_flows[year == yr, o_net]
-    cli::cli_alert_info("  {yr}: O net = {format(round(o_net), big.mark = ',')}")
+  if (method == "residual") {
+    # =========================================================================
+    # RESIDUAL METHOD (TR2025 default)
+    # Uses V.A2 o_net flows for stock LEVELS (SSA's official O-immigration
+    # totals) and the residual accounting identity only for the AGE-SEX SHAPE
+    # of the distribution. This avoids stock accumulation issues from
+    # component mismatch while providing data-driven age-sex patterns.
+    # =========================================================================
+    if (is.null(total_pop)) {
+      cli::cli_abort(c(
+        "total_pop is required for residual O-population method",
+        "i" = "Pass historical_population target as total_pop parameter"
+      ))
+    }
+
+    # Gather components needed for residual calculation
+    cli::cli_h2("Step 1: Gathering Components for Residual Method")
+    components <- gather_o_components(
+      years = years, ages = ages, cache_dir = cache_dir, config = config,
+      lpr_assumptions = lpr_assumptions,
+      immigration_dist = immigration_dist,
+      emigration_dist = emigration_dist,
+      births_by_sex = births_by_sex
+    )
+
+    # Calculate residuals from population accounting identity
+    cli::cli_h2("Step 2: Calculating Residuals from Accounting Identity")
+    residuals <- calculate_other_residuals(
+      total_pop = total_pop,
+      components = components,
+      years = years,
+      ages = ages
+    )
+    cli::cli_alert_info("Computed residuals for {length(unique(residuals$year))} years")
+
+    # Modify residuals for reasonableness (smooth + floor at 0)
+    cli::cli_h2("Step 3: Modifying Residuals for Reasonableness")
+    modified_residuals <- modify_residuals_for_reasonableness(residuals, config = config)
+
+    # Extract per-year age-sex proportions from residuals
+    cli::cli_h2("Step 4: Extracting Age-Sex Distribution from Residuals")
+    static_dist <- get_o_age_sex_distribution(ages, config)
+    residual_dist <- extract_residual_proportions(modified_residuals, static_dist)
+    n_fallback <- residual_dist[, .(fb = all(source == "fallback")), by = year][fb == TRUE, .N]
+    cli::cli_alert_info("Residual-derived proportions for {length(unique(residual_dist$year))} years ({n_fallback} using static fallback)")
+
+    # Load V.A2 O flows for stock levels
+    cli::cli_h2("Step 5: Loading V.A2 O Flows for Stock Levels")
+    o_flows <- get_tr_historical_o_flows(years = years, convert_to_persons = TRUE)
+    cli::cli_alert_info("Loaded V.A2 O flows for {nrow(o_flows)} years")
+
+    # Build O stock using V.A2 levels + residual-derived age-sex distribution
+    cli::cli_h2("Step 6: Building O Stock from V.A2 Flows + Residual Shape")
+    mortality <- components$mortality
+    o_stock <- build_o_stock_from_flows(
+      o_flows = o_flows,
+      age_sex_dist = residual_dist,
+      mortality = mortality,
+      years = years,
+      ages = ages
+    )
+    cli::cli_alert_info("Built stock for {length(unique(o_stock$year))} years")
+
+  } else {
+    # =========================================================================
+    # V.A2 FLOWS METHOD (alternative)
+    # =========================================================================
+    cli::cli_h2("Step 1: Loading TR2025 O Flows (Table V.A2)")
+    o_flows <- get_tr_historical_o_flows(
+      years = years,
+      convert_to_persons = TRUE
+    )
+    cli::cli_alert_info("Loaded O flows for {nrow(o_flows)} years")
+
+    # Show sample O net values
+    sample_yrs <- c(1960, 1970, 1980, 1990, 2000, 2010, 2020)
+    sample_yrs <- sample_yrs[sample_yrs %in% o_flows$year]
+    for (yr in sample_yrs) {
+      o_net <- o_flows[year == yr, o_net]
+      cli::cli_alert_info("  {yr}: O net = {format(round(o_net), big.mark = ',')}")
+    }
+
+    cli::cli_h2("Step 2: Getting Age-Sex Distribution")
+    age_sex_dist <- get_o_age_sex_distribution_by_year(ages, years, config)
+    n_years_dist <- length(unique(age_sex_dist$year))
+    cli::cli_alert_info("Distribution covers {nrow(age_sex_dist)} age-sex-year cells ({n_years_dist} years)")
+
+    cli::cli_h2("Step 3: Loading Mortality Data")
+    mortality <- load_mortality_for_o(years, config)
+    cli::cli_alert_info("Loaded mortality for {length(unique(mortality$year))} years")
+
+    cli::cli_h2("Step 4: Building O Stock from TR2025 Flows")
+    o_stock <- build_o_stock_from_flows(
+      o_flows = o_flows,
+      age_sex_dist = age_sex_dist,
+      mortality = mortality,
+      years = years,
+      ages = ages
+    )
+    cli::cli_alert_info("Built stock for {length(unique(o_stock$year))} years")
   }
 
-  # Step 2: Get age-sex distribution for O population
-  cli::cli_h2("Step 2: Getting Age-Sex Distribution")
-  age_sex_dist <- get_o_age_sex_distribution(ages)
-  cli::cli_alert_info("Distribution covers {nrow(age_sex_dist)} age-sex cells")
+  # =========================================================================
+  # COVID-19 ADJUSTMENT: Replace 2020 with average of 2019 and 2021
+  # =========================================================================
+  covid_avg <- config$historical_population$o_population$covid_average_2020 %||% TRUE
+  if (covid_avg && 2020 %in% o_stock$year && 2019 %in% o_stock$year && 2021 %in% o_stock$year) {
+    cli::cli_h2("Applying 2020 COVID Averaging (TR2025 Footnote 9)")
+    pop_2019 <- o_stock[year == 2019, .(age, sex, pop_2019 = population)]
+    pop_2021 <- o_stock[year == 2021, .(age, sex, pop_2021 = population)]
+    avg_2020 <- merge(pop_2019, pop_2021, by = c("age", "sex"))
+    avg_2020[, population := (pop_2019 + pop_2021) / 2]
 
-  # Step 3: Load mortality data
-  cli::cli_h2("Step 3: Loading Mortality Data")
-  mortality <- load_mortality_for_o(start_year:end_year)
-  cli::cli_alert_info("Loaded mortality for {length(unique(mortality$year))} years")
+    o_stock <- o_stock[year != 2020]
+    o_stock <- data.table::rbindlist(list(
+      o_stock,
+      avg_2020[, .(year = 2020L, age, sex, population, source = "covid_averaged")]
+    ), fill = TRUE)
+    data.table::setorder(o_stock, year, sex, age)
 
-  # Step 4: Build up O stock from flows
-  cli::cli_h2("Step 4: Building O Stock from TR2025 Flows")
-  o_stock <- build_o_stock_from_flows(
-    o_flows = o_flows,
-    age_sex_dist = age_sex_dist,
-    mortality = mortality,
-    years = start_year:end_year,
-    ages = ages
-  )
-  cli::cli_alert_info("Built stock for {length(unique(o_stock$year))} years")
+    old_total <- sum(pop_2019$pop_2019 + pop_2021$pop_2021) / 2
+    cli::cli_alert_info("2020 O-stock replaced with avg(2019, 2021): {format(round(old_total), big.mark = ',')}")
+  }
 
-  # Step 5: Load DHS estimates and adjust
-  cli::cli_h2("Step 5: Adjusting to DHS Estimates (2000+)")
-  dhs_estimates <- load_dhs_estimates_for_o(start_year:end_year)
+  # =========================================================================
+  # DHS ADJUSTMENT (2000+)
+  # =========================================================================
+  cli::cli_h2("Adjusting to DHS Estimates (2000+)")
+  dhs_estimates <- load_dhs_estimates_for_o(years)
   o_adjusted <- adjust_o_to_dhs(
     o_stock = o_stock,
     dhs_estimates = dhs_estimates,
@@ -123,10 +269,9 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
   # Summary statistics
   cli::cli_h2("Summary")
   total_by_year <- o_adjusted[, .(total = sum(population)), by = year]
-  cli::cli_alert_success("Calculated O population for {nrow(total_by_year)} years")
+  cli::cli_alert_success("Calculated O population ({method} method) for {nrow(total_by_year)} years")
 
-  # Sample years
-  sample_years <- c(1950, 1970, 1990, 2000, 2007, 2010, 2020, 2022)
+  sample_years <- c(1950, 1970, 1990, 2000, 2007, 2010, 2019, 2020, 2021, 2022)
   sample_years <- sample_years[sample_years %in% total_by_year$year]
   for (yr in sample_years) {
     total <- total_by_year[year == yr, total]
@@ -144,77 +289,210 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
 # AGE-SEX DISTRIBUTION FOR O POPULATION
 # =============================================================================
 
-#' Get Age-Sex Distribution for O Population
+#' Get Static Age-Sex Distribution for O Population
 #'
 #' @description
-#' Returns the age-sex distribution to apply to annual O net flows.
-#' Based on DHS unauthorized population estimates which show working-age
-#' concentration.
+#' Returns a single static age-sex distribution from config. Used as a fallback
+#' by the residual method (when all residuals are zero for a year) and as the
+#' base distribution when era-based distributions are disabled.
 #'
-#' @param ages Integer vector: ages to include (default: 0:99)
+#' @param ages Integer vector: ages to include
+#' @param config List: configuration from tr2025.yaml
 #'
-#' @return data.table with columns: age, sex, proportion
-#'
-#' @details
-#' Distribution based on:
-#' - DHS unauthorized population estimates by age group
-#' - Unauthorized population is heavily concentrated ages 18-44
-#' - Very few children (many are US-born citizens)
-#' - Few elderly (unauthorized immigration is recent phenomenon)
+#' @return data.table with columns: age, sex, proportion (sums to 1)
 #'
 #' @keywords internal
-get_o_age_sex_distribution <- function(ages = 0:99) {
-  # DHS unauthorized age distribution (approximate from CMS/DHS estimates)
-  # Under 18: ~8% (mostly entered as minors with parents)
-  # 18-24: ~12%
-  # 25-34: ~28%
-  # 35-44: ~25%
-  # 45-54: ~15%
-  # 55-64: ~8%
-  # 65+: ~4%
+get_o_age_sex_distribution <- function(ages = 0:100, config = NULL) {
+  o_cfg <- config$historical_population$o_population
+  if (is.null(o_cfg)) {
+    cli::cli_abort("Config missing {.field historical_population.o_population}")
+  }
+  build_distribution_from_weights(
+    age_dist = o_cfg$age_distribution,
+    male_share = o_cfg$male_share,
+    ages = ages
+  )
+}
+
+#' Get Year-Varying Age-Sex Distribution for O Population
+#'
+#' @description
+#' Returns a year-varying age-sex distribution for the va2_flows method.
+#' When era_distributions are enabled in config, interpolates between era-specific
+#' distributions. When disabled, returns the static distribution for all years.
+#'
+#' @param ages Integer vector: ages to include
+#' @param years Integer vector: years to produce distributions for
+#' @param config List: configuration from tr2025.yaml
+#'
+#' @return data.table with columns: year, age, sex, proportion
+#'   Proportions sum to 1 within each year.
+#'
+#' @keywords internal
+get_o_age_sex_distribution_by_year <- function(ages = 0:100, years = 1940:2022,
+                                                config = NULL) {
+  o_cfg <- config$historical_population$o_population
+  if (is.null(o_cfg)) {
+    cli::cli_abort("Config missing {.field historical_population.o_population}")
+  }
+
+  era_cfg <- o_cfg$era_distributions
+  use_eras <- isTRUE(era_cfg$enabled) && !is.null(era_cfg$eras) && length(era_cfg$eras) > 0
+
+  if (!use_eras) {
+    # No era distributions — replicate static distribution for all years
+    static <- get_o_age_sex_distribution(ages, config)
+    result_list <- lapply(years, function(yr) {
+      d <- data.table::copy(static)
+      d[, year := yr]
+      d
+    })
+    return(data.table::rbindlist(result_list, use.names = TRUE))
+  }
+
+  # Build distribution for each era
+  eras <- era_cfg$eras
+  era_dists <- list()
+  era_bounds <- list()
+
+  for (i in seq_along(eras)) {
+    era <- eras[[i]]
+    if (is.null(era$age_distribution) || is.null(era$male_share)) {
+      cli::cli_abort("Era {i} missing age_distribution or male_share")
+    }
+    era_dists[[i]] <- build_distribution_from_weights(
+      age_dist = era$age_distribution,
+      male_share = era$male_share,
+      ages = ages
+    )
+    era_bounds[[i]] <- list(start = era$start_year, end = era$end_year)
+  }
+
+  # For each year, find which era(s) apply and interpolate if between eras
+  result_list <- list()
+
+  for (yr in years) {
+    # Find the era that contains this year
+    in_era <- NULL
+    for (i in seq_along(era_bounds)) {
+      if (yr >= era_bounds[[i]]$start && yr <= era_bounds[[i]]$end) {
+        in_era <- i
+        break
+      }
+    }
+
+    if (!is.null(in_era)) {
+      # Year falls within an era — use that era's distribution
+      d <- data.table::copy(era_dists[[in_era]])
+      d[, year := yr]
+      result_list[[length(result_list) + 1L]] <- d
+    } else {
+      # Year falls between eras — interpolate between adjacent eras
+      prev_era <- NULL
+      next_era <- NULL
+      for (i in seq_along(era_bounds)) {
+        if (era_bounds[[i]]$end < yr) prev_era <- i
+        if (era_bounds[[i]]$start > yr && is.null(next_era)) next_era <- i
+      }
+
+      if (!is.null(prev_era) && !is.null(next_era)) {
+        # Linear interpolation between adjacent era distributions
+        gap_start <- era_bounds[[prev_era]]$end
+        gap_end <- era_bounds[[next_era]]$start
+        weight <- (yr - gap_start) / (gap_end - gap_start)
+
+        d <- data.table::copy(era_dists[[prev_era]])
+        d_next <- era_dists[[next_era]]
+        d[, proportion := proportion * (1 - weight) + d_next$proportion * weight]
+        # Re-normalize
+        d[, proportion := proportion / sum(proportion)]
+        d[, year := yr]
+        result_list[[length(result_list) + 1L]] <- d
+      } else if (!is.null(prev_era)) {
+        # After all eras — use last era
+        d <- data.table::copy(era_dists[[prev_era]])
+        d[, year := yr]
+        result_list[[length(result_list) + 1L]] <- d
+      } else if (!is.null(next_era)) {
+        # Before all eras — use first era
+        d <- data.table::copy(era_dists[[next_era]])
+        d[, year := yr]
+        result_list[[length(result_list) + 1L]] <- d
+      } else {
+        # No eras defined — use static fallback
+        d <- data.table::copy(get_o_age_sex_distribution(ages, config))
+        d[, year := yr]
+        result_list[[length(result_list) + 1L]] <- d
+      }
+    }
+  }
+
+  result <- data.table::rbindlist(result_list, use.names = TRUE)
+  data.table::setorder(result, year, sex, age)
+  result
+}
+
+#' Build Age-Sex Distribution from Config Weights
+#'
+#' @description
+#' Helper that converts age-group weights and male_share into a normalized
+#' single-year-of-age by sex distribution.
+#'
+#' @param age_dist Named list of age group weights (age_0_4, age_5_9, etc.)
+#' @param male_share Numeric: proportion male (0-1)
+#' @param ages Integer vector: ages to include
+#'
+#' @return data.table with columns: age, sex, proportion (sums to 1)
+#'
+#' @keywords internal
+build_distribution_from_weights <- function(age_dist, male_share, ages = 0:100) {
+  if (is.null(age_dist)) {
+    cli::cli_abort("age_dist is required")
+  }
+  if (is.null(male_share)) {
+    cli::cli_abort("male_share is required")
+  }
+
+  required_age_keys <- c("age_0_4", "age_5_9", "age_10_14", "age_15_17", "age_18_19",
+    "age_20_24", "age_25_29", "age_30_34", "age_35_39", "age_40_44", "age_45_49",
+    "age_50_54", "age_55_59", "age_60_64", "age_65_69", "age_70_79", "age_80_plus")
+  missing <- setdiff(required_age_keys, names(age_dist))
+  if (length(missing) > 0) {
+    cli::cli_abort("age_distribution missing keys: {.field {missing}}")
+  }
 
   dist <- data.table::data.table(age = ages)
-
-  # Create distribution
   dist[, raw_prop := data.table::fcase(
-    age < 5, 0.002,      # Very few young children
-    age < 10, 0.005,     # Some children
-    age < 15, 0.008,     # Some older children
-    age < 18, 0.015,     # Teenagers
-    age < 20, 0.020,     # Young adults
-    age < 25, 0.025,     # 20-24
-    age < 30, 0.035,     # 25-29 peak
-    age < 35, 0.040,     # 30-34 peak
-    age < 40, 0.035,     # 35-39
-    age < 45, 0.025,     # 40-44
-    age < 50, 0.018,     # 45-49
-    age < 55, 0.012,     # 50-54
-    age < 60, 0.008,     # 55-59
-    age < 65, 0.005,     # 60-64
-    age < 70, 0.003,     # 65-69
-    age < 80, 0.001,     # 70-79
-    default = 0.0005     # 80+
+    age < 5,  age_dist$age_0_4,
+    age < 10, age_dist$age_5_9,
+    age < 15, age_dist$age_10_14,
+    age < 18, age_dist$age_15_17,
+    age < 20, age_dist$age_18_19,
+    age < 25, age_dist$age_20_24,
+    age < 30, age_dist$age_25_29,
+    age < 35, age_dist$age_30_34,
+    age < 40, age_dist$age_35_39,
+    age < 45, age_dist$age_40_44,
+    age < 50, age_dist$age_45_49,
+    age < 55, age_dist$age_50_54,
+    age < 60, age_dist$age_55_59,
+    age < 65, age_dist$age_60_64,
+    age < 70, age_dist$age_65_69,
+    age < 80, age_dist$age_70_79,
+    default = age_dist$age_80_plus
   )]
 
-  # Normalize to sum to 1
   dist[, raw_prop := raw_prop / sum(raw_prop)]
 
-  # Split by sex (approximately 57% male, 43% female per DHS)
-  male_share <- 0.57
-  female_share <- 0.43
-
+  female_share <- 1 - male_share
   male_dist <- data.table::copy(dist)
-  male_dist[, sex := "male"]
-  male_dist[, proportion := raw_prop * male_share]
-
+  male_dist[, `:=`(sex = "male", proportion = raw_prop * male_share)]
   female_dist <- data.table::copy(dist)
-  female_dist[, sex := "female"]
-  female_dist[, proportion := raw_prop * female_share]
+  female_dist[, `:=`(sex = "female", proportion = raw_prop * female_share)]
 
   result <- data.table::rbindlist(list(male_dist, female_dist))
   result[, raw_prop := NULL]
 
-  # Verify sums to 1
   total <- sum(result$proportion)
   if (abs(total - 1) > 0.001) {
     result[, proportion := proportion / total]
@@ -268,37 +546,65 @@ build_o_stock_from_flows <- function(o_flows,
     }
 
     # Distribute net flow by age-sex
-    flow_by_age_sex <- data.table::copy(age_sex_dist)
+    # age_sex_dist can be static (no year column) or year-varying (with year column)
+    if ("year" %in% names(age_sex_dist)) {
+      flow_by_age_sex <- age_sex_dist[year == yr, .(age, sex, proportion)]
+      if (nrow(flow_by_age_sex) == 0) {
+        # Year not found in year-varying distribution — use nearest available year
+        available_years <- sort(unique(age_sex_dist$year))
+        nearest_yr <- available_years[which.min(abs(available_years - yr))]
+        flow_by_age_sex <- age_sex_dist[year == nearest_yr, .(age, sex, proportion)]
+      }
+    } else {
+      flow_by_age_sex <- data.table::copy(age_sex_dist)
+    }
     flow_by_age_sex[, net_flow := yr_net * proportion]
 
     # Get mortality rates
-    if (!is.null(mortality) && yr %in% mortality$year) {
-      qx <- mortality[year == yr]
-    } else {
-      qx <- generate_simplified_mortality(yr)
+    if (is.null(mortality) || !yr %in% mortality$year) {
+      cli::cli_abort(c(
+        "Mortality data missing for year {yr} in O-population buildup",
+        "i" = "Ensure TR2025 qx files are present in data/raw/SSA_TR2025/"
+      ))
     }
+    qx <- mortality[year == yr]
 
     # Calculate new stock for each age-sex
     new_pop_list <- list()
+
+    max_age <- max(ages)
 
     for (s in c("male", "female")) {
       for (a in ages) {
         # Previous year's population at age a-1 (for aging)
         if (a == 0) {
           prev_pop <- 0  # O population at birth is 0
+        } else if (a == max_age) {
+          # Open-ended group (100+): survivors from age 99 aging in + survivors from 100+ staying
+          prev_pop_from_below <- current_stock[age == (a - 1) & sex == s, population]
+          prev_pop_staying <- current_stock[age == a & sex == s, population]
+          if (length(prev_pop_from_below) == 0) prev_pop_from_below <- 0
+          if (length(prev_pop_staying) == 0) prev_pop_staying <- 0
+          prev_pop <- prev_pop_from_below + prev_pop_staying
         } else {
           prev_pop <- current_stock[age == (a - 1) & sex == s, population]
-          if (length(prev_pop) == 0) prev_pop <- 0
+          if (length(prev_pop) == 0) {
+            cli::cli_abort("Missing O-stock at year {yr - 1}, age {a - 1}, sex {s}")
+          }
         }
 
         # Apply mortality to get survivors
         q <- qx[age == a & sex == s, qx]
-        if (length(q) == 0) q <- 0.01
+        if (length(q) == 0) {
+          cli::cli_abort("Missing qx at year {yr}, age {a}, sex {s}")
+        }
         survivors <- prev_pop * (1 - q)
 
         # Add net flow for this age-sex
         net_in <- flow_by_age_sex[age == a & sex == s, net_flow]
-        if (length(net_in) == 0) net_in <- 0
+        if (length(net_in) == 0) {
+          cli::cli_abort("Missing O-flow distribution at age {a}, sex {s}")
+        }
 
         # New stock = survivors + net inflow (floor at 0)
         new_pop <- max(0, survivors + net_in)
@@ -328,35 +634,71 @@ build_o_stock_from_flows <- function(o_flows,
 #' Gather Components for O Population Calculation
 #'
 #' @description
-#' Fetches all data needed for the O population calculation.
+#' Builds all component data needed for the O-population residual calculation
+#' from upstream target data. Uses the same LPR assumptions and distributions
+#' as the historical population module.
+#'
+#' @param years Integer vector of years
+#' @param ages Integer vector of ages
+#' @param cache_dir Character: cache directory
+#' @param config List: configuration
+#' @param lpr_assumptions data.table: V.A2 assumptions (year, total_lpr, total_emigration, etc.)
+#' @param immigration_dist Immigration age-sex distribution
+#' @param emigration_dist Emigration age-sex distribution
+#' @param births_by_sex data.table: births by sex from NCHS
 #'
 #' @keywords internal
-gather_o_components <- function(years, ages, cache_dir) {
+gather_o_components <- function(years, ages, cache_dir, config = NULL,
+                                 lpr_assumptions = NULL,
+                                 immigration_dist = NULL,
+                                 emigration_dist = NULL,
+                                 births_by_sex = NULL) {
   components <- list()
 
   # 1. Mortality data (qx)
   cli::cli_alert("  Loading mortality data...")
-  components$mortality <- load_mortality_for_o(years)
+  components$mortality <- load_mortality_for_o(years, config)
 
-  # 2. LPR Immigration
-  cli::cli_alert("  Loading LPR immigration data...")
-  components$lpr_immigration <- load_lpr_immigration_for_o(years, ages)
-
-  # 3. Legal emigration
-  cli::cli_alert("  Loading legal emigration data...")
-  components$emigration <- load_emigration_for_o(years, ages)
+  # 2-3. LPR Immigration and Emigration from upstream targets
+  cli::cli_alert("  Building LPR immigration/emigration from upstream data...")
+  if (!is.null(lpr_assumptions) && !is.null(immigration_dist) && !is.null(emigration_dist)) {
+    imm_emig <- build_historical_immigration_emigration(
+      lpr_assumptions = lpr_assumptions,
+      immigration_dist = immigration_dist,
+      emigration_dist = emigration_dist,
+      years = years
+    )
+    # Rename column for residual calculation compatibility
+    components$lpr_immigration <- imm_emig$immigration
+    data.table::setnames(components$lpr_immigration, "immigration", "immigration", skip_absent = TRUE)
+    components$emigration <- imm_emig$emigration
+    data.table::setnames(components$emigration, "emigration", "emigration", skip_absent = TRUE)
+  } else {
+    cli::cli_abort(c(
+      "lpr_assumptions, immigration_dist, and emigration_dist are required for residual method",
+      "i" = "Pass these from upstream targets (lpr_assumptions, lpr_distribution, emigration_distribution)"
+    ))
+  }
 
   # 4. Adjustments of Status (AOS)
-  cli::cli_alert("  Loading adjustments of status data...")
-  components$aos <- load_aos_for_o(years, ages)
+  cli::cli_alert("  Building AOS estimates from LPR data...")
+  if (is.null(config$historical_population$o_population$aos_ratio)) {
+    cli::cli_abort("Config missing {.field historical_population.o_population.aos_ratio}")
+  }
+  aos_ratio <- config$historical_population$o_population$aos_ratio
+  # AOS = aos_ratio * LPR immigration (by age/sex)
+  components$aos <- data.table::copy(components$lpr_immigration)
+  components$aos[, aos := immigration * aos_ratio]
+  components$aos[, immigration := NULL]
+  cli::cli_alert_info("  AOS ratio: {aos_ratio} applied to LPR immigration")
 
-  # 5. Births
+  # 5. Births from upstream NCHS data
   cli::cli_alert("  Loading births data...")
-  components$births <- load_births_for_o(years)
-
-  # 6. DHS unauthorized estimates
-  cli::cli_alert("  Loading DHS unauthorized estimates...")
-  components$dhs_unauthorized <- load_dhs_estimates_for_o(years)
+  if (!is.null(births_by_sex) && nrow(births_by_sex) > 0) {
+    components$births <- build_historical_births(births_by_sex, years)
+  } else {
+    cli::cli_abort("births_by_sex is required for residual method")
+  }
 
   cli::cli_alert_success("All O population component data gathered")
 
@@ -388,97 +730,24 @@ load_total_population <- function(start_year, end_year, cache_dir) {
 
 #' Load Mortality Data for O Calculation
 #'
-#' @keywords internal
-load_mortality_for_o <- function(years) {
-  # Try to load from mortality subprocess cache
-  qx_file <- here::here("data/cache/mortality/historical_qx.rds")
-
-  if (file.exists(qx_file)) {
-    return(readRDS(qx_file))
-  }
-
-  # Fallback: Load from TR2025 raw files
-  male_file <- here::here("data/raw/SSA_TR2025/qxprdM_Alt2_TR2025.csv")
-  female_file <- here::here("data/raw/SSA_TR2025/qxprdF_Alt2_TR2025.csv")
-
-  if (!file.exists(male_file) || !file.exists(female_file)) {
-    cli::cli_alert_warning("Mortality data not found, using simplified estimates")
-    return(generate_simplified_mortality(years))
-  }
-
-  male_qx <- data.table::fread(male_file)
-  female_qx <- data.table::fread(female_file)
-
-  # Reshape to long format
-  male_long <- data.table::melt(
-    male_qx,
-    id.vars = "Year",
-    variable.name = "age_col",
-    value.name = "qx"
-  )
-  male_long[, sex := "male"]
-  male_long[, age := as.integer(gsub("Age", "", age_col))]
-
-  female_long <- data.table::melt(
-    female_qx,
-    id.vars = "Year",
-    variable.name = "age_col",
-    value.name = "qx"
-  )
-  female_long[, sex := "female"]
-  female_long[, age := as.integer(gsub("Age", "", age_col))]
-
-  result <- data.table::rbindlist(list(male_long, female_long))[, .(
-    year = Year,
-    age = age,
-    sex = sex,
-    qx = qx
-  )]
-
-  result[year %in% years]
-}
-
-#' Generate Simplified Mortality Estimates
+#' @description
+#' Loads death probabilities (qx) for the O-population calculation.
+#' Uses the same config-driven approach as the historical population module:
+#' tries mortality subprocess cache first, then TR2025 DeathProbsE files.
+#'
+#' @param years Integer vector of years
+#' @param config List: configuration with mortality file paths
 #'
 #' @keywords internal
-generate_simplified_mortality <- function(years) {
-  # Generate basic mortality rates for fallback
-  ages <- 0:99
-
-  result_list <- list()
-  for (yr in years) {
-    for (s in c("male", "female")) {
-      # Base qx pattern
-      qx <- sapply(ages, function(a) {
-        if (a == 0) {
-          0.006  # Infant mortality
-        } else if (a < 5) {
-          0.0004
-        } else if (a < 20) {
-          0.0005 + 0.00005 * a
-        } else if (a < 60) {
-          0.001 + 0.0001 * (a - 20)
-        } else {
-          0.005 + 0.003 * (a - 60)
-        }
-      })
-
-      # Sex adjustment (males higher mortality)
-      if (s == "male") {
-        qx <- qx * 1.3
-      }
-
-      result_list[[length(result_list) + 1]] <- data.table::data.table(
-        year = yr,
-        age = ages,
-        sex = s,
-        qx = pmin(qx, 1.0)
-      )
-    }
-  }
-
-  data.table::rbindlist(result_list)
+load_mortality_for_o <- function(years, config = NULL) {
+  # Use the shared load_mortality_data function from historical_population.R
+  # which handles cache + config-driven TR file paths
+  load_mortality_data(config)
 }
+
+# generate_simplified_mortality() — REMOVED
+# Synthetic mortality rates were a silent fallback. Real qx data from TR2025
+# files or the mortality subprocess is now required.
 
 #' Load LPR Immigration for O Calculation
 #'
@@ -493,60 +762,29 @@ load_lpr_immigration_for_o <- function(years, ages) {
     return(lpr_data[year %in% years & age %in% ages])
   }
 
-  # Generate estimates based on TR2025 assumptions
-  cli::cli_alert_info("LPR cache not found, generating estimates")
-  generate_historical_lpr_estimates(years, ages)
+  cli::cli_abort(c(
+    "LPR immigration cache not found at {lpr_file}",
+    "i" = "Run LPR immigration subprocess first: targets::tar_make(names = matches('lpr_immigration'))"
+  ))
 }
 
-#' Generate Historical LPR Estimates
-#'
-#' @keywords internal
-generate_historical_lpr_estimates <- function(years, ages) {
-  # Historical LPR totals (approximate)
-  lpr_totals <- data.table::data.table(
-    year = c(1940, 1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020, 2022),
-    total = c(70000, 250000, 265000, 373000, 531000, 1536000, 850000, 1042000, 707000, 1000000)
-  )
-
-  # Interpolate for all years
-  all_years <- data.table::data.table(year = years)
-  lpr_interp <- merge(all_years, lpr_totals, by = "year", all.x = TRUE)
-
-  # Linear interpolation
-  lpr_interp[, total := approx(lpr_totals$year, lpr_totals$total, xout = year, rule = 2)$y]
-
-  # Age distribution (typical LPR pattern - working age concentration)
-  age_dist <- data.table::data.table(age = ages)
-  age_dist[, prop := {
-    p <- dnorm(age, mean = 32, sd = 15)
-    p[age < 5] <- p[age < 5] * 0.5  # Fewer very young
-    p[age > 70] <- p[age > 70] * 0.3  # Fewer elderly
-    p / sum(p)
-  }]
-
-  # Cross join and calculate
-  result <- data.table::CJ(year = years, age = ages, sex = c("male", "female"))
-  result <- merge(result, age_dist, by = "age")
-  result <- merge(result, lpr_interp[, .(year, total)], by = "year")
-
-  # Split by sex (approximately 50/50 with slight female majority)
-  result[sex == "male", immigration := total * prop * 0.48]
-  result[sex == "female", immigration := total * prop * 0.52]
-
-  result[, c("prop", "total") := NULL]
-  data.table::setorder(result, year, age, sex)
-
-  result
-}
+# generate_historical_lpr_estimates() — REMOVED
+# Synthetic LPR estimates were a silent fallback. Real LPR data from the
+# immigration subprocess is now required.
 
 #' Load Emigration for O Calculation
 #'
 #' @param years Integer vector: years to load
 #' @param ages Integer vector: ages to load
-#' @param emigration_ratio Numeric: ratio of emigration to LPR immigration (default: 0.25)
+#' @param config List: configuration with emigration_ratio
 #'
 #' @keywords internal
-load_emigration_for_o <- function(years, ages, emigration_ratio = 0.25) {
+load_emigration_for_o <- function(years, ages, config = NULL) {
+  # Read emigration ratio from config
+  if (is.null(config$historical_population$o_population$emigration_ratio)) {
+    cli::cli_abort("Config missing {.field historical_population.o_population.emigration_ratio}")
+  }
+  emigration_ratio <- config$historical_population$o_population$emigration_ratio
   # Try to load from emigration subprocess
   emig_file <- here::here("data/cache/emigration/legal_emigration.rds")
 
@@ -556,20 +794,16 @@ load_emigration_for_o <- function(years, ages, emigration_ratio = 0.25) {
     return(emig_data[year %in% years & age %in% ages])
   }
 
-  # Generate estimates using configured ratio (default 25% of LPR per TR methodology)
-  cli::cli_alert_info("Emigration cache not found, generating estimates ({emigration_ratio*100}% of LPR)")
-  lpr <- load_lpr_immigration_for_o(years, ages)
-  emig <- data.table::copy(lpr)
-  emig[, emigration := immigration * emigration_ratio]
-  emig[, immigration := NULL]
-
-  emig
+  cli::cli_abort(c(
+    "Emigration cache not found at {emig_file}",
+    "i" = "Run legal emigration subprocess first: targets::tar_make(names = matches('legal_emigration'))"
+  ))
 }
 
 #' Load AOS for O Calculation
 #'
 #' @keywords internal
-load_aos_for_o <- function(years, ages) {
+load_aos_for_o <- function(years, ages, config = NULL) {
   # Try to load from LPR immigration subprocess
   aos_file <- here::here("data/cache/immigration/aos.rds")
 
@@ -579,11 +813,15 @@ load_aos_for_o <- function(years, ages) {
     return(aos_data[year %in% years & age %in% ages])
   }
 
-  # Generate estimates (about 40% of LPR are AOS)
-  cli::cli_alert_info("AOS cache not found, generating estimates (~40% of LPR)")
+  # Generate estimates using AOS ratio from config
+  if (is.null(config$historical_population$o_population$aos_ratio)) {
+    cli::cli_abort("Config missing {.field historical_population.o_population.aos_ratio}")
+  }
+  aos_ratio <- config$historical_population$o_population$aos_ratio
+  cli::cli_alert_info("AOS cache not found, generating estimates (~{aos_ratio * 100}% of LPR)")
   lpr <- load_lpr_immigration_for_o(years, ages)
   aos <- data.table::copy(lpr)
-  aos[, aos := immigration * 0.40]
+  aos[, aos := immigration * aos_ratio]
   aos[, immigration := NULL]
 
   aos
@@ -600,24 +838,10 @@ load_births_for_o <- function(years) {
     return(readRDS(births_file))
   }
 
-  # Generate estimates based on historical birth rates
-  cli::cli_alert_info("Births cache not found, generating estimates")
-
-  # Historical US births (approximate)
-  births_totals <- data.table::data.table(
-    year = c(1940, 1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020, 2022),
-    total = c(2559000, 3632000, 4258000, 3731000, 3612000, 4158000, 4059000, 3999000, 3614000, 3662000)
-  )
-
-  all_years <- data.table::data.table(year = years)
-  births_interp <- merge(all_years, births_totals, by = "year", all.x = TRUE)
-  births_interp[, total := approx(births_totals$year, births_totals$total, xout = year, rule = 2)$y]
-
-  # Split by sex (105 males per 100 females at birth)
-  births_interp[, male := total * (105/205)]
-  births_interp[, female := total * (100/205)]
-
-  births_interp[, .(year, male, female)]
+  cli::cli_abort(c(
+    "Births cache not found at {births_file}",
+    "i" = "Run fertility subprocess first: targets::tar_make(names = matches('fertility'))"
+  ))
 }
 
 #' Load DHS Estimates for O Calculation
@@ -628,26 +852,22 @@ load_dhs_estimates_for_o <- function(years) {
   dhs_years <- years[years >= 1990 & years <= 2022]
 
   if (length(dhs_years) == 0) {
-    # Return fallback for pre-1990
-    return(data.table::data.table(
-      year = c(1990, 2000, 2005, 2007, 2010, 2015, 2020, 2022),
-      unauthorized_population = c(3500000, 8500000, 10500000, 12200000,
-                                   11400000, 10900000, 10500000, 11000000)
+    cli::cli_abort(c(
+      "No valid DHS years in requested range",
+      "i" = "DHS unauthorized estimates are available for 1990-2022",
+      "i" = "Requested years: {paste(range(years), collapse = '-')}"
     ))
   }
 
-  tryCatch({
-    fetch_dhs_unauthorized_estimates(years = dhs_years)
-  }, error = function(e) {
-    cli::cli_alert_warning("DHS estimates error: {conditionMessage(e)}")
-
-    # Fallback hardcoded estimates
-    data.table::data.table(
-      year = c(1990, 2000, 2005, 2007, 2010, 2015, 2020, 2022),
-      unauthorized_population = c(3500000, 8500000, 10500000, 12200000,
-                                   11400000, 10900000, 10500000, 11000000)
-    )
-  })
+  result <- fetch_dhs_unauthorized_estimates(years = dhs_years)
+  if (is.null(result) || nrow(result) == 0) {
+    cli::cli_abort(c(
+      "DHS unauthorized estimates unavailable",
+      "i" = "fetch_dhs_unauthorized_estimates() returned no data",
+      "i" = "Check DHS data file availability"
+    ))
+  }
+  result
 }
 
 # =============================================================================
@@ -657,9 +877,21 @@ load_dhs_estimates_for_o <- function(years) {
 #' Calculate Net Residuals (Other In - Other Out)
 #'
 #' @description
-#' For each year, backs out the net residual from the population accounting
-#' identity:
-#'   Residual = EndPop - BeginPop - Births + Deaths - LPR_Immigration + Emigration - AOS
+#' For each year, backs out the net residual from the cohort-based
+#' demographic accounting identity:
+#'
+#'   For age a > 0:
+#'     other_net(a,s,Y) = P(a,s,Y) - P(a-1,s,Y-1)*(1-qx(a,s,Y))
+#'                        - imm(a,s,Y) + emig(a,s,Y) - aos(a,s,Y)
+#'
+#'   For age 0:
+#'     other_net(0,s,Y) = P(0,s,Y) - births(s,Y)*(1-q0(s,Y)/2)
+#'                        - imm(0,s,Y) + emig(0,s,Y) - aos(0,s,Y)
+#'
+#' Per TR2025 Section 1.4.c: "an initial net residual estimate by single year
+#' of age and sex is backed out from estimates of beginning and end of year
+#' populations, births, deaths, LPR immigrants, adjustments of status, and
+#' legal emigrants."
 #'
 #' @param total_pop data.table: Total population by year, age, sex
 #' @param components list: All demographic components
@@ -673,13 +905,13 @@ calculate_other_residuals <- function(total_pop,
                                        components,
                                        years,
                                        ages) {
+  max_age <- max(ages)
   result_list <- list()
 
   for (yr in years[-1]) {  # Start from second year (need begin pop)
     prev_yr <- yr - 1
 
-    # Get beginning and end of year populations
-    # December 31 of year Y-1 = January 1 of year Y
+    # Get beginning (Dec 31 Y-1) and end (Dec 31 Y) populations
     begin_pop <- total_pop[year == prev_yr & age %in% ages]
     end_pop <- total_pop[year == yr & age %in% ages]
 
@@ -688,109 +920,107 @@ calculate_other_residuals <- function(total_pop,
       next
     }
 
-    # Calculate population change
-    pop_change <- merge(
-      begin_pop[, .(age, sex, begin_pop = population)],
-      end_pop[, .(age, sex, end_pop = population)],
-      by = c("age", "sex"),
-      all = TRUE
-    )
-    pop_change[is.na(begin_pop), begin_pop := 0]
-    pop_change[is.na(end_pop), end_pop := 0]
-
-    # Get births (age 0 only)
+    # Get births (1940+ from extended nchs_births_by_sex target)
+    # TR2025 Items 35/32: "births by month and sex of child, for years 1931-2023"
     births_data <- components$births
-    if (!is.null(births_data) && yr %in% births_data$year) {
-      births_male <- births_data[year == yr, male]
-      births_female <- births_data[year == yr, female]
-    } else {
-      births_male <- 1800000
-      births_female <- 1700000
+    if (is.null(births_data) || !yr %in% births_data$year) {
+      cli::cli_abort(c(
+        "Births data missing for year {yr} in residual calculation",
+        "i" = "nchs_births_by_sex target should cover 1940+ (pre-1968 from CDC NVSR, post-1968 from NBER)"
+      ))
+    }
+    births_male <- births_data[year == yr, male]
+    births_female <- births_data[year == yr, female]
+    if (length(births_male) == 0 || length(births_female) == 0) {
+      cli::cli_abort("Births data incomplete for year {yr}: male={length(births_male)}, female={length(births_female)}")
     }
 
     # Get mortality
     mortality <- components$mortality
-    if (!is.null(mortality) && yr %in% mortality$year) {
-      qx <- mortality[year == yr]
-    } else {
-      # Use simplified mortality
-      qx <- generate_simplified_mortality(yr)
+    if (is.null(mortality) || !yr %in% mortality$year) {
+      cli::cli_abort(c(
+        "Mortality data missing for year {yr} in residual calculation",
+        "i" = "Ensure TR2025 DeathProbsE files are configured in config"
+      ))
     }
+    qx_yr <- mortality[year == yr]
 
     # Get LPR immigration
     lpr <- components$lpr_immigration
-    if (!is.null(lpr) && yr %in% lpr$year) {
-      lpr_yr <- lpr[year == yr]
-    } else {
-      lpr_yr <- data.table::data.table(age = ages, sex = "male", immigration = 0)
-      lpr_yr <- data.table::rbindlist(list(
-        lpr_yr,
-        data.table::data.table(age = ages, sex = "female", immigration = 0)
-      ))
+    if (is.null(lpr) || !yr %in% lpr$year) {
+      cli::cli_abort("LPR immigration data missing for year {yr} in residual calculation")
     }
+    lpr_yr <- lpr[year == yr]
 
     # Get emigration
     emig <- components$emigration
-    if (!is.null(emig) && yr %in% emig$year) {
-      emig_yr <- emig[year == yr]
-    } else {
-      emig_yr <- data.table::data.table(age = ages, sex = "male", emigration = 0)
-      emig_yr <- data.table::rbindlist(list(
-        emig_yr,
-        data.table::data.table(age = ages, sex = "female", emigration = 0)
-      ))
+    if (is.null(emig) || !yr %in% emig$year) {
+      cli::cli_abort("Emigration data missing for year {yr} in residual calculation")
     }
+    emig_yr <- emig[year == yr]
 
     # Get AOS
     aos <- components$aos
-    if (!is.null(aos) && yr %in% aos$year) {
-      aos_yr <- aos[year == yr]
-    } else {
-      aos_yr <- data.table::data.table(age = ages, sex = "male", aos = 0)
-      aos_yr <- data.table::rbindlist(list(
-        aos_yr,
-        data.table::data.table(age = ages, sex = "female", aos = 0)
-      ))
+    if (is.null(aos) || !yr %in% aos$year) {
+      cli::cli_abort("AOS data missing for year {yr} in residual calculation")
+    }
+    aos_yr <- aos[year == yr]
+
+    # Compute residual for each age-sex cell using cohort accounting
+    yr_residuals <- list()
+
+    for (s in c("male", "female")) {
+      for (a in ages) {
+        end_p <- end_pop[age == a & sex == s, population]
+        if (length(end_p) == 0) end_p <- 0
+
+        # Expected population from cohort aging
+        if (a == 0) {
+          # Age 0: expected = births surviving infant mortality
+          birth_count <- if (s == "male") births_male else births_female
+          q0 <- qx_yr[age == 0 & sex == s, qx]
+          if (length(q0) == 0) q0 <- 0
+          expected <- birth_count * (1 - q0 / 2)
+        } else if (a == max_age) {
+          # Open-ended group: survivors from age max_age-1 + survivors from max_age
+          prev_below <- begin_pop[age == (a - 1) & sex == s, population]
+          prev_stay <- begin_pop[age == a & sex == s, population]
+          if (length(prev_below) == 0) prev_below <- 0
+          if (length(prev_stay) == 0) prev_stay <- 0
+          q_below <- qx_yr[age == (a - 1) & sex == s, qx]
+          q_stay <- qx_yr[age == a & sex == s, qx]
+          if (length(q_below) == 0) q_below <- 0
+          if (length(q_stay) == 0) q_stay <- 0
+          expected <- prev_below * (1 - q_below) + prev_stay * (1 - q_stay)
+        } else {
+          # Standard: survivors from age a-1 last year
+          prev_a <- begin_pop[age == (a - 1) & sex == s, population]
+          if (length(prev_a) == 0) prev_a <- 0
+          q <- qx_yr[age == a & sex == s, qx]
+          if (length(q) == 0) q <- 0
+          expected <- prev_a * (1 - q)
+        }
+
+        # Add net LPR migration and AOS
+        imm_val <- lpr_yr[age == a & sex == s, immigration]
+        if (length(imm_val) == 0) imm_val <- 0
+        emig_val <- emig_yr[age == a & sex == s, emigration]
+        if (length(emig_val) == 0) emig_val <- 0
+        aos_val <- aos_yr[age == a & sex == s, aos]
+        if (length(aos_val) == 0) aos_val <- 0
+
+        expected <- expected + imm_val - emig_val + aos_val
+
+        # Residual = actual - expected = net other immigration
+        residual <- end_p - expected
+
+        yr_residuals[[length(yr_residuals) + 1L]] <- data.table::data.table(
+          year = as.integer(yr), age = a, sex = s, residual = residual
+        )
+      }
     }
 
-    # Calculate expected deaths
-    # Deaths = begin_pop * qx (approximately)
-    pop_qx <- merge(
-      begin_pop[, .(age, sex, begin_pop = population)],
-      qx[, .(age, sex, qx)],
-      by = c("age", "sex"),
-      all.x = TRUE
-    )
-    pop_qx[is.na(qx), qx := 0.01]
-    pop_qx[, deaths := begin_pop * qx]
-
-    # Merge all components
-    calc <- merge(pop_change, pop_qx[, .(age, sex, deaths)], by = c("age", "sex"), all.x = TRUE)
-    calc[is.na(deaths), deaths := 0]
-
-    calc <- merge(calc, lpr_yr[, .(age, sex, immigration)], by = c("age", "sex"), all.x = TRUE)
-    calc[is.na(immigration), immigration := 0]
-
-    calc <- merge(calc, emig_yr[, .(age, sex, emigration)], by = c("age", "sex"), all.x = TRUE)
-    calc[is.na(emigration), emigration := 0]
-
-    calc <- merge(calc, aos_yr[, .(age, sex, aos)], by = c("age", "sex"), all.x = TRUE)
-    calc[is.na(aos), aos := 0]
-
-    # Add births at age 0
-    calc[age == 0 & sex == "male", births := births_male]
-    calc[age == 0 & sex == "female", births := births_female]
-    calc[is.na(births), births := 0]
-
-    # Calculate residual
-    # Residual = EndPop - (BeginPop - Deaths + Births + Immigration - Emigration + AOS)
-    # = EndPop - Expected
-    # Where other in - other out = Residual
-    calc[, expected := begin_pop - deaths + births + immigration - emigration + aos]
-    calc[, residual := end_pop - expected]
-
-    calc[, year := yr]
-    result_list[[as.character(yr)]] <- calc[, .(year, age, sex, residual)]
+    result_list[[as.character(yr)]] <- data.table::rbindlist(yr_residuals)
   }
 
   data.table::rbindlist(result_list)
@@ -799,36 +1029,107 @@ calculate_other_residuals <- function(total_pop,
 #' Modify Residuals for Reasonableness
 #'
 #' @description
-#' Applies constraints to ensure residuals are reasonable:
-#' - Smooth outliers
-#' - Ensure non-negative stocks possible
+#' Per TR2025 Section 1.4.c (Eq 1.4.3): "These residuals are then modified to
+#' ensure reasonableness." For each (age, sex) time series:
+#' 1. Apply rolling median smoothing to remove year-to-year noise
+#' 2. Floor at zero — net O immigration should be non-negative (temporary and
+#'    unlawful immigrants are net inflows to the Social Security area)
 #'
-#' @param residuals data.table with raw residuals
+#' Parameters are read from config: `historical_population.o_population.residual_smoothing`
+#'
+#' @param residuals data.table with columns: year, age, sex, residual
+#' @param config List: configuration from tr2025.yaml
 #'
 #' @return data.table with modified residuals
 #'
 #' @keywords internal
-modify_residuals_for_reasonableness <- function(residuals) {
+modify_residuals_for_reasonableness <- function(residuals, config = NULL) {
   result <- data.table::copy(residuals)
 
-  # Cap extreme values at +/- 3 standard deviations
-  for (s in c("male", "female")) {
-    sex_data <- result[sex == s]
-    mean_res <- mean(sex_data$residual, na.rm = TRUE)
-    sd_res <- sd(sex_data$residual, na.rm = TRUE)
-
-    lower <- mean_res - 3 * sd_res
-    upper <- mean_res + 3 * sd_res
-
-    result[sex == s & residual < lower, residual := lower]
-    result[sex == s & residual > upper, residual := upper]
+  # Read smoothing parameters from config
+  smooth_cfg <- config$historical_population$o_population$residual_smoothing
+  if (is.null(smooth_cfg)) {
+    cli::cli_abort("Config missing {.field historical_population.o_population.residual_smoothing}")
   }
 
-  # Log modification summary
-  original_sum <- sum(residuals$residual, na.rm = TRUE)
-  modified_sum <- sum(result$residual, na.rm = TRUE)
-  cli::cli_alert_info("Residual modification: {format(round(original_sum), big.mark=',')} -> {format(round(modified_sum), big.mark=',')}")
+  window <- smooth_cfg$rolling_median_window
+  if (is.null(window)) {
+    cli::cli_abort("Config missing {.field residual_smoothing.rolling_median_window}")
+  }
+  if (window %% 2 == 0) {
+    cli::cli_abort("rolling_median_window must be odd, got {window}")
+  }
 
+  original_sum <- sum(result$residual, na.rm = TRUE)
+
+  # Step 1: For each (age, sex) pair, smooth the time series across years
+  # using rolling median to remove year-to-year noise while preserving trends
+  data.table::setorder(result, sex, age, year)
+
+  result[, residual := {
+    if (.N >= window) {
+      stats::runmed(residual, k = window, endrule = "median")
+    } else {
+      rep(stats::median(residual, na.rm = TRUE), .N)
+    }
+  }, by = .(age, sex)]
+
+  smoothed_sum <- sum(result$residual, na.rm = TRUE)
+
+  # Step 2: Floor residuals at 0 — net O immigration should be non-negative.
+  # Negative residuals indicate ages where actual population is less than
+  # what the accounting identity predicts. These ages don't contribute to
+  # O-immigration inflows and should not reduce the distribution.
+  # The stock builder uses V.A2 o_net for annual LEVELS; these residuals
+  # are only used to derive age-sex PROPORTIONS.
+  # TR2025 Section 1.4.c: "modified so that the time series for each year
+  # of age and sex has an appropriate level, and does not change sign."
+  n_neg <- sum(result$residual < 0)
+  result[residual < 0, residual := 0]
+
+  floored_sum <- sum(result$residual, na.rm = TRUE)
+  cli::cli_alert_info("Residual modification: original={format(round(original_sum), big.mark=',')} -> smoothed={format(round(smoothed_sum), big.mark=',')} -> floored={format(round(floored_sum), big.mark=',')}")
+  cli::cli_alert_info("Floored {format(n_neg, big.mark=',')} negative residuals to 0")
+
+  data.table::setorder(result, year, sex, age)
+  result
+}
+
+#' Extract Per-Year Age-Sex Proportions from Modified Residuals
+#'
+#' @description
+#' Converts modified residuals (floored at 0) into per-year age-sex proportions.
+#' For years where all residuals are 0 (e.g., pre-1980 when O-immigration was
+#' minimal), falls back to the static DHS-based distribution.
+#'
+#' @param modified_residuals data.table with columns: year, age, sex, residual
+#' @param fallback_dist data.table with columns: age, sex, proportion (static distribution)
+#'
+#' @return data.table with columns: year, age, sex, proportion, source
+#'
+#' @keywords internal
+extract_residual_proportions <- function(modified_residuals, fallback_dist) {
+  result_list <- list()
+
+  for (yr in sort(unique(modified_residuals$year))) {
+    yr_data <- modified_residuals[year == yr]
+    total_residual <- sum(yr_data$residual, na.rm = TRUE)
+
+    if (total_residual > 0) {
+      # Derive proportions from positive residuals
+      yr_props <- yr_data[, .(year = yr, age, sex, proportion = residual / total_residual,
+                               source = "residual")]
+    } else {
+      # All residuals are 0 for this year — use static distribution
+      yr_props <- data.table::copy(fallback_dist)
+      yr_props[, `:=`(year = yr, source = "fallback")]
+    }
+
+    result_list[[length(result_list) + 1L]] <- yr_props
+  }
+
+  result <- data.table::rbindlist(result_list, use.names = TRUE, fill = TRUE)
+  data.table::setorder(result, year, sex, age)
   result
 }
 
@@ -882,16 +1183,18 @@ build_temp_unlawful_stock <- function(residuals,
     prev_yr <- yr - 1
 
     # Get mortality rates
-    if (!is.null(mortality) && yr %in% mortality$year) {
-      qx <- mortality[year == yr]
-    } else {
-      qx <- generate_simplified_mortality(yr)
+    if (is.null(mortality) || !yr %in% mortality$year) {
+      cli::cli_abort(c(
+        "Mortality data missing for year {yr} in O-stock buildup",
+        "i" = "Ensure TR2025 qx files are present in data/raw/SSA_TR2025/"
+      ))
     }
+    qx <- mortality[year == yr]
 
     # Get residuals for this year
     yr_residuals <- residuals[year == yr]
     if (nrow(yr_residuals) == 0) {
-      # No residuals, just apply mortality and aging
+      cli::cli_alert_warning("No residuals for year {yr}, using zero residuals")
       yr_residuals <- data.table::data.table(
         age = rep(ages, 2),
         sex = c(rep("male", length(ages)), rep("female", length(ages))),
@@ -905,25 +1208,39 @@ build_temp_unlawful_stock <- function(residuals,
     # 3. Add net residual (inflows - outflows)
 
     new_pop_list <- list()
+    max_age <- max(ages)
 
     for (s in c("male", "female")) {
       for (a in ages) {
         # Previous year's population at age a-1 (or 0 for age 0)
         if (a == 0) {
           prev_pop <- 0  # O population at birth is 0 (births are US citizens)
+        } else if (a == max_age) {
+          # Open-ended group (100+): survivors from age 99 aging in + survivors from 100+ staying
+          prev_pop_from_below <- current_stock[age == (a - 1) & sex == s, population]
+          prev_pop_staying <- current_stock[age == a & sex == s, population]
+          if (length(prev_pop_from_below) == 0) prev_pop_from_below <- 0
+          if (length(prev_pop_staying) == 0) prev_pop_staying <- 0
+          prev_pop <- prev_pop_from_below + prev_pop_staying
         } else {
           prev_pop <- current_stock[age == (a - 1) & sex == s, population]
-          if (length(prev_pop) == 0) prev_pop <- 0
+          if (length(prev_pop) == 0) {
+            cli::cli_abort("Missing O-stock at year {yr - 1}, age {a - 1}, sex {s}")
+          }
         }
 
         # Apply mortality to get survivors
         q <- qx[age == a & sex == s, qx]
-        if (length(q) == 0) q <- 0.01
+        if (length(q) == 0) {
+          cli::cli_abort("Missing qx at year {yr}, age {a}, sex {s}")
+        }
         survivors <- prev_pop * (1 - q)
 
         # Add net residual for this age-sex
         net_inflow <- yr_residuals[age == a & sex == s, residual]
-        if (length(net_inflow) == 0) net_inflow <- 0
+        if (length(net_inflow) == 0) {
+          cli::cli_abort("Missing residual at year {yr}, age {a}, sex {s}")
+        }
 
         # New stock = survivors + net inflow (but floor at 0)
         new_pop <- max(0, survivors + net_inflow)

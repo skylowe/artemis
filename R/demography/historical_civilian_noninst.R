@@ -12,12 +12,16 @@
 #' - CivNonInst totals: ACS PUMS (2010-2023) via `fetch_acs_pums_civilian_noninst()`
 #' - Marital proportions: ACS PUMS (2006-2023) via `fetch_acs_pums_civilian_noninst_marital()`
 #'
-#' **Marital Status Categories (differs from Eq 1.4.2):**
+#' **Marital Status Categories (intentionally differs from Eq 1.4.2):**
 #' - married_spouse_present: Currently married with spouse in household
 #' - separated: Currently married but separated from spouse (split from "married")
 #' - widowed: Widowed from a previous marriage
 #' - divorced: Divorced from a previous marriage
 #' - single: Never been married
+#'
+#' Eq 1.4.2 aggregates separated into divorced; Eq 1.4.4 keeps separated
+#' distinct because ACS PUMS provides married_spouse_present vs separated
+#' detail needed for CNI household composition calculations.
 #'
 #' **Same-Sex Marriage (2013+):**
 #' - 2.5% of male population assumed gay
@@ -64,7 +68,8 @@ NULL
 #' @export
 calculate_historical_civilian_noninst <- function(start_year = 2010,
                                                    end_year = 2022,
-                                                   ages = 0:99,
+                                                   ages = 0:100,
+                                                   config = NULL,
                                                    include_orientation = TRUE,
                                                    use_cache = TRUE,
                                                    cache_dir = here::here("data/cache")) {
@@ -84,9 +89,12 @@ calculate_historical_civilian_noninst <- function(start_year = 2010,
     return(readRDS(cache_file))
   }
 
-  # Define years (excluding 2020 if in range)
+  # Define years (excluding ACS-unavailable years from config)
   years <- start_year:end_year
-  years <- years[years != 2020]  # ACS not available for 2020
+  acs_excluded <- config$historical_population$acs_excluded_years
+  if (!is.null(acs_excluded)) {
+    years <- years[!years %in% acs_excluded]
+  }
   cli::cli_alert_info("Processing {length(years)} years: {min(years)}-{max(years)}")
 
   # Step 1: Load civilian noninst totals by age/sex
@@ -106,13 +114,14 @@ calculate_historical_civilian_noninst <- function(start_year = 2010,
 
   # Step 4: Balance married populations
   cli::cli_h2("Step 4: Balancing Married Populations")
-  result <- balance_c_married_populations(result)
+  result <- balance_c_married_populations(result, config)
 
-  # Step 5: Add same-sex marriage orientation (2013+)
+  # Step 5: Add same-sex marriage orientation
+  ss_start <- config$projected_population$population_status$same_sex_start_year
   if (include_orientation) {
-    cli::cli_h2("Step 5: Adding Same-Sex Marriage Orientation (2013+)")
-    result <- add_c_orientation(result)
-    cli::cli_alert_info("Added orientation for {sum(result$year >= 2013)} year-rows")
+    cli::cli_h2("Step 5: Adding Same-Sex Marriage Orientation ({ss_start}+)")
+    result <- add_c_orientation(result, config)
+    cli::cli_alert_info("Added orientation for {sum(result$year >= ss_start)} year-rows")
   } else {
     result[, orientation := "heterosexual"]
   }
@@ -471,10 +480,19 @@ get_c_population_summary <- function(c_pop) {
 #' - Other marital statuses adjusted proportionally to maintain totals
 #'
 #' @keywords internal
-balance_c_married_populations <- function(c_pop) {
+balance_c_married_populations <- function(c_pop, config = NULL) {
   result <- data.table::copy(c_pop)
 
+  # Read same-sex start year from config for consistency with historical_marital_status.R
+  if (is.null(config$projected_population$population_status$same_sex_start_year)) {
+    cli::cli_abort("Config missing {.field projected_population.population_status.same_sex_start_year}")
+  }
+  ss_start_year <- config$projected_population$population_status$same_sex_start_year
+
   for (yr in unique(result$year)) {
+    # Post-same-sex era: skip balancing (married M != F due to same-sex marriages)
+    if (yr >= ss_start_year) next
+
     # Get married populations for this year
     married_statuses <- c("married_spouse_present", "married")
 
@@ -539,18 +557,28 @@ balance_c_married_populations <- function(c_pop) {
 #' - Heterosexual males/females married to opposite sex
 #'
 #' @keywords internal
-add_c_orientation <- function(c_pop) {
-  # Gay/lesbian proportions per TR2025
-  gay_pct <- 0.025      # 2.5% of males
-  lesbian_pct <- 0.045  # 4.5% of females
+add_c_orientation <- function(c_pop, config = NULL) {
+  # Gay/lesbian proportions from config (per TR2025)
+  ss_cfg <- config$projected_population$population_status
+  if (is.null(ss_cfg)) {
+    cli::cli_abort("Config missing {.field projected_population.population_status}")
+  }
+  required_ss_fields <- c("gay_percent", "lesbian_percent", "same_sex_start_year")
+  missing <- setdiff(required_ss_fields, names(ss_cfg))
+  if (length(missing) > 0) {
+    cli::cli_abort("Config missing population_status fields: {.field {missing}}")
+  }
+  gay_pct <- ss_cfg$gay_percent
+  lesbian_pct <- ss_cfg$lesbian_percent
+  ss_start_year <- ss_cfg$same_sex_start_year
 
   result_list <- list()
 
   for (yr in unique(c_pop$year)) {
     yr_data <- c_pop[year == yr]
 
-    if (yr < 2013) {
-      # Pre-2013: all heterosexual
+    if (yr < ss_start_year) {
+      # Pre-same-sex-marriage: all heterosexual
       yr_data[, orientation := "heterosexual"]
       result_list[[as.character(yr)]] <- yr_data
     } else {
@@ -612,7 +640,7 @@ add_c_orientation <- function(c_pop) {
   data.table::setorder(result, year, age, sex, marital_status, orientation)
 
   # Summary
-  post_2013 <- result[year >= 2013]
+  post_2013 <- result[year >= ss_start_year]
   if (nrow(post_2013) > 0) {
     lgbt_total <- post_2013[orientation %in% c("gay", "lesbian"), sum(population)]
     total <- post_2013[, sum(population)]

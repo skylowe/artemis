@@ -205,17 +205,18 @@ fetch_resident_usaf_population <- function(years, ages, reference_date, cache_di
   # Military ages typically 17-65, but we filter to requested ages
   mil_ages <- intersect(ages, 17:65)
 
-  usaf_data <- tryCatch({
-    fetch_armed_forces_overseas(
-      years = years,
-      ages = mil_ages,
-      cache_dir = file.path(cache_dir, "..", "dmdc")
-    )
-  }, error = function(e) {
-    cli::cli_alert_warning("Could not fetch armed forces overseas: {conditionMessage(e)}")
-    cli::cli_alert_info("Using resident only (armed forces overseas ~0.1% of population)")
-    NULL
-  })
+  usaf_data <- fetch_armed_forces_overseas(
+    years = years,
+    ages = mil_ages,
+    cache_dir = file.path(cache_dir, "..", "dmdc")
+  )
+  if (is.null(usaf_data) || nrow(usaf_data) == 0) {
+    cli::cli_abort(c(
+      "Failed to fetch armed forces overseas data",
+      "i" = "Armed forces data is required for resident+USAF population concept",
+      "i" = "Check troopdata package and DMDC data availability"
+    ))
+  }
 
   # Step 3: Combine resident + armed forces overseas
   if (!is.null(usaf_data) && nrow(usaf_data) > 0) {
@@ -393,16 +394,18 @@ fetch_civilian_population <- function(years, ages, reference_date, cache_dir) {
       acs_years_needed <- years_acs
     }
 
-    acs_data <- tryCatch({
-      fetch_acs_pums_civilian(
-        years = acs_years_needed,
-        ages = ages,
-        cache_dir = here::here("data/cache/acs_pums")
-      )
-    }, error = function(e) {
-      cli::cli_alert_warning("ACS PUMS civilian fetch failed: {conditionMessage(e)}")
-      NULL
-    })
+    acs_data <- fetch_acs_pums_civilian(
+      years = acs_years_needed,
+      ages = ages,
+      cache_dir = here::here("data/cache/acs_pums")
+    )
+    if (is.null(acs_data) || nrow(acs_data) == 0) {
+      cli::cli_abort(c(
+        "Failed to fetch ACS civilian population for years {paste(range(acs_years_needed), collapse = '-')}",
+        "i" = "ACS PUMS data is required for civilian population concept",
+        "i" = "Check Census API key and ACS PUMS data availability"
+      ))
+    }
 
     if (!is.null(acs_data) && nrow(acs_data) > 0) {
       # ACS is annual; treat as mid-year (July 1) for interpolation purposes
@@ -493,16 +496,18 @@ fetch_civilian_noninst_population <- function(years, ages, reference_date, cache
       acs_years_needed <- years_acs
     }
 
-    acs_data <- tryCatch({
-      fetch_acs_pums_civilian_noninst(
-        years = acs_years_needed,
-        ages = ages,
-        cache_dir = here::here("data/cache/acs_pums")
-      )
-    }, error = function(e) {
-      cli::cli_alert_warning("ACS PUMS civilian noninst fetch failed: {conditionMessage(e)}")
-      NULL
-    })
+    acs_data <- fetch_acs_pums_civilian_noninst(
+      years = acs_years_needed,
+      ages = ages,
+      cache_dir = here::here("data/cache/acs_pums")
+    )
+    if (is.null(acs_data) || nrow(acs_data) == 0) {
+      cli::cli_abort(c(
+        "Failed to fetch ACS CNI population for years {paste(range(acs_years_needed), collapse = '-')}",
+        "i" = "ACS PUMS data is required for civilian noninstitutionalized population concept",
+        "i" = "Check Census API key and ACS PUMS data availability"
+      ))
+    }
 
     if (!is.null(acs_data) && nrow(acs_data) > 0) {
       # ACS is annual; treat as mid-year (July 1) for interpolation purposes
@@ -1228,7 +1233,10 @@ fetch_decennial_census_api <- function(census_year, ages, concept, cache_dir) {
     return(fetch_decennial_census_vintage(2020, ages, concept, cache_dir))
   }
 
-  NULL
+  cli::cli_abort(c(
+    "No Census API strategy for decennial year {census_year}",
+    "i" = "Supported years: 2010, 2020"
+  ))
 }
 
 #' Fetch decennial census from vintage files (1970-2020)
@@ -1257,7 +1265,10 @@ fetch_decennial_census_vintage <- function(census_year, ages, concept, cache_dir
     return(fetch_decennial_census_historical(census_year, ages, concept))
   }
 
-  NULL
+  cli::cli_abort(c(
+    "No vintage data strategy for decennial year {census_year}",
+    "i" = "Supported years: 1970, 1980, 1990, 2000, 2010, 2020"
+  ))
 }
 
 #' Fetch 2020 Census April 1 population
@@ -1348,9 +1359,11 @@ fetch_2020_census_april1 <- function(ages, concept, cache_dir) {
     result[age %in% target_ages]
 
   }, error = function(e) {
-    cli::cli_alert_warning("DHC fetch failed: {conditionMessage(e)}")
-    cli::cli_alert_info("Falling back to historical data generator")
-    fetch_decennial_census_historical(2020, ages, concept)
+    cli::cli_abort(c(
+      "2020 Census DHC fetch failed: {conditionMessage(e)}",
+      "i" = "Census 2020 DHC API must be accessible for April 1, 2020 population",
+      "i" = "Check Census API key and network connectivity"
+    ))
   })
 }
 
@@ -1426,83 +1439,11 @@ fetch_2010_census_april1 <- function(ages, concept, cache_dir) {
 #'
 #' @keywords internal
 fetch_decennial_census_historical <- function(census_year, ages, concept) {
-  cli::cli_alert("Using historical static data for {census_year} Census...")
-
-  # Get official census totals from historical_static
-  benchmarks <- get_population_benchmarks()
-  target_year <- census_year
-  benchmark <- benchmarks[census_year == target_year]
-
-  # Official April 1 census totals (resident population)
-  # Source: Census Bureau Decennial Census counts
-  census_totals <- c(
-    `1940` = 132164569,
-    `1950` = 151325798,
-    `1960` = 179323175,
-    `1970` = 203211926,
-    `1980` = 226545805,
-    `1990` = 248709873,
-    `2000` = 281421906,
-    `2010` = 308745538,
-    `2020` = 331449281
-  )
-
-  total_pop <- census_totals[as.character(census_year)]
-
-  if (is.na(total_pop)) {
-    cli::cli_alert_warning("No benchmark available for {census_year}")
-    return(NULL)
-  }
-
-  # Generate standard US age-sex distribution using demographic model
-  # This is used as a proxy when we can't get direct age-sex detail from API
-  # Distribution is based on typical US patterns for the given era
-  generate_age_sex_distribution <- function(census_year, ages, total) {
-    # Create age distribution using approximate US pattern
-    # Working-age bulge (baby boom effect varies by year)
-    peak_age <- if (census_year <= 1960) 35 else if (census_year <= 1990) 30 else 40
-    sd_age <- if (census_year <= 1960) 20 else 22
-
-    age_weights <- dnorm(ages, mean = peak_age, sd = sd_age)
-    # Add elderly tail
-    age_weights <- age_weights + 0.2 * dnorm(ages, mean = 70, sd = 15)
-    # Add children
-    age_weights <- age_weights + 0.3 * dnorm(ages, mean = 10, sd = 8)
-    age_weights <- age_weights / sum(age_weights)
-
-    # Sex ratio: slightly more females overall (sex_ratio ~0.97 male per female)
-    # But more males at young ages, more females at old ages
-    sex_ratio_by_age <- 1.05 - (ages / 200)  # ~1.05 at age 0, ~0.55 at age 100
-    sex_ratio_by_age <- pmax(0.4, pmin(1.1, sex_ratio_by_age))
-
-    male_frac <- sex_ratio_by_age / (1 + sex_ratio_by_age)
-
-    male_pop <- round(total * age_weights * male_frac)
-    female_pop <- round(total * age_weights * (1 - male_frac))
-
-    # Adjust to match total exactly
-    diff <- total - sum(male_pop) - sum(female_pop)
-    if (diff != 0) {
-      # Distribute adjustment across peak ages
-      adj_ages <- which(ages >= 25 & ages <= 50)
-      male_pop[adj_ages[1]] <- male_pop[adj_ages[1]] + round(diff / 2)
-      female_pop[adj_ages[1]] <- female_pop[adj_ages[1]] + diff - round(diff / 2)
-    }
-
-    data.table::data.table(
-      census_year = census_year,
-      reference_date = "apr1",
-      age = rep(ages, 2),
-      sex = c(rep("male", length(ages)), rep("female", length(ages))),
-      population = c(male_pop, female_pop),
-      source = "Census Bureau Decennial Census (age distribution estimated)"
-    )
-  }
-
-  result <- generate_age_sex_distribution(census_year, ages, total_pop)
-  cli::cli_alert_success("Generated {census_year} Census with total {format(sum(result$population), big.mark=',')}")
-
-  result
+  cli::cli_abort(c(
+    "Cannot generate synthetic age distributions for decennial census year {census_year}",
+    "i" = "Use SSPopDec file via load_tr_population_by_year() instead",
+    "i" = "Place SSPopDec file in the appropriate data/raw/SSA_TR*/ directory"
+  ))
 }
 
 #' Get January decennial populations (Input #9)
@@ -1522,35 +1463,41 @@ fetch_decennial_census_historical <- function(census_year, ages, concept) {
 #'
 #' @export
 get_january_decennial_totals <- function(census_years = c(1990, 2000, 2010, 2020)) {
-  # ============================================================================
-  # JANUARY DECENNIAL YEAR TOTALS
-  # ============================================================================
-  # Source: Census Bureau Population Estimates Program
-  # These are used to adjust April 1 census counts to January 1 reference date
-  # ============================================================================
+  # Read from structured data file instead of hardcoding
+  filepath <- file.path("data", "processed", "census_jan1_decennial.csv")
 
-  data.table::data.table(
-    census_year = rep(c(1990, 2000, 2010, 2020), each = 2),
-    concept = rep(c("resident", "resident_usaf"), 4),
-    january_total = c(
-      # January 1990 (Source: Census PE estimates)
-      246819230,  # resident
-      247342000,  # resident + USAF (estimated ~520K overseas)
+  if (!file.exists(filepath)) {
+    cli::cli_abort(c(
+      "January decennial totals file not found",
+      "x" = "Expected: {filepath}",
+      "i" = "File should contain census_year, concept, january_total, source columns"
+    ))
+  }
 
-      # January 2000 (Source: Census PE estimates)
-      280849847,  # resident
-      281081000,  # resident + USAF (estimated ~230K overseas)
+  jan_data <- data.table::fread(filepath)
 
-      # January 2010 (Source: Census Vintage 2010 estimates)
-      308401808,  # resident
-      308615000,  # resident + USAF (estimated ~210K overseas)
+  required_cols <- c("census_year", "concept", "january_total", "source")
+  missing_cols <- setdiff(required_cols, names(jan_data))
+  if (length(missing_cols) > 0) {
+    cli::cli_abort(c(
+      "January decennial totals file missing required columns",
+      "x" = "Missing: {paste(missing_cols, collapse = ', ')}",
+      "i" = "File: {filepath}"
+    ))
+  }
 
-      # January 2020 (Source: Census Vintage 2020 estimates)
-      329484123,  # resident
-      329690000   # resident + USAF (estimated ~210K overseas)
-    ),
-    source = "Census Bureau Population Estimates Program"
-  )
+  result <- jan_data[census_year %in% census_years]
+
+  missing_years <- setdiff(census_years, result$census_year)
+  if (length(missing_years) > 0) {
+    cli::cli_abort(c(
+      "January decennial totals missing for requested years",
+      "x" = "Missing years: {paste(missing_years, collapse = ', ')}",
+      "i" = "File: {filepath}"
+    ))
+  }
+
+  result
 }
 
 # =============================================================================

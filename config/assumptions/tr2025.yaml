@@ -552,7 +552,7 @@ data_sources:
   #
   # TR2025 appears to use factors closer to PES methodology, resulting in
   # higher population for ages 18-24 than Census DA would suggest.
-  census_undercount_method: "none"
+  census_undercount_method: "DA"
 
   # PES-based undercount factors by age group (used when census_undercount_method = "PES")
   # Source: Census Bureau Post-Enumeration Survey, 2020 Census
@@ -571,3 +571,237 @@ data_sources:
     age_30_49_male: 0.01   # 1.5% undercount (estimated)
     age_30_49_female: 0.005  # 0.5% undercount (estimated)
     age_50_plus: -0.005  # 0.5% overcount (slight overcount for older ages)
+
+# =========================================================================
+# Historical Population Configuration (TR2025 Section 1.4)
+# =========================================================================
+# Source: SSA 2025 Long-Range Model Documentation, Section 1.4
+# All constants previously hardcoded in historical population R files.
+
+historical_population:
+  # Historical period boundaries
+  # start_year: First year of historical population estimates
+  # end_year: Last year before projection starts (= last year with Census/ACS data)
+  # These change with each Trustees Report year
+  start_year: 1940
+  end_year: 2022
+
+  # Data source for historical population estimation
+  # "census": Census PEP + Eq 1.4.1 adjustments for all ages 0-100
+  # "hybrid": Census PEP for ages 0-84, SSPopDec for ages 85+ (TR2025 default)
+  # "ssa": SSPopDec for all ages 0-100 (uses SSA's published population directly)
+  population_source: "hybrid"
+
+  # Civilian noninstitutionalized population start year
+  # ACS PUMS data is available from 2005+, but TR2025 uses 2010+ for CNI
+  cni_start_year: 2010
+
+  # ACS survey years excluded from data (e.g., 2020 ACS was not conducted due to COVID)
+  acs_excluded_years: [2020]
+
+  # Maximum single year of age tracked (100 represents 100+)
+  max_age: 100
+
+  # Tab years: benchmark years with direct population estimates
+  # Inter-tab years are interpolated using component method with closure ratios
+  tab_years:
+    early: [1940, 1950, 1956, 1960]
+    annual_range: [1969, 2009]  # every year from 1969 through 2009
+    final: [2022]              # last historical year for TR2025
+
+  # =========================================================================
+  # Overseas Population Distributions
+  # =========================================================================
+  # Parameters for distributing aggregate overseas population totals
+  # across single years of age and sex using Normal distributions.
+  # Source: TR2025 Section 1.4, Equations 1.4.1
+  overseas_distributions:
+    federal_armed_forces:
+      mean_age: 35
+      sd_age: 12
+      male_share: 0.65
+      min_age: 18
+      max_age_cutoff: 65
+    beneficiaries:
+      mean_age: 72
+      sd_age: 10
+      male_share: 0.45
+      min_age_cutoff: 50
+    dependents:
+      mean_age: 25
+      sd_age: 20
+      male_share: 0.50
+    other_citizens:
+      mean_age: 45
+      sd_age: 18
+      male_share: 0.50
+
+  # =========================================================================
+  # Other Citizens Overseas Estimate
+  # =========================================================================
+  # Source: SSA Actuarial Study No. 112, Table 1
+  # OTH = base_value * (0.5 + growth_dampening * (current_pop / base_pop))
+  other_citizens_overseas:
+    base_year: 1990
+    base_value: 525000
+    growth_dampening: 0.5
+
+  # =========================================================================
+  # Dependent Ratio
+  # =========================================================================
+  # Dependents = dependent_ratio * (armed_forces_overseas + fed_employees_overseas)
+  # Source: TR2025 Section 1.4
+  dependent_ratio: 0.50
+
+  # =========================================================================
+  # O-Population (Temporary/Unlawfully Present) Parameters
+  # =========================================================================
+  # Source: TR2025 Section 1.4, Equation 1.4.3
+  o_population:
+    # Method for computing O-population stock
+    # "residual": Back out from population accounting identity (TR2025 methodology)
+    # "va2_flows": Build stock from V.A2 net O flows (alternative)
+    method: "residual"
+
+    # COVID-19 adjustment for 2020 (TR2025 footnote 9)
+    # Replace 2020 O-stock with average of 2019 and 2021 by age/sex
+    covid_average_2020: true
+
+    # Sex split for O-population (DHS unauthorized estimates)
+    male_share: 0.57
+
+    # Age distribution weights for O-population (used by va2_flows method)
+    # Based on DHS/CMS unauthorized population estimates (modern era)
+    # Each weight applies uniformly to all single-year ages within the group
+    # Weights are raw (not normalized); code normalizes to sum to 1
+    age_distribution:
+      age_0_4: 0.002       # Very few young children
+      age_5_9: 0.005       # Some children
+      age_10_14: 0.008     # Older children
+      age_15_17: 0.015     # Teenagers
+      age_18_19: 0.020     # Young adults
+      age_20_24: 0.025     # 20-24
+      age_25_29: 0.035     # 25-29 peak
+      age_30_34: 0.040     # 30-34 peak
+      age_35_39: 0.035     # 35-39
+      age_40_44: 0.025     # 40-44
+      age_45_49: 0.018     # 45-49
+      age_50_54: 0.012     # 50-54
+      age_55_59: 0.008     # 55-59
+      age_60_64: 0.005     # 60-64
+      age_65_69: 0.003     # 65-69
+      age_70_79: 0.001     # 70-79
+      age_80_plus: 0.0005  # 80+
+
+    # Era-based distributions for va2_flows method (Phase 6)
+    # When enabled, the va2_flows method uses era-specific age-sex distributions
+    # instead of the single static distribution above. The residual method
+    # already derives year-varying distributions from data and does not use these.
+    # Eras are applied based on year; years between eras interpolate linearly.
+    era_distributions:
+      enabled: true
+      eras:
+        # Pre-1980: Bracero-era pattern — mostly adult male agricultural workers
+        # Source: INS estimates, Bracero program records (1942-1964)
+        - start_year: 1940
+          end_year: 1979
+          male_share: 0.75
+          age_distribution:
+            age_0_4: 0.001
+            age_5_9: 0.002
+            age_10_14: 0.003
+            age_15_17: 0.010
+            age_18_19: 0.025
+            age_20_24: 0.050
+            age_25_29: 0.060
+            age_30_34: 0.050
+            age_35_39: 0.040
+            age_40_44: 0.030
+            age_45_49: 0.020
+            age_50_54: 0.010
+            age_55_59: 0.005
+            age_60_64: 0.002
+            age_65_69: 0.001
+            age_70_79: 0.0005
+            age_80_plus: 0.0001
+        # 1980-1999: Growing unauthorized immigration, more families
+        # Source: INS/CIS estimates, Warren & Passel (1987), Passel (2002)
+        - start_year: 1980
+          end_year: 1999
+          male_share: 0.65
+          age_distribution:
+            age_0_4: 0.002
+            age_5_9: 0.004
+            age_10_14: 0.006
+            age_15_17: 0.012
+            age_18_19: 0.022
+            age_20_24: 0.035
+            age_25_29: 0.045
+            age_30_34: 0.045
+            age_35_39: 0.035
+            age_40_44: 0.025
+            age_45_49: 0.018
+            age_50_54: 0.010
+            age_55_59: 0.006
+            age_60_64: 0.003
+            age_65_69: 0.002
+            age_70_79: 0.001
+            age_80_plus: 0.0003
+        # 2000+: Modern DHS-measured pattern (same as static distribution)
+        - start_year: 2000
+          end_year: 2099
+          male_share: 0.57
+          age_distribution:
+            age_0_4: 0.002
+            age_5_9: 0.005
+            age_10_14: 0.008
+            age_15_17: 0.015
+            age_18_19: 0.020
+            age_20_24: 0.025
+            age_25_29: 0.035
+            age_30_34: 0.040
+            age_35_39: 0.035
+            age_40_44: 0.025
+            age_45_49: 0.018
+            age_50_54: 0.012
+            age_55_59: 0.008
+            age_60_64: 0.005
+            age_65_69: 0.003
+            age_70_79: 0.001
+            age_80_plus: 0.0005
+
+    # Emigration as fraction of LPR immigration (for O-population calculation)
+    emigration_ratio: 0.25
+
+    # Adjustment of Status as fraction of LPR immigration
+    aos_ratio: 0.40
+
+    # Residual modification parameters (TR2025 Section 1.4.c Eq 1.4.3:
+    # "These residuals are then modified to ensure reasonableness")
+    residual_smoothing:
+      # Rolling median window for per-(age,sex) time series smoothing (must be odd)
+      rolling_median_window: 11
+      # Floor negative residuals at 0 before computing proportions.
+      # Residuals are only used for age-sex SHAPE (V.A2 provides LEVELS),
+      # so negative values should not contribute to the distribution.
+      floor_at_zero: true
+
+  # =========================================================================
+  # Territory Age Distribution Parameters
+  # =========================================================================
+  # Used to distribute territory population totals across ages
+  # when single-year-of-age data is not available (pre-IDB years)
+  territory_age_distribution:
+    young_children_weight: 0.07     # age < 5
+    children_weight: 0.065          # age 5-17
+    working_age_base_weight: 0.055  # age 18-64 base
+    working_age_decay: 0.01         # exponential decay rate
+    working_age_center: 30          # center age for decay
+    elderly_base_weight: 0.03       # age 65+ base
+    elderly_decay: 0.03             # exponential decay rate
+    male_share_under_65: 0.51
+    male_share_65_plus: 0.45
+
+  # Per TR2025 documentation: "2020 data is assumed to be the same as 2010
+  # until the data is available to OCACT."
+  armed_forces_territories_2020_equals_2010: true
