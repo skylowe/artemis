@@ -133,93 +133,17 @@ fetch_opm_federal_employees_overseas <- function(years = 1998:2024,
 #'
 #' @keywords internal
 build_federal_employees_series <- function(years) {
-  # ==========================================================================
-  # VERIFIED DATA POINTS FROM CRS R43590 TABLE 2
-  # ==========================================================================
-  # Source: Congressional Research Service Report R43590
-  # "Federal Workforce Statistics Sources: OPM and OMB"
-  # Table 2: Federal Civilian Employees On-Board Personnel, by Location
-  #
-  # These are "Foreign Countries" counts from FedScope data
-  # Excludes: CIA, DIA, NSA, State Dept Foreign Service, USPS, etc.
-  # ==========================================================================
-
-  historical_points <- data.table::data.table(
-    year = c(
-      # Pre-FedScope estimates (1980-1997)
-      1980, 1985, 1990, 1995,
-      # FedScope era - CRS R43590 Table 2 (2016 version)
-      1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008,
-      2009, 2010, 2011, 2012, 2013, 2014, 2015,
-      # CRS R43590 Table 2 (2020 version)
-      2016, 2017, 2018,
-      # Recent estimates
-      2019, 2020, 2021, 2022, 2023, 2024
-    ),
-    employees_overseas = c(
-      # Pre-FedScope estimates
-      # Based on trend extrapolation; FedScope coverage begins 1998
-      40000,    # 1980 - Cold War era estimate
-      42000,    # 1985 - estimate
-      38000,    # 1990 - post Cold War transition estimate
-      35000,    # 1995 - estimate
-
-      # 1998-2008: Interpolated from 2009 FedScope baseline
-      # FedScope starts Sept 1998; early years estimated
-      33000,    # 1998
-      33200,    # 1999
-      33400,    # 2000
-      33600,    # 2001
-      33800,    # 2002
-      34000,    # 2003
-      34100,    # 2004
-      34200,    # 2005
-      34300,    # 2006
-      34400,    # 2007
-      34500,    # 2008
-
-      # CRS R43590 Table 2 - 2016 version (verified FedScope data)
-      # Source: everycrsreport.com/files/20161207_R43590
-      34622,    # 2009 - CRS Table 2
-      36007,    # 2010 - CRS Table 2
-      37168,    # 2011 - CRS Table 2 (peak)
-      36108,    # 2012 - CRS Table 2
-      33486,    # 2013 - CRS Table 2
-      31354,    # 2014 - CRS Table 2
-      29173,    # 2015 - CRS Table 2
-
-      # CRS R43590 Table 2 - 2020 version
-      # Source: everycrsreport.com/files/20200325_R43590
-      29200,    # 2016 - interpolated
-      29300,    # 2017 - interpolated
-      29407,    # 2018 - CRS Table 2
-
-      # Recent years - estimated from trend
-      29500,    # 2019 - estimate
-      28000,    # 2020 - COVID impact estimate
-      28500,    # 2021 - estimate
-      29500,    # 2022 - estimate
-      30200,    # 2023 - estimate
-
-      # 2024 - Pew Research Center citing March 2024 OPM data
-      # Source: pewresearch.org/short-reads/2025/01/07/
-      30800     # 2024 - Pew Research (OPM FedScope)
-    ),
-    source = c(
-      # Pre-FedScope
-      rep("pre-FedScope estimate", 4),
-      # 1998-2008
-      rep("FedScope (early years interpolated)", 11),
-      # 2009-2015 from CRS 2016
-      rep("CRS R43590 Table 2 (2016)", 7),
-      # 2016-2018 from CRS 2020
-      "interpolated", "interpolated", "CRS R43590 Table 2 (2020)",
-      # Recent estimates
-      rep("FedScope trend estimate", 5),
-      # 2024
-      "Pew Research (OPM March 2024)"
-    )
-  )
+  # Load verified data points from CSV
+  # Source: CRS R43590 Table 2, OPM FedScope, Pew Research
+  # See data/processed/opm_federal_employees_overseas_SOURCE.md for full provenance
+  csv_path <- here::here("data/processed/opm_federal_employees_overseas.csv")
+  if (!file.exists(csv_path)) {
+    cli::cli_abort(c(
+      "Federal employees overseas CSV not found at {.path {csv_path}}",
+      "i" = "See {.path data/processed/opm_federal_employees_overseas_SOURCE.md} for provenance"
+    ))
+  }
+  historical_points <- data.table::fread(csv_path)
 
   # Get requested years
   all_years <- data.table::data.table(year = years)

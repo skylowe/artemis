@@ -144,88 +144,17 @@ fetch_dhs_unauthorized_estimates <- function(years = 2000:2022,
 #'
 #' @keywords internal
 get_dhs_published_estimates <- function(years) {
- # ==========================================================================
- # DHS OHSS PUBLISHED ESTIMATES (transcribed from official reports)
- # ==========================================================================
- # All values in millions, converted to integers below
- # Source citations included for each estimate
- #
- # Note: DHS publishes PDF reports only. These values are manually
- # transcribed from official documents. When DHS releases new estimates,
- # this table should be updated with the new values and citations.
- # ==========================================================================
-
- dhs_estimates <- data.table::data.table(
-   year = c(1990, 2000, 2005, 2006, 2007, 2008, 2009,
-            2010, 2011, 2012, 2013, 2014, 2015,
-            2016, 2017, 2018, 2019, 2020, 2021, 2022),
-
-   unauthorized_millions = c(
-     3.5,   # 1990
-     8.5,   # 2000
-     10.5,  # 2005
-     11.6,  # 2006
-     12.2,  # 2007 - peak
-     11.8,  # 2008
-     11.3,  # 2009
-     11.4,  # 2010
-     11.5,  # 2011
-     11.4,  # 2012
-     11.3,  # 2013
-     11.1,  # 2014
-     10.9,  # 2015
-     10.8,  # 2016
-     10.7,  # 2017
-     10.8,  # 2018
-     10.9,  # 2019
-     10.5,  # 2020
-     10.5,  # 2021
-     11.0   # 2022
-   ),
-
-   source_report = c(
-     # 1990
-     "INS Statistical Yearbook 1996",
-     # 2000
-     "Hoefer, Rytina, Campbell (2006) 'Estimates for January 2005'",
-     # 2005
-     "Hoefer, Rytina, Campbell (2006) 'Estimates for January 2005'",
-     # 2006
-     "Hoefer, Rytina, Baker (2008) 'Estimates for January 2007'",
-     # 2007
-     "Hoefer, Rytina, Baker (2008) 'Estimates for January 2007'",
-     # 2008
-     "Hoefer, Rytina, Baker (2010) 'Estimates for January 2009'",
-     # 2009
-     "Hoefer, Rytina, Baker (2010) 'Estimates for January 2009'",
-     # 2010
-     "Hoefer, Rytina, Baker (2011) 'Estimates for January 2010'",
-     # 2011
-     "Hoefer, Rytina, Baker (2012) 'Estimates for January 2011'",
-     # 2012
-     "Baker, Rytina (2013) 'Estimates for January 2012'",
-     # 2013
-     "Baker, Rytina (2014) 'Estimates for January 2013'",
-     # 2014
-     "Baker (2017) 'Estimates for January 2014'",
-     # 2015
-     "Baker (2021) 'Estimates January 2015-2018'",
-     # 2016
-     "Baker (2021) 'Estimates January 2015-2018'",
-     # 2017
-     "Baker (2021) 'Estimates January 2015-2018'",
-     # 2018
-     "Baker & Warren (2024) 'Estimates January 2018-2022'",
-     # 2019
-     "Baker & Warren (2024) 'Estimates January 2018-2022'",
-     # 2020
-     "Baker & Warren (2024) 'Estimates January 2018-2022'",
-     # 2021
-     "Baker & Warren (2024) 'Estimates January 2018-2022'",
-     # 2022
-     "Baker & Warren (2024) 'Estimates January 2018-2022'"
-   )
- )
+ # Load DHS published estimates from CSV
+ # Source: DHS OHSS reports (PDF only — values manually transcribed)
+ # See data/processed/dhs_unauthorized_estimates_SOURCE.md for full provenance
+ csv_path <- here::here("data/processed/dhs_unauthorized_estimates.csv")
+ if (!file.exists(csv_path)) {
+   cli::cli_abort(c(
+     "DHS unauthorized estimates CSV not found at {.path {csv_path}}",
+     "i" = "See {.path data/processed/dhs_unauthorized_estimates_SOURCE.md} for provenance"
+   ))
+ }
+ dhs_estimates <- data.table::fread(csv_path)
 
  # Convert to integer population
  dhs_estimates[, unauthorized_population := as.integer(unauthorized_millions * 1e6)]

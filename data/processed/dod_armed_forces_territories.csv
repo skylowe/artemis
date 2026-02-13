@@ -1,0 +1,17 @@
+census_year,territory,armed_forces,source
+1990,PR,3500,Statistical Abstract / DMDC
+1990,VI,200,Statistical Abstract / DMDC
+1990,GU,10500,Statistical Abstract / DMDC
+1990,AS,100,Statistical Abstract / DMDC
+2000,PR,2500,Census 2000 special tabulation
+2000,VI,150,Census 2000 special tabulation
+2000,GU,6700,Census 2000 special tabulation
+2000,AS,100,Census 2000 special tabulation
+2010,PR,1500,Census 2010 / DMDC
+2010,VI,100,Census 2010 / DMDC
+2010,GU,6000,Census 2010 / DMDC
+2010,AS,50,Census 2010 / DMDC
+2020,PR,1500,Assumed same as 2010 (TR2025)
+2020,VI,100,Assumed same as 2010 (TR2025)
+2020,GU,6000,Assumed same as 2010 (TR2025)
+2020,AS,50,Assumed same as 2010 (TR2025)
