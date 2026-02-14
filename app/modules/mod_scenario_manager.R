@@ -150,34 +150,38 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
       projection_state$progress <- 0
       projection_state$message <- "Running projection pipeline..."
 
-      # Defer the actual projection until after Shiny flushes the UI,
-      # so the "running" state is visible before the sync call blocks
-      session$onFlushed(function() {
-        tryCatch({
-          result <- run_scenario_projection(
+      # Run synchronously with withProgress() to keep the WebSocket alive
+      # (the previous session$onFlushed() pattern caused results to be lost
+      # because the 60+ second blocking tar_make() call could timeout the
+      # WebSocket, and reactive value updates inside onFlushed callbacks
+      # did not reliably trigger UI re-renders)
+      result <- NULL
+      withProgress(message = "Running projection pipeline...", value = 0, {
+        result <- tryCatch({
+          run_scenario_projection(
             config = config,
             artemis_root = ARTEMIS_ROOT,
             progress_callback = function(pct, msg) {
-              projection_state$progress <- pct
-              projection_state$message <- msg
+              setProgress(pct / 100, message = msg)
             }
           )
-
-          projection_state$last_result <- result
-          projection_state$running <- FALSE
-
-          if (result$success) {
-            rv$active_data <- result$data
-          }
-
         }, error = function(e) {
-          projection_state$last_result <- list(
-            success = FALSE,
-            error = e$message
-          )
-          projection_state$running <- FALSE
+          list(success = FALSE, error = e$message, data = NULL)
         })
-      }, once = TRUE)
+      })
+
+      projection_state$last_result <- result
+      projection_state$running <- FALSE
+
+      if (!is.null(result) && result$success) {
+        rv$active_data <- result$data
+        showNotification("Projection complete", type = "message")
+      } else {
+        showNotification(
+          paste("Projection failed:", result$error %||% "Unknown error"),
+          type = "error"
+        )
+      }
     })
 
     # Scenarios table

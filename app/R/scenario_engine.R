@@ -39,8 +39,53 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
   setwd(artemis_root)
   on.exit(setwd(old_wd), add = TRUE)
 
-  # Define key targets to run (must match what global.R loads for baseline)
-  targets_to_run <- c(
+  # Targets to build via tar_make(shortcut = TRUE).
+  # Only COMPUTATION targets go here — data-loading targets (NCHS, Census, ACS,
+  # DHS, TR files) are loaded from the cached baseline store automatically.
+  # shortcut = TRUE tells targets to skip upstream dependency checking, so
+  # cached data targets are loaded as-is without attempting to re-validate
+  # or re-run them (which would fail in Docker where data files aren't mounted).
+  targets_to_make <- c(
+    # Config: re-reads from the temporary YAML with user's modified params
+    "config_assumptions",
+
+    # Fertility chain (pure computation — no file I/O)
+    "fertility_ultimate_years",
+    "fertility_ultimate_age30",
+    "fertility_age30_projected",
+    "fertility_rates_projected",
+    "fertility_rates_complete",
+
+    # Mortality: re-processes projected qx from cached mortality intermediates
+    "mortality_qx_projected",
+    "mortality_qx_for_projection",
+
+    # Marriage/divorce: extract from cached projection objects
+    # NOTE: if marriage/divorce config params change, the underlying
+    # marriage_projection / divorce_projection targets would need to be
+    # re-run too, but they use internal file caching that requires writable
+    # data/cache/ (read-only in Docker). For now, only fertility/mortality
+    # parameter changes produce updated results.
+    "marriage_amr_projected",
+    "divorce_adr_projected",
+
+    # Core population projection (pure computation)
+    "population_projection",
+    "marital_projection",
+    "cni_projection",
+
+    # Final output extractions
+    "projected_population",
+    "projected_births",
+    "projected_deaths",
+    "projected_net_immigration",
+    "projected_marital_population",
+    "projected_cni_population",
+    "population_projection_summary"
+  )
+
+  # Targets to load results from after tar_make
+  targets_to_read <- c(
     "config_assumptions",
     "projected_population",
     "projected_births",
@@ -62,31 +107,32 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
       stop("targets package not available")
     }
 
-    report_progress(20, "Loading pipeline...")
+    report_progress(15, "Loading pipeline...")
 
-    # Get the store path
-    store <- file.path(artemis_root, "_targets")
+    # Copy _targets store to a temp directory so scenario runs never corrupt
+    # the baseline store. The temp copy is cleaned up on exit.
+    main_store <- file.path(artemis_root, "_targets")
+    if (!dir.exists(main_store)) {
+      stop("Targets store not found at: ", main_store)
+    }
+    store <- file.path(tempdir(), paste0("artemis_scenario_", format(Sys.time(), "%Y%m%d%H%M%S")))
+    on.exit(unlink(store, recursive = TRUE), add = TRUE)
 
-    # Invalidate config and ALL dependent targets to force re-run with new config
-    # This includes intermediate targets that depend on config
+    report_progress(18, "Copying targets store...")
+    copy_ok <- file.copy(main_store, dirname(store), recursive = TRUE)
+    if (!copy_ok) {
+      stop("Failed to copy _targets store to temp directory")
+    }
+    file.rename(file.path(dirname(store), basename(main_store)), store)
+
+    # Invalidate ONLY the targets we intend to re-run (targets_to_make).
+    # IMPORTANT: Do NOT invalidate targets outside this list — tar_invalidate
+    # removes metadata, and shortcut = TRUE needs metadata intact to load
+    # upstream dependencies from cache.
     report_progress(25, "Invalidating cached targets...")
-    targets_to_invalidate <- c(
-      "config_assumptions",
-      # Fertility chain
-      "fertility_rates_projected", "fertility_rates_complete", "fertility_rates_for_projection",
-      # Mortality chain
-      "mortality_qx_projected", "mortality_mx_projected",
-      # Immigration chain
-      "lpr_immigration_projected", "legal_emigration_projected",
-      "o_immigration_projection", "net_o_for_projection",
-      # Marriage/divorce chain
-      "marriage_amr_projected", "divorce_adr_projected",
-      # Final outputs
-      targets_to_run
-    )
     tryCatch({
       targets::tar_invalidate(
-        names = tidyselect::any_of(targets_to_invalidate),
+        names = tidyselect::any_of(targets_to_make),
         store = store
       )
     }, error = function(e) {
@@ -95,9 +141,14 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
 
     report_progress(30, "Running projection pipeline...")
 
-    # Run incremental make
+    # Run with shortcut = TRUE: only build the listed targets, loading all
+    # upstream dependencies (starting_population, historical rates, immigration,
+    # etc.) directly from the cached store without checking staleness.
+    # This prevents cascade into data-loading targets that need files not
+    # available in the Docker container.
     targets::tar_make(
-      names = tidyselect::any_of(targets_to_run),
+      names = tidyselect::any_of(targets_to_make),
+      shortcut = TRUE,
       store = store,
       callr_function = NULL  # Run in current session
     )
@@ -106,7 +157,7 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
 
     # Load results
     data <- list()
-    for (target in targets_to_run) {
+    for (target in targets_to_read) {
       tryCatch({
         data[[target]] <- targets::tar_read_raw(target, store = store)
       }, error = function(e) {
