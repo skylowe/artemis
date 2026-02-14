@@ -150,6 +150,14 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
       projection_state$progress <- 0
       projection_state$message <- "Running projection pipeline..."
 
+      # Show immediate notification (bypasses reactive cycle — sends via WebSocket)
+      showNotification(
+        tagList(icon("cog", class = "fa-spin"), " Running projection pipeline..."),
+        duration = NULL,
+        type = "message",
+        id = session$ns("projection_running")
+      )
+
       # Run synchronously with withProgress() to keep the WebSocket alive
       # (the previous session$onFlushed() pattern caused results to be lost
       # because the 60+ second blocking tar_make() call could timeout the
@@ -169,6 +177,9 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
           list(success = FALSE, error = e$message, data = NULL)
         })
       })
+
+      # Remove the running notification
+      removeNotification(session$ns("projection_running"))
 
       projection_state$last_result <- result
       projection_state$running <- FALSE

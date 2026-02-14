@@ -246,7 +246,7 @@ mod_config_editor_ui <- function(id) {
       ),
       actionButton(
         ns("reset_config"),
-        "Reset to TR2025",
+        "Reset to Baseline",
         icon = icon("undo"),
         class = "btn-outline-secondary"
       ),
@@ -270,12 +270,8 @@ mod_config_editor_server <- function(id, rv) {
     # Track config modifications
     modified_config <- reactiveVal(NULL)
 
-    # Initialize from baseline config
-    observe({
-      req(rv$config)
-      config <- rv$config
-
-      # Update inputs to match loaded config
+    # Sync all UI inputs to match a config list
+    sync_inputs_to_config <- function(config) {
       updateSliderInput(session, "ultimate_tfr",
         value = config$fertility$ultimate_ctfr %||% 1.90)
 
@@ -344,8 +340,13 @@ mod_config_editor_server <- function(id, rv) {
           updateNumericInput(session, "custom_tfr_year2", value = tfr_values[2])
         }
       }
+    }
 
-    }) |> bindEvent(rv$config, ignoreNULL = TRUE)
+    # Initialize from baseline config
+    observe({
+      req(rv$config)
+      sync_inputs_to_config(rv$config)
+    })
 
     # Build modified config when Apply is clicked
     observeEvent(input$apply_config, {
@@ -409,12 +410,18 @@ mod_config_editor_server <- function(id, rv) {
       )
     })
 
-    # Reset to TR2025
+    # Reset to baseline
     observeEvent(input$reset_config, {
       tryCatch({
-        rv$config <- load_config()
+        config <- load_config()
+        rv$config <- config
         modified_config(NULL)
-        showNotification("Reset to TR2025 baseline", type = "message")
+
+        # Directly update all inputs (don't rely on observer reactivity,
+        # since rv$config content may be identical to current value)
+        sync_inputs_to_config(config)
+
+        showNotification("Reset to baseline", type = "message")
       }, error = function(e) {
         showNotification(paste("Reset failed:", e$message), type = "error")
       })
