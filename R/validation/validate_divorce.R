@@ -33,7 +33,7 @@ DIVGRID_SIZE <- DIVORCE_MAX_AGE - DIVORCE_MIN_AGE + 1  # 87
 #'
 #' @param adr_projected data.table with year and projected_adr columns
 #' @param ultimate_adr Expected ultimate ADR (default: 1700)
-#' @param ultimate_year Year when ultimate should be reached (default: 2047)
+#' @param ultimate_year Year when ultimate should be reached (default: 2049)
 #' @param tolerance Acceptable relative difference (default: 0.001 = 0.1%)
 #'
 #' @return list with validation results
@@ -41,7 +41,7 @@ DIVGRID_SIZE <- DIVORCE_MAX_AGE - DIVORCE_MIN_AGE + 1  # 87
 #' @export
 validate_adr_ultimate <- function(adr_projected,
                                    ultimate_adr = DIVORCE_ULTIMATE_ADR,
-                                   ultimate_year = 2047L,
+                                   ultimate_year = 2049L,
                                    tolerance = 0.001) {
   checkmate::assert_data_table(adr_projected)
 
@@ -191,7 +191,7 @@ validate_adr_trajectory <- function(adr_projected,
   }
 
   # Sample trajectory points
-  sample_years <- c(min(adr_sorted$year), 2030, 2040, 2047, 2050, 2099)
+  sample_years <- c(min(adr_sorted$year), 2030, 2040, 2049, 2060, 2099)
   sample_years <- sample_years[sample_years %in% adr_sorted$year]
   for (yr in sample_years[1:min(5, length(sample_years))]) {
     amr_val <- adr_sorted[year == yr, get(adr_col)]
@@ -486,7 +486,7 @@ validate_against_nchs_divorce_totals <- function(divorce_rates,
 #' projection outputs. This is the primary entry point for Phase 7H validation.
 #'
 #' Validates per TR2025 Section 1.7:
-#' - ADR reaches ultimate (1,700) by year 25 (2047)
+#' - ADR reaches ultimate (1,700) by year 25 (2049)
 #' - ADR trajectory: annual rate of change decreases as ultimate approaches
 #' - DivGrid: 87×87 matrix, non-negative rates, reasonable peak ages
 #' - Projected rates: scaled proportionally to match projected ADR

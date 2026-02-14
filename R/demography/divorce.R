@@ -40,65 +40,61 @@ DIVORCE_STANDARD_POP_YEARS <- c(2009L, 2010L)
 #' Get divorce configuration parameters
 #'
 #' @description
-#' Retrieves divorce parameters from config object or falls back to defaults.
+#' Retrieves divorce parameters from config object. Aborts if config
+#' is missing — all divorce functions require explicit config.
 #'
-#' @param config Optional config list (from yaml::read_yaml)
+#' @param config Config list (from yaml::read_yaml). Required.
 #'
-#' @return List with min_age, max_age, standard_population_years
+#' @return List with all divorce configuration parameters
 #'
 #' @keywords internal
 get_divorce_config <- function(config = NULL) {
-  # Helper for null coalescing (avoids rlang dependency in standalone use)
+  if (is.null(config) || is.null(config$divorce)) {
+    cli::cli_abort("Divorce config is required. Pass config from {.fn targets::tar_read} or {.fn yaml::read_yaml}.")
+  }
+
+  dc <- config$divorce
+
+  # Helper for null coalescing
   null_default <- function(x, default) if (is.null(x)) default else x
 
-  if (!is.null(config) && !is.null(config$divorce)) {
-    # Get standard_population_years and ensure it's an integer vector (YAML reads as list)
-    std_pop_years <- config$divorce$standard_population_years
-    if (!is.null(std_pop_years)) {
-      std_pop_years <- as.integer(unlist(std_pop_years))
-    } else {
-      std_pop_years <- DIVORCE_STANDARD_POP_YEARS
-    }
-
-    list(
-      min_age = as.integer(null_default(config$divorce$min_age, DIVORCE_MIN_AGE)),
-      max_age = as.integer(null_default(config$divorce$max_age, DIVORCE_MAX_AGE)),
-      standard_population_years = std_pop_years,
-      ultimate_adr = null_default(config$divorce$ultimate_adr, DIVORCE_ULTIMATE_ADR),
-      ultimate_year = as.integer(null_default(config$divorce$ultimate_year, 2047L))
-    )
+  # Get standard_population_years and ensure it's an integer vector (YAML reads as list)
+  std_pop_years <- dc$standard_population_years
+  if (!is.null(std_pop_years)) {
+    std_pop_years <- as.integer(unlist(std_pop_years))
   } else {
-    list(
-      min_age = DIVORCE_MIN_AGE,
-      max_age = DIVORCE_MAX_AGE,
-      standard_population_years = DIVORCE_STANDARD_POP_YEARS,
-      ultimate_adr = DIVORCE_ULTIMATE_ADR,
-      ultimate_year = 2047L
-    )
-  }
-}
-
-#' Load divorce config from file if needed
-#'
-#' @description
-#' Helper to load config from default path if not provided.
-#'
-#' @param config Optional config list
-#'
-#' @return Config list (loaded or provided)
-#'
-#' @keywords internal
-load_divorce_config_if_needed <- function(config = NULL) {
-  if (!is.null(config)) {
-    return(config)
+    std_pop_years <- DIVORCE_STANDARD_POP_YEARS
   }
 
-  config_path <- here::here("config/assumptions/tr2025.yaml")
-  if (file.exists(config_path)) {
-    yaml::read_yaml(config_path)
+  # Get acs_years and ensure it's an integer vector
+  acs_years <- dc$acs_years
+  if (!is.null(acs_years)) {
+    acs_years <- as.integer(unlist(acs_years))
   } else {
-    NULL
+    acs_years <- 2018L:2022L
   }
+
+  list(
+    min_age = as.integer(null_default(dc$min_age, DIVORCE_MIN_AGE)),
+    max_age = as.integer(null_default(dc$max_age, DIVORCE_MAX_AGE)),
+    standard_population_years = std_pop_years,
+    ultimate_adr = null_default(dc$ultimate_adr, DIVORCE_ULTIMATE_ADR),
+    ultimate_year = as.integer(null_default(dc$ultimate_year, 2049L)),
+    convergence_exponent = null_default(dc$convergence_exponent, 2),
+    acs_years = acs_years,
+    adjustment_year = as.integer(null_default(dc$adjustment_year, 2020L)),
+    base_period_start = as.integer(null_default(dc$base_period_start, 1979L)),
+    base_period_end = as.integer(null_default(dc$base_period_end, 1988L)),
+    rate_cap = null_default(dc$rate_cap, 50000),
+    ss_area_factor_override = dc$ss_area_factor_override,
+    pr_vi = list(
+      anchor_1988_total = null_default(dc$pr_vi$anchor_1988_total, 13380),
+      us_ratio = null_default(dc$pr_vi$us_ratio, 0.012),
+      vi_pr_ratio = null_default(dc$pr_vi$vi_pr_ratio, 0.03),
+      annual_decline = null_default(dc$pr_vi$annual_decline, 0.99),
+      dra_coverage = null_default(dc$pr_vi$dra_coverage, 0.48)
+    )
+  )
 }
 
 # =============================================================================
@@ -800,7 +796,8 @@ inflate_divorces_to_ss_area <- function(dra_divorces,
 #' @return Matrix of divorce rates (per 100,000 married couples)
 #'
 #' @export
-calculate_year_divorce_rates <- function(divorces_matrix, married_grid) {
+calculate_year_divorce_rates <- function(divorces_matrix, married_grid,
+                                          rate_cap = 50000) {
   checkmate::assert_matrix(divorces_matrix, mode = "numeric")
   checkmate::assert_matrix(married_grid, mode = "numeric")
 
@@ -815,8 +812,8 @@ calculate_year_divorce_rates <- function(divorces_matrix, married_grid) {
   # Set rates to 0 where there are no married couples
   rates[married_grid < 1] <- 0
 
-  # Cap extreme rates (> 50,000 per 100,000 is implausible)
-  rates[rates > 50000] <- 50000
+  # Cap extreme rates (implausible values)
+  rates[rates > rate_cap] <- rate_cap
 
   rates
 }
@@ -1255,9 +1252,6 @@ fetch_base_divgrid <- function(cache_dir = here::here("data/cache"),
     return(readRDS(cache_file))
   }
 
-  # Load config if not provided
-  config <- load_divorce_config_if_needed(config)
-
   # Build from source data
   cli::cli_alert_info("Building base DivGrid from source data...")
 
@@ -1555,7 +1549,7 @@ weighted_average_divgrid <- function(base_divgrid,
                                       adjusted_divgrid,
                                       target_year,
                                       base_year = 1988,
-                                      adjustment_year = 2015) {
+                                      adjustment_year) {
 
   if (target_year <= base_year) {
     return(base_divgrid)
@@ -1601,7 +1595,7 @@ get_divgrid_for_year <- function(year,
                                   base_divgrid,
                                   adjusted_divgrid = NULL,
                                   base_year = 1988,
-                                  adjustment_year = 2015) {
+                                  adjustment_year) {
 
   if (is.null(adjusted_divgrid)) {
     return(base_divgrid)
@@ -1638,9 +1632,18 @@ get_divgrid_for_year <- function(year,
 #'
 #' @export
 fetch_adjusted_divgrid <- function(cache_dir = here::here("data/cache"),
-                                    acs_years = 2018:2022,
+                                    acs_years = NULL,
                                     force = FALSE,
                                     config = NULL) {
+
+  # Read acs_years from config if not provided
+  if (is.null(acs_years)) {
+    if (!is.null(config) && !is.null(config$divorce$acs_years)) {
+      acs_years <- as.integer(unlist(config$divorce$acs_years))
+    } else {
+      acs_years <- 2018L:2022L
+    }
+  }
 
   cache_file <- file.path(cache_dir, "divorce", "adjusted_divgrid.rds")
 
@@ -2031,7 +2034,7 @@ calculate_historical_year_rates <- function(year,
                                              ss_area_factor = NULL,
                                              cache_dir = here::here("data/cache"),
                                              base_year = 1988,
-                                             adjustment_year = 2020) {
+                                             adjustment_year) {
 
   # Get appropriate DivGrid for this year (weighted average)
   year_divgrid <- get_divgrid_for_year(
@@ -2105,7 +2108,8 @@ calculate_historical_year_rates <- function(year,
 #' @export
 calculate_historical_adr_series <- function(years = 1989:2022,
                                              cache_dir = here::here("data/cache"),
-                                             force = FALSE) {
+                                             force = FALSE,
+                                             config = NULL) {
 
   cache_file <- file.path(cache_dir, "divorce", "historical_adr_1989_2022.rds")
 
@@ -2120,8 +2124,16 @@ calculate_historical_adr_series <- function(years = 1989:2022,
   # Load required data
   cli::cli_alert("Loading required data...")
 
+  # Read adjustment_year from config
+  adjustment_year <- if (!is.null(config) && !is.null(config$divorce$adjustment_year)) {
+    as.integer(config$divorce$adjustment_year)
+  } else {
+    2020L
+  }
+
   # Get adjusted DivGrid result (includes base, adjusted, and standard_pop)
-  adjusted_result <- fetch_adjusted_divgrid(cache_dir = cache_dir, force = FALSE)
+  adjusted_result <- fetch_adjusted_divgrid(cache_dir = cache_dir, force = FALSE,
+                                            config = config)
   base_divgrid <- adjusted_result$base_divgrid
   adjusted_divgrid <- adjusted_result$adjusted_divgrid
   standard_pop <- adjusted_result$standard_pop
@@ -2186,7 +2198,7 @@ calculate_historical_adr_series <- function(years = 1989:2022,
         ss_area_factor = ss_factor,
         cache_dir = cache_dir,
         base_year = 1988,
-        adjustment_year = 2020
+        adjustment_year = adjustment_year
       )
 
       results[[as.character(yr)]] <- data.table::data.table(
@@ -2446,7 +2458,8 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
   historical_period <- calculate_historical_adr_series(
     years = 1989:2022,
     cache_dir = cache_dir,
-    force = force
+    force = force,
+    config = config
   )
 
   # Combine into complete series
@@ -2507,7 +2520,7 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
 #' @param starting_adr Numeric: starting ADR (weighted average of recent years)
 #' @param ultimate_adr Numeric: ultimate ADR (default: 1700 per 100,000, or from config)
 #' @param start_year Integer: first projection year (default: 2023, or from config)
-#' @param ultimate_year Integer: year when ultimate is reached (default: 2047, or from config)
+#' @param ultimate_year Integer: year when ultimate is reached (default: 2049, or from config)
 #' @param end_year Integer: final projection year (default: 2099, or from config)
 #' @param convergence_exp Numeric: convergence exponent (default: 2)
 #'   Higher values = more gradual start, faster finish
@@ -2536,21 +2549,18 @@ project_adr <- function(starting_adr,
                         start_year = NULL,
                         ultimate_year = NULL,
                         end_year = NULL,
-                        convergence_exp = 2,
+                        convergence_exp = NULL,
                         config = NULL) {
-  # Derive parameters from config if not provided
+  # Derive parameters from config — config is required
   if (!is.null(config)) {
     years <- get_projection_years(config, "divorce")
     if (is.null(start_year)) start_year <- years$projection_start
     if (is.null(end_year)) end_year <- years$projection_end
     if (is.null(ultimate_year)) ultimate_year <- years$ultimate_year
     if (is.null(ultimate_adr)) ultimate_adr <- config$divorce$ultimate_adr %||% DIVORCE_ULTIMATE_ADR
+    if (is.null(convergence_exp)) convergence_exp <- config$divorce$convergence_exponent %||% 2
   } else {
-    # Fallback defaults
-    if (is.null(start_year)) start_year <- 2023
-    if (is.null(ultimate_year)) ultimate_year <- 2047
-    if (is.null(end_year)) end_year <- 2099
-    if (is.null(ultimate_adr)) ultimate_adr <- DIVORCE_ULTIMATE_ADR
+    cli::cli_abort("Config is required for {.fn project_adr}. Pass config from pipeline.")
   }
 
   checkmate::assert_number(starting_adr, lower = 0)
@@ -2674,7 +2684,7 @@ scale_divgrid_to_target_adr <- function(divgrid, target_adr, standard_pop) {
 validate_adr_projection <- function(adr_projection,
                                     starting_adr,
                                     ultimate_adr = DIVORCE_ULTIMATE_ADR,
-                                    ultimate_year = 2047) {
+                                    ultimate_year = 2049) {
 
   cli::cli_h2("ADR Projection Validation")
 
@@ -2792,7 +2802,7 @@ validate_adr_projection <- function(adr_projection,
 #' @param cache_dir Cache directory path
 #' @param force Logical: force recalculation (default: FALSE)
 #' @param ultimate_adr Numeric: ultimate ADR (default from config or 1700)
-#' @param ultimate_year Integer: year to reach ultimate (default: 2047, or from config)
+#' @param ultimate_year Integer: year to reach ultimate (default: 2049, or from config)
 #' @param start_year Integer: first projection year (default: 2023, or from config)
 #' @param end_year Integer: final projection year (default: 2099, or from config)
 #' @param config List: optional configuration object to derive parameters
@@ -2807,7 +2817,7 @@ get_projected_adr <- function(cache_dir = here::here("data/cache"),
                               start_year = NULL,
                               end_year = NULL,
                               config = NULL) {
-  # Derive parameters from config if not provided
+  # Derive parameters from config — config is required
   if (!is.null(config)) {
     years <- get_projection_years(config, "divorce")
     if (is.null(start_year)) start_year <- years$projection_start
@@ -2815,10 +2825,7 @@ get_projected_adr <- function(cache_dir = here::here("data/cache"),
     if (is.null(ultimate_year)) ultimate_year <- years$ultimate_year
     if (is.null(ultimate_adr)) ultimate_adr <- config$divorce$ultimate_adr %||% DIVORCE_ULTIMATE_ADR
   } else {
-    # Fallback defaults
-    if (is.null(start_year)) start_year <- 2023
-    if (is.null(ultimate_year)) ultimate_year <- 2047
-    if (is.null(end_year)) end_year <- 2099
+    cli::cli_abort("Config is required for {.fn get_projected_adr}. Pass config from pipeline.")
   }
 
   cache_file <- file.path(cache_dir, "divorce", get_cache_filename("projected_adr", start_year, end_year))
@@ -2831,32 +2838,8 @@ get_projected_adr <- function(cache_dir = here::here("data/cache"),
 
   cli::cli_h1("Phase 7F: ADR Projection ({start_year}-{end_year})")
 
-  # Load config if not provided and ultimate_adr still NULL
-  if (is.null(ultimate_adr)) {
-    config_path <- here::here("config/assumptions/tr2025.yaml")
-    if (file.exists(config_path)) {
-      loaded_config <- yaml::read_yaml(config_path)
-      ultimate_adr <- if (!is.null(loaded_config$divorce$ultimate_adr)) {
-        loaded_config$divorce$ultimate_adr
-      } else {
-        DIVORCE_ULTIMATE_ADR
-      }
-      if (is.null(ultimate_year)) {
-        ultimate_year <- if (!is.null(loaded_config$divorce$ultimate_year)) {
-          loaded_config$divorce$ultimate_year
-        } else {
-          2047
-        }
-      }
-      cli::cli_alert_info("Loaded config: ultimate_adr = {ultimate_adr}, ultimate_year = {ultimate_year}")
-    } else {
-      ultimate_adr <- DIVORCE_ULTIMATE_ADR
-      cli::cli_alert_info("Using default: ultimate_adr = {ultimate_adr}")
-    }
-  }
-
   # Get historical data to calculate starting ADR
-  historical_data <- get_historical_divorce_data(cache_dir, force = FALSE)
+  historical_data <- get_historical_divorce_data(cache_dir, force = FALSE, config = config)
   starting_adr <- historical_data$starting_adr
 
   cli::cli_alert_info("Starting ADR (from historical): {round(starting_adr, 1)}")
@@ -2867,7 +2850,8 @@ get_projected_adr <- function(cache_dir = here::here("data/cache"),
     ultimate_adr = ultimate_adr,
     start_year = start_year,
     ultimate_year = ultimate_year,
-    end_year = end_year
+    end_year = end_year,
+    config = config
   )
 
   # Validate
@@ -2932,15 +2916,13 @@ project_divorce_rates <- function(base_divgrid,
                                    cache_dir = here::here("data/cache"),
                                    force = FALSE,
                                    config = NULL) {
-  # Derive parameters from config if not provided
+  # Derive parameters from config — config is required
   if (!is.null(config)) {
     years <- get_projection_years(config, "divorce")
     if (is.null(start_year)) start_year <- years$projection_start
     if (is.null(end_year)) end_year <- years$projection_end
   } else {
-    # Fallback defaults
-    if (is.null(start_year)) start_year <- 2023
-    if (is.null(end_year)) end_year <- 2099
+    cli::cli_abort("Config is required for {.fn project_divorce_rates}. Pass config from pipeline.")
   }
 
   cache_file <- file.path(cache_dir, "divorce", get_cache_filename("projected_rates", start_year, end_year))
@@ -3037,7 +3019,7 @@ project_divorce_rates <- function(base_divgrid,
 validate_projected_rates <- function(projected_result,
                                       standard_pop,
                                       ultimate_adr = DIVORCE_ULTIMATE_ADR,
-                                      ultimate_year = 2047) {
+                                      ultimate_year = 2049) {
 
   cli::cli_h2("Projected Divorce Rates Validation")
 
@@ -3165,12 +3147,12 @@ validate_projected_rates <- function(projected_result,
 #' 1. Builds base DivGrid from 1979-1988 NCHS DRA data
 #' 2. Adjusts DivGrid using recent ACS data
 #' 3. Calculates historical ADR series (1989-2022)
-#' 4. Projects ADR to ultimate (1,700 by 2047)
+#' 4. Projects ADR to ultimate (1,700 by 2049)
 #' 5. Scales DivGrid to match projected ADR for each year
 #'
 #' @param cache_dir Character: cache directory path
 #' @param ultimate_adr Numeric: ultimate ADR target (default: 1700, or from config)
-#' @param ultimate_year Integer: year to reach ultimate (default: 2047, or from config)
+#' @param ultimate_year Integer: year to reach ultimate (default: 2049, or from config)
 #' @param start_year Integer: first projection year (default: 2023, or from config)
 #' @param end_year Integer: final projection year (default: 2099, or from config)
 #' @param force Logical: force recalculation (default: FALSE)
@@ -3192,7 +3174,7 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
                                     end_year = NULL,
                                     force = FALSE,
                                     config = NULL) {
-  # Derive parameters from config if not provided
+  # Derive parameters from config — config is required
   if (!is.null(config)) {
     years <- get_projection_years(config, "divorce")
     if (is.null(start_year)) start_year <- years$projection_start
@@ -3200,10 +3182,7 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
     if (is.null(ultimate_year)) ultimate_year <- years$ultimate_year
     if (is.null(ultimate_adr)) ultimate_adr <- config$divorce$ultimate_adr %||% DIVORCE_ULTIMATE_ADR
   } else {
-    # Fallback defaults
-    if (is.null(start_year)) start_year <- 2023
-    if (is.null(ultimate_year)) ultimate_year <- 2047
-    if (is.null(end_year)) end_year <- 2099
+    cli::cli_abort("Config is required for {.fn run_divorce_projection}. Pass config from pipeline.")
   }
 
   cache_file <- file.path(cache_dir, "divorce", "divorce_projection_complete.rds")
@@ -3219,34 +3198,7 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
 
   start_time <- Sys.time()
 
-  # Load config if ultimate_adr still NULL
-  if (is.null(ultimate_adr)) {
-    config_path <- here::here("config/assumptions/tr2025.yaml")
-    if (file.exists(config_path)) {
-      loaded_config <- yaml::read_yaml(config_path)
-      ultimate_adr <- if (!is.null(loaded_config$divorce$ultimate_adr)) {
-        loaded_config$divorce$ultimate_adr
-      } else {
-        DIVORCE_ULTIMATE_ADR
-      }
-      if (is.null(ultimate_year)) {
-        ultimate_year <- if (!is.null(loaded_config$divorce$ultimate_year)) {
-          loaded_config$divorce$ultimate_year
-        } else {
-          2047
-        }
-      }
-    } else {
-      ultimate_adr <- DIVORCE_ULTIMATE_ADR
-    }
-  }
-
   cli::cli_alert_info("Ultimate ADR: {ultimate_adr}, Ultimate year: {ultimate_year}")
-
-  # Load config if not yet loaded (for passing to historical data functions)
-  if (is.null(config)) {
-    config <- load_divorce_config_if_needed(NULL)
-  }
 
   # =========================================================================
   # STEP 1: Get historical divorce data (includes base and adjusted DivGrid)
@@ -3274,7 +3226,8 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
     ultimate_adr = ultimate_adr,
     ultimate_year = ultimate_year,
     start_year = start_year,
-    end_year = end_year
+    end_year = end_year,
+    config = config
   )
 
   # =========================================================================
@@ -3291,7 +3244,8 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
     start_year = start_year,
     end_year = end_year,
     cache_dir = cache_dir,
-    force = force
+    force = force,
+    config = config
   )
 
   # =========================================================================

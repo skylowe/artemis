@@ -608,9 +608,9 @@ divorce:
   # Per 100,000 married couples
   ultimate_adr: 1700
 
-  # Year when ultimate ADR is reached (year 25 from first projection year)
-  # 2023 + 24 = 2047
-  ultimate_year: 2047
+  # Year when ultimate ADR is reached (25th year of 75-year projection period)
+  # TR2025 Section 1.7.b, Input #6: projection period is 2025-2099, so 2025 + 24 = 2049
+  ultimate_year: 2049
 
   # Age range for DivGrid
   min_age: 14
@@ -619,6 +619,45 @@ divorce:
   # Standard population for ADR calculation
   # Per TR2025: "averaged 2009 and 2010 December 31 marriage grids"
   standard_population_years: [2009, 2010]
+
+  # Convergence: ADR(t) = ultimate + (starting - ultimate) * (1 - progress)^exponent
+  # TR2025 Section 1.7.c: "annual rate of change decreases in absolute value"
+  convergence_exponent: 2
+
+  # Starting ADR = weighted avg of last N historical years
+  # TR2025 Section 1.7.c: "weighted average of the past five years of data"
+  starting_adr:
+    n_years: 5
+    weights: null  # null = equal weights
+
+  # DEVIATION: TR2025 uses 18-state health department data from ~2009-2012 (Input #10).
+  # Not publicly available. ARTEMIS uses ACS PUMS divorced-in-past-12-months data.
+  acs_years: [2018, 2019, 2020, 2021, 2022]
+
+  # DEVIATION: TR2025 uses 2011 state data grid as adjustment target.
+  # ARTEMIS uses ACS PUMS midpoint (~2020) since 18-state data unavailable.
+  adjustment_year: 2020
+
+  # Base period for DRA microdata DivGrid construction
+  base_period_start: 1979
+  base_period_end: 1988
+
+  # Maximum plausible divorce rate per 100,000 (cap for extreme cells)
+  rate_cap: 50000
+
+  # SS area factor: ratio of SS area population to U.S. resident population.
+  # Computed dynamically from historical population cache (~1.01 to ~1.03).
+  # Set to a numeric value to override (e.g., 1.02); null = compute from cache.
+  ss_area_factor_override: null
+
+  # PR/VI divorce estimation parameters
+  # Used for gap years when no NCHS or ACS data is available
+  pr_vi:
+    anchor_1988_total: 13380   # Combined PR+VI divorces in 1988
+    us_ratio: 0.012            # PR/VI as fraction of US divorces (~1.2%)
+    vi_pr_ratio: 0.03          # VI divorces as fraction of PR divorces
+    annual_decline: 0.99       # Annual decline factor for pre-2008 estimation
+    dra_coverage: 0.48         # DRA coverage fraction of US divorces
 
 # =========================================================================
 # Projected Population Configuration (TR2025 Section 1.8)
