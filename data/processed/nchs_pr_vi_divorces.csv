@@ -1,0 +1,9 @@
+year,territory,divorces,source,verified
+1988,Puerto Rico,13000,NCHS estimate,false
+1988,Virgin Islands,380,DRA microdata,true
+1998,Puerto Rico,12500,NCHS estimate,false
+1998,Virgin Islands,350,NCHS estimate,false
+1999,Puerto Rico,12300,NCHS estimate,false
+1999,Virgin Islands,340,NCHS estimate,false
+2000,Puerto Rico,12000,NCHS estimate,false
+2000,Virgin Islands,330,NCHS estimate,false

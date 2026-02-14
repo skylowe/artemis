@@ -11,86 +11,11 @@
 NULL
 
 # =============================================================================
-# CONSTANTS AND TR2025 ASSUMPTIONS
+# CONSTANTS — sourced from divorce.R module constants
 # =============================================================================
 
-# DivGrid dimensions (ages 14-100+)
-DIVGRID_MIN_AGE <- 14
-DIVGRID_MAX_AGE <- 100
-DIVGRID_SIZE <- 87
-
-# TR2025 ADR assumptions
-TR2025_ULTIMATE_ADR <- 1700   # per 100,000 married couples
-TR2025_ULTIMATE_YEAR <- 2047  # Year 25 from 2023
-
-# =============================================================================
-# NCHS VALIDATION TARGETS
-# =============================================================================
-
-#' Get NCHS total U.S. divorces for validation
-#'
-#' @description
-#' Returns published NCHS total divorce counts for the United States.
-#' These serve as validation targets for total divorce calculations.
-#'
-#' @return data.table with year and nchs_total
-#'
-#' @keywords internal
-get_nchs_divorce_validation_targets <- function() {
-  # NCHS published total U.S. divorces
-
-# Source: CDC/NCHS National Vital Statistics Reports
-  # From 1992+, these are derived from rate × population
-  data.table::data.table(
-    year = 1979L:2022L,
-    nchs_total = c(
-      1181000,  # 1979
-      1189000,  # 1980
-      1213000,  # 1981
-      1170000,  # 1982
-      1158000,  # 1983
-      1169000,  # 1984
-      1190000,  # 1985
-      1178000,  # 1986
-      1166000,  # 1987
-      1167000,  # 1988
-      1157000,  # 1989
-      1182000,  # 1990
-      1187000,  # 1991
-      1215000,  # 1992
-      1187000,  # 1993
-      1191000,  # 1994
-      1169000,  # 1995
-      1150000,  # 1996
-      1163000,  # 1997
-      1135000,  # 1998
-      1144000,  # 1999
-      944000,   # 2000
-      940000,   # 2001
-      955000,   # 2002
-      927000,   # 2003
-      879000,   # 2004
-      847000,   # 2005
-      872000,   # 2006
-      856000,   # 2007
-      844000,   # 2008
-      840000,   # 2009
-      872000,   # 2010
-      877000,   # 2011
-      851000,   # 2012
-      832000,   # 2013
-      813000,   # 2014
-      800000,   # 2015
-      776000,   # 2016
-      787000,   # 2017
-      782000,   # 2018
-      746000,   # 2019
-      630000,   # 2020 (COVID)
-      689000,   # 2021
-      674000    # 2022
-    )
-  )
-}
+# DivGrid dimensions derived from divorce.R constants (ages 14-100+)
+DIVGRID_SIZE <- DIVORCE_MAX_AGE - DIVORCE_MIN_AGE + 1  # 87
 
 # =============================================================================
 # ADR VALIDATION FUNCTIONS
@@ -115,8 +40,8 @@ get_nchs_divorce_validation_targets <- function() {
 #'
 #' @export
 validate_adr_ultimate <- function(adr_projected,
-                                   ultimate_adr = TR2025_ULTIMATE_ADR,
-                                   ultimate_year = TR2025_ULTIMATE_YEAR,
+                                   ultimate_adr = DIVORCE_ULTIMATE_ADR,
+                                   ultimate_year = 2047L,
                                    tolerance = 0.001) {
   checkmate::assert_data_table(adr_projected)
 
@@ -205,7 +130,7 @@ validate_adr_ultimate <- function(adr_projected,
 #' @export
 validate_adr_trajectory <- function(adr_projected,
                                      starting_adr,
-                                     ultimate_adr = TR2025_ULTIMATE_ADR) {
+                                     ultimate_adr = DIVORCE_ULTIMATE_ADR) {
   checkmate::assert_data_table(adr_projected)
   checkmate::assert_number(starting_adr)
 
@@ -335,7 +260,7 @@ validate_divgrid_properties <- function(divgrid) {
   }
 
   # Check 3: No NA in active ages (20-65)
-  active_range <- (20 - DIVGRID_MIN_AGE + 1):(65 - DIVGRID_MIN_AGE + 1)
+  active_range <- (20 - DIVORCE_MIN_AGE + 1):(65 - DIVORCE_MIN_AGE + 1)
   active_rates <- divgrid[active_range, active_range]
   na_count <- sum(is.na(active_rates))
   na_pass <- na_count == 0
@@ -349,8 +274,8 @@ validate_divgrid_properties <- function(divgrid) {
   # Check 4: Peak rate at reasonable ages (25-50 for divorce)
   max_rate <- max(divgrid, na.rm = TRUE)
   max_idx <- which(divgrid == max_rate, arr.ind = TRUE)[1, ]
-  peak_h_age <- max_idx[1] + DIVGRID_MIN_AGE - 1
-  peak_w_age <- max_idx[2] + DIVGRID_MIN_AGE - 1
+  peak_h_age <- max_idx[1] + DIVORCE_MIN_AGE - 1
+  peak_w_age <- max_idx[2] + DIVORCE_MIN_AGE - 1
   peak_reasonable <- peak_h_age >= 20 && peak_h_age <= 55 &&
     peak_w_age >= 20 && peak_w_age <= 55
   checks$peak_location <- peak_reasonable
@@ -505,9 +430,11 @@ validate_against_nchs_divorce_totals <- function(divorce_rates,
                                                    tolerance = 0.10) {
   cli::cli_h3("Validating Against NCHS Divorce Totals")
 
-  # Get NCHS targets if not provided
+  # Get NCHS targets if not provided (from CSV via nchs_divorce.R)
   if (is.null(nchs_totals)) {
-    nchs_totals <- get_nchs_divorce_validation_targets()
+    nchs_totals <- fetch_nchs_us_total_divorces()
+    data.table::setnames(nchs_totals, "total_divorces", "nchs_total",
+                         skip_absent = TRUE)
   }
 
   # Get years from rates

@@ -651,37 +651,15 @@ fetch_nchs_us_total_divorces <- function(
 ) {
   # Published NCHS total U.S. divorces and annulments
   # Source: CDC/NCHS National Vital Statistics Reports
-  # Note: Divorce counts from 1992+ are estimates (rate × population)
-  # Note: 2001-2007 some states stopped reporting detailed data
+  # Data stored in data/processed/nchs_us_total_divorces.csv
+  # See nchs_us_total_divorces_SOURCE.md for provenance
 
-  nchs_totals <- data.table::data.table(
-    year = 1979:2022,
-    total_divorces = c(
-      # 1979-1988 (from NVSS Vital Statistics reports)
-      1181000, 1189000, 1213000, 1170000, 1158000, 1169000, 1190000, 1178000, 1166000, 1167000,
-      # 1989-1998 (continuing NVSS data)
-      1157000, 1182000, 1187000, 1215000, 1187000, 1191000, 1169000, 1150000, 1163000, 1135000,
-      # 1999-2008 (NVSS data)
-      1144000, 944000, 940000, 955000, 927000, 879000, 847000, 872000, 856000, 844000,
-      # 2009-2018
-      840000, 872000, 877000, 851000, 832000, 813000, 800000, 827000, 787000, 782000,
-      # 2019-2022
-      746000, 630000, 689000, 673000
-    ),
-    rate_per_1000 = c(
-      # 1979-1988
-      5.3, 5.2, 5.3, 5.0, 4.9, 4.9, 5.0, 4.9, 4.8, 4.7,
-      # 1989-1998
-      4.7, 4.7, 4.7, 4.8, 4.6, 4.6, 4.4, 4.3, 4.3, 4.2,
-      # 1999-2008
-      4.1, 4.0, 4.0, 4.0, 3.8, 3.7, 3.6, 3.7, 3.6, 3.5,
-      # 2009-2018
-      3.4, 3.6, 3.6, 3.4, 3.3, 3.2, 3.1, 3.2, 2.9, 2.9,
-      # 2019-2022
-      2.7, 2.3, 2.5, 2.4
-    ),
-    source = "NCHS NVSR"
-  )
+  csv_path <- here::here("data/processed/nchs_us_total_divorces.csv")
+  if (!file.exists(csv_path)) {
+    cli::cli_abort("NCHS US total divorces CSV not found: {csv_path}")
+  }
+
+  nchs_totals <- data.table::fread(csv_path)
 
   # Filter to requested years
   nchs_totals[year %in% years]
@@ -705,25 +683,17 @@ fetch_nchs_us_total_divorces <- function(
 #'
 #' @export
 fetch_pr_vi_divorces <- function(years = c(1988, 1998:2000)) {
-  # Limited data available from NCHS
   # TR2025 Item 9: "Total number of divorces in Puerto Rico and the Virgin Islands
   # for years 1988, 1998, 1999, and 2000"
-  pr_vi_data <- data.table::data.table(
-    year = c(1988, 1988, 1998, 1998, 1999, 1999, 2000, 2000),
-    territory = rep(c("Puerto Rico", "Virgin Islands"), 4),
-    divorces = c(
-      # 1988 (from div88b.txt - Virgin Islands had 380 records with weight 1)
-      13000, 380,  # PR estimated, VI from DRA data
-      # 1998-2000 estimates (would need to verify from NCHS reports)
-      12500, 350,
-      12300, 340,
-      12000, 330
-    ),
-    source = c(
-      "NCHS estimate", "DRA data",
-      rep("NCHS estimate", 6)
-    )
-  )
+  # Data stored in data/processed/nchs_pr_vi_divorces.csv
+  # See nchs_pr_vi_divorces_SOURCE.md for provenance
+
+  csv_path <- here::here("data/processed/nchs_pr_vi_divorces.csv")
+  if (!file.exists(csv_path)) {
+    cli::cli_abort("NCHS PR/VI divorces CSV not found: {csv_path}")
+  }
+
+  pr_vi_data <- data.table::fread(csv_path)
 
   pr_vi_data[year %in% years]
 }
