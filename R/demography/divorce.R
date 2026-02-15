@@ -16,18 +16,11 @@ NULL
 # CONSTANTS (defaults when config not provided)
 # =============================================================================
 
-#' Age range for DivGrid (TR2025: ages 14-100+)
+#' Structural constants for DivGrid dimensions (ages 14-100 = 87×87 matrix).
+#' Used directly by matrix-building functions. Overridable via config.
 #' @keywords internal
 DIVORCE_MIN_AGE <- 14
 DIVORCE_MAX_AGE <- 100
-
-#' Ultimate ADR assumption (TR2025: 1,700 per 100,000 married couples)
-#' @keywords internal
-DIVORCE_ULTIMATE_ADR <- 1700
-
-#' Years to reach ultimate ADR (TR2025: 25th year of projection)
-#' @keywords internal
-DIVORCE_ULTIMATE_YEAR_OFFSET <- 25
 
 #' Standard population years for ADR calculation (TR2025: 2009-2010)
 #' @keywords internal
@@ -55,45 +48,53 @@ get_divorce_config <- function(config = NULL) {
 
   dc <- config$divorce
 
-  # Helper for null coalescing
-  null_default <- function(x, default) if (is.null(x)) default else x
-
-  # Get standard_population_years and ensure it's an integer vector (YAML reads as list)
-  std_pop_years <- dc$standard_population_years
-  if (!is.null(std_pop_years)) {
-    std_pop_years <- as.integer(unlist(std_pop_years))
-  } else {
-    std_pop_years <- DIVORCE_STANDARD_POP_YEARS
+  # Validate all required keys are present
+  required_keys <- c("min_age", "max_age", "standard_population_years",
+                     "ultimate_adr", "ultimate_year", "convergence_exponent",
+                     "acs_years", "adjustment_year", "base_period_start",
+                     "base_period_end", "historical_end_year", "rate_cap")
+  missing <- setdiff(required_keys, names(dc))
+  if (length(missing) > 0) {
+    cli::cli_abort(c(
+      "Missing required divorce config keys: {.val {missing}}",
+      "i" = "Add these keys to the {.code divorce:} section of your config YAML."
+    ))
   }
 
-  # Get acs_years and ensure it's an integer vector
-  acs_years <- dc$acs_years
-  if (!is.null(acs_years)) {
-    acs_years <- as.integer(unlist(acs_years))
-  } else {
-    acs_years <- 2018L:2022L
+  # Validate PR/VI subsection
+  if (is.null(dc$pr_vi)) {
+    cli::cli_abort("Missing required {.code divorce.pr_vi} config section.")
+  }
+  pr_vi_keys <- c("anchor_1988_total", "us_ratio", "vi_pr_ratio",
+                   "annual_decline", "dra_coverage")
+  missing_pv <- setdiff(pr_vi_keys, names(dc$pr_vi))
+  if (length(missing_pv) > 0) {
+    cli::cli_abort(c(
+      "Missing required divorce.pr_vi config keys: {.val {missing_pv}}",
+      "i" = "Add these keys to the {.code divorce.pr_vi:} section of your config YAML."
+    ))
   }
 
   list(
-    min_age = as.integer(null_default(dc$min_age, DIVORCE_MIN_AGE)),
-    max_age = as.integer(null_default(dc$max_age, DIVORCE_MAX_AGE)),
-    standard_population_years = std_pop_years,
-    ultimate_adr = null_default(dc$ultimate_adr, DIVORCE_ULTIMATE_ADR),
-    ultimate_year = as.integer(null_default(dc$ultimate_year, 2049L)),
-    convergence_exponent = null_default(dc$convergence_exponent, 2),
-    acs_years = acs_years,
-    adjustment_year = as.integer(null_default(dc$adjustment_year, 2020L)),
-    base_period_start = as.integer(null_default(dc$base_period_start, 1979L)),
-    base_period_end = as.integer(null_default(dc$base_period_end, 1988L)),
-    historical_end_year = as.integer(null_default(dc$historical_end_year, 2022L)),
-    rate_cap = null_default(dc$rate_cap, 50000),
+    min_age = as.integer(dc$min_age),
+    max_age = as.integer(dc$max_age),
+    standard_population_years = as.integer(unlist(dc$standard_population_years)),
+    ultimate_adr = dc$ultimate_adr,
+    ultimate_year = as.integer(dc$ultimate_year),
+    convergence_exponent = dc$convergence_exponent,
+    acs_years = as.integer(unlist(dc$acs_years)),
+    adjustment_year = as.integer(dc$adjustment_year),
+    base_period_start = as.integer(dc$base_period_start),
+    base_period_end = as.integer(dc$base_period_end),
+    historical_end_year = as.integer(dc$historical_end_year),
+    rate_cap = dc$rate_cap,
     ss_area_factor_override = dc$ss_area_factor_override,
     pr_vi = list(
-      anchor_1988_total = null_default(dc$pr_vi$anchor_1988_total, 13380),
-      us_ratio = null_default(dc$pr_vi$us_ratio, 0.012),
-      vi_pr_ratio = null_default(dc$pr_vi$vi_pr_ratio, 0.03),
-      annual_decline = null_default(dc$pr_vi$annual_decline, 0.99),
-      dra_coverage = null_default(dc$pr_vi$dra_coverage, 0.48)
+      anchor_1988_total = dc$pr_vi$anchor_1988_total,
+      us_ratio = dc$pr_vi$us_ratio,
+      vi_pr_ratio = dc$pr_vi$vi_pr_ratio,
+      annual_decline = dc$pr_vi$annual_decline,
+      dra_coverage = dc$pr_vi$dra_coverage
     )
   )
 }
@@ -582,6 +583,10 @@ validate_married_couples_grid <- function(grid) {
 validate_divorce_population_data <- function(marital_pop,
                                               cache_dir = here::here("data/cache"),
                                               config = NULL) {
+  if (is.null(config) || is.null(config$divorce)) {
+    cli::cli_abort("Config is required for {.fn validate_divorce_population_data}.")
+  }
+
   results <- list(
     checks = list(),
     passed = 0,
@@ -635,8 +640,8 @@ validate_divorce_population_data <- function(marital_pop,
 
   # Check 3: SS area factors available
   tryCatch({
-    bp_end <- if (!is.null(config)) as.integer(config$divorce$base_period_end %||% 1988L) else 1988L
-    hist_end <- if (!is.null(config)) as.integer(config$divorce$historical_end_year %||% 2022L) else 2022L
+    bp_end <- as.integer(config$divorce$base_period_end)
+    hist_end <- as.integer(config$divorce$historical_end_year)
     factors <- get_divorce_ss_area_factors(c(bp_end, 2010, hist_end), cache_dir)
     check3_passed <- length(factors) == 3 && all(factors > 1.0) && all(factors < 1.1)
     results$checks$ss_area_factors <- list(
@@ -661,7 +666,7 @@ validate_divorce_population_data <- function(marital_pop,
   })
 
   # Check 4: Population totals available for key years
-  bp_start <- if (!is.null(config)) as.integer(config$divorce$base_period_start %||% 1979L) else 1979L
+  bp_start <- as.integer(config$divorce$base_period_start)
   key_years <- c(bp_start:bp_end, 1998:2000, 2008:hist_end)
   tryCatch({
     pop_totals <- get_population_totals_for_divorce(key_years, cache_dir)
@@ -885,8 +890,8 @@ build_base_divgrid <- function(detailed_divorces,
   if (is.null(config) || is.null(config$divorce)) {
     cli::cli_abort("Config is required for {.fn build_base_divgrid}.")
   }
-  bp_start <- as.integer(config$divorce$base_period_start %||% 1979L)
-  bp_end <- as.integer(config$divorce$base_period_end %||% 1988L)
+  bp_start <- as.integer(config$divorce$base_period_start)
+  bp_end <- as.integer(config$divorce$base_period_end)
 
   cli::cli_h2("Building Base DivGrid ({bp_start}-{bp_end})")
 
@@ -1256,8 +1261,8 @@ fetch_base_divgrid <- function(cache_dir = here::here("data/cache"),
                                 force = FALSE,
                                 config = NULL) {
   # Get base period years from config
-  bp_start <- as.integer(config$divorce$base_period_start %||% 1979L)
-  bp_end <- as.integer(config$divorce$base_period_end %||% 1988L)
+  bp_start <- as.integer(config$divorce$base_period_start)
+  bp_end <- as.integer(config$divorce$base_period_end)
 
   cache_file <- file.path(cache_dir, "divorce",
                            sprintf("base_divgrid_%d_%d.rds", bp_start, bp_end))
@@ -1692,8 +1697,8 @@ fetch_adjusted_divgrid <- function(cache_dir = here::here("data/cache"),
   base_adr <- calculate_adr(base_divgrid, standard_pop)
   adjusted_adr <- calculate_adr(adjusted_divgrid, standard_pop)
 
-  bp_start <- as.integer(config$divorce$base_period_start %||% 1979L)
-  bp_end <- as.integer(config$divorce$base_period_end %||% 1988L)
+  bp_start <- as.integer(config$divorce$base_period_start)
+  bp_end <- as.integer(config$divorce$base_period_end)
 
   cli::cli_alert_info("Base ADR ({bp_start}-{bp_end}): {round(base_adr, 1)} per 100,000")
   cli::cli_alert_info("Adjusted ADR (ACS {min(acs_years)}-{max(acs_years)}): {round(adjusted_adr, 1)} per 100,000")
@@ -1938,8 +1943,11 @@ get_pr_vi_divorces_for_year <- function(year, cache_dir = here::here("data/cache
   pr_vi_cfg <- config$divorce$pr_vi
 
   # Try ACS PR divorce data (check for cached file)
-  hist_end <- as.integer(config$divorce$historical_end_year %||% 2022L)
-  acs_excluded <- config$historical_population$acs_excluded_years %||% list(2020L)
+  hist_end <- as.integer(config$divorce$historical_end_year)
+  if (is.null(config$historical_population$acs_excluded_years)) {
+    cli::cli_abort("Missing required config key: {.code historical_population.acs_excluded_years}")
+  }
+  acs_excluded <- config$historical_population$acs_excluded_years
   if (year %in% setdiff(2008:hist_end, as.integer(unlist(acs_excluded)))) {
     acs_cache_dir <- file.path(cache_dir, "acs_divorce")
     acs_pr_file <- file.path(acs_cache_dir, sprintf("pr_divorces_%d.rds", year))
@@ -2226,7 +2234,7 @@ calculate_historical_adr_series <- function(years,
         standard_pop = standard_pop,
         ss_area_factor = ss_factor,
         cache_dir = cache_dir,
-        base_year = as.integer(config$divorce$base_period_end %||% 1988L),
+        base_year = as.integer(config$divorce$base_period_end),
         adjustment_year = adjustment_year,
         config = config
       )
@@ -2468,9 +2476,9 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
   }
 
   # Derive year ranges from config
-  bp_start <- as.integer(config$divorce$base_period_start %||% 1979L)
-  bp_end <- as.integer(config$divorce$base_period_end %||% 1988L)
-  hist_end <- as.integer(config$divorce$historical_end_year %||% 2022L)
+  bp_start <- as.integer(config$divorce$base_period_start)
+  bp_end <- as.integer(config$divorce$base_period_end)
+  hist_end <- as.integer(config$divorce$historical_end_year)
   hist_start <- bp_end + 1L
 
   cli::cli_h1("Building Complete Historical Divorce Data ({bp_start}-{hist_end})")
@@ -2596,8 +2604,8 @@ project_adr <- function(starting_adr,
     if (is.null(start_year)) start_year <- years$projection_start
     if (is.null(end_year)) end_year <- years$projection_end
     if (is.null(ultimate_year)) ultimate_year <- years$ultimate_year
-    if (is.null(ultimate_adr)) ultimate_adr <- config$divorce$ultimate_adr %||% DIVORCE_ULTIMATE_ADR
-    if (is.null(convergence_exp)) convergence_exp <- config$divorce$convergence_exponent %||% 2
+    if (is.null(ultimate_adr)) ultimate_adr <- config$divorce$ultimate_adr
+    if (is.null(convergence_exp)) convergence_exp <- config$divorce$convergence_exponent
   } else {
     cli::cli_abort("Config is required for {.fn project_adr}. Pass config from pipeline.")
   }
@@ -2722,8 +2730,8 @@ scale_divgrid_to_target_adr <- function(divgrid, target_adr, standard_pop) {
 #' @export
 validate_adr_projection <- function(adr_projection,
                                     starting_adr,
-                                    ultimate_adr = DIVORCE_ULTIMATE_ADR,
-                                    ultimate_year = 2049) {
+                                    ultimate_adr,
+                                    ultimate_year) {
 
   cli::cli_h2("ADR Projection Validation")
 
@@ -2862,7 +2870,7 @@ get_projected_adr <- function(cache_dir = here::here("data/cache"),
     if (is.null(start_year)) start_year <- years$projection_start
     if (is.null(end_year)) end_year <- years$projection_end
     if (is.null(ultimate_year)) ultimate_year <- years$ultimate_year
-    if (is.null(ultimate_adr)) ultimate_adr <- config$divorce$ultimate_adr %||% DIVORCE_ULTIMATE_ADR
+    if (is.null(ultimate_adr)) ultimate_adr <- config$divorce$ultimate_adr
   } else {
     cli::cli_abort("Config is required for {.fn get_projected_adr}. Pass config from pipeline.")
   }
@@ -3057,8 +3065,8 @@ project_divorce_rates <- function(base_divgrid,
 #' @export
 validate_projected_rates <- function(projected_result,
                                       standard_pop,
-                                      ultimate_adr = DIVORCE_ULTIMATE_ADR,
-                                      ultimate_year = 2049) {
+                                      ultimate_adr,
+                                      ultimate_year) {
 
   cli::cli_h2("Projected Divorce Rates Validation")
 
@@ -3219,7 +3227,7 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
     if (is.null(start_year)) start_year <- years$projection_start
     if (is.null(end_year)) end_year <- years$projection_end
     if (is.null(ultimate_year)) ultimate_year <- years$ultimate_year
-    if (is.null(ultimate_adr)) ultimate_adr <- config$divorce$ultimate_adr %||% DIVORCE_ULTIMATE_ADR
+    if (is.null(ultimate_adr)) ultimate_adr <- config$divorce$ultimate_adr
   } else {
     cli::cli_abort("Config is required for {.fn run_divorce_projection}. Pass config from pipeline.")
   }
@@ -3242,8 +3250,8 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
   # =========================================================================
   # STEP 1: Get historical divorce data (includes base and adjusted DivGrid)
   # =========================================================================
-  bp_start <- as.integer(config$divorce$base_period_start %||% 1979L)
-  hist_end <- as.integer(config$divorce$historical_end_year %||% 2022L)
+  bp_start <- as.integer(config$divorce$base_period_start)
+  hist_end <- as.integer(config$divorce$historical_end_year)
   cli::cli_h2("Step 1: Loading Historical Divorce Data ({bp_start}-{hist_end})")
 
   historical <- get_historical_divorce_data(cache_dir, force = force, config = config)
@@ -3253,7 +3261,7 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
   standard_pop <- historical$adjusted_result$standard_pop
   starting_adr <- historical$starting_adr
 
-  cli::cli_alert_info("Base ADR ({bp_start}-{config$divorce$base_period_end %||% 1988L}): {round(historical$base_result$base_adr, 1)}")
+  cli::cli_alert_info("Base ADR ({bp_start}-{config$divorce$base_period_end}): {round(historical$base_result$base_adr, 1)}")
   cli::cli_alert_info("Starting ADR (for projection): {round(starting_adr, 1)}")
 
   # =========================================================================

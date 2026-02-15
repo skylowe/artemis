@@ -40,8 +40,8 @@ DIVGRID_SIZE <- DIVORCE_MAX_AGE - DIVORCE_MIN_AGE + 1  # 87
 #'
 #' @export
 validate_adr_ultimate <- function(adr_projected,
-                                   ultimate_adr = DIVORCE_ULTIMATE_ADR,
-                                   ultimate_year = 2049L,
+                                   ultimate_adr,
+                                   ultimate_year,
                                    tolerance = 0.001) {
   checkmate::assert_data_table(adr_projected)
 
@@ -130,7 +130,7 @@ validate_adr_ultimate <- function(adr_projected,
 #' @export
 validate_adr_trajectory <- function(adr_projected,
                                      starting_adr,
-                                     ultimate_adr = DIVORCE_ULTIMATE_ADR) {
+                                     ultimate_adr) {
   checkmate::assert_data_table(adr_projected)
   checkmate::assert_number(starting_adr)
 
