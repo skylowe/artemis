@@ -19,7 +19,18 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
 
   report_progress(5, "Validating configuration...")
 
-  # Create temporary config file
+  # Inject runtime section so targets know they're in scenario mode.
+  # This enables writable temp cache dirs and forces recomputation of
+  # targets that normally use cached results from data/cache/ (read-only
+  # in Docker containers).
+  scenario_cache_dir <- file.path(tempdir(), "artemis_cache")
+  dir.create(scenario_cache_dir, showWarnings = FALSE, recursive = TRUE)
+  config$runtime <- list(
+    scenario_mode = TRUE,
+    cache_dir = scenario_cache_dir
+  )
+
+  # Create temporary config file (must happen after runtime injection)
   temp_config <- tempfile(fileext = ".yaml")
   on.exit(unlink(temp_config), add = TRUE)
 
@@ -40,11 +51,11 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
   on.exit(setwd(old_wd), add = TRUE)
 
   # Targets to build via tar_make(shortcut = TRUE).
-  # Only COMPUTATION targets go here — data-loading targets (NCHS, Census, ACS,
-  # DHS, TR files) are loaded from the cached baseline store automatically.
   # shortcut = TRUE tells targets to skip upstream dependency checking, so
   # cached data targets are loaded as-is without attempting to re-validate
-  # or re-run them (which would fail in Docker where data files aren't mounted).
+  # or re-run them. Pure data-loading targets (NCHS, Census, ACS, DHS, TR
+  # files) are loaded from the cached baseline store automatically.
+  # Computation targets listed here are rebuilt with the user's modified config.
   targets_to_make <- c(
     # Config: re-reads from the temporary YAML with user's modified params
     "config_assumptions",
@@ -56,18 +67,39 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     "fertility_rates_projected",
     "fertility_rates_complete",
 
-    # Mortality: re-processes projected qx from cached mortality intermediates
+    # Mortality chain
+    "nchs_deaths_raw",             # For use_wonder_provisional (reads from existing cache)
+    "mortality_mx_projected",      # For starting_aax_method, ultimate_year, elderly_aax_cap, apply_covid
+    "mortality_qx_historical",     # For hmd_calibration changes on historical qx
     "mortality_qx_projected",
     "mortality_qx_for_projection",
 
-    # Marriage/divorce: extract from cached projection objects
-    # NOTE: if marriage/divorce config params change, the underlying
-    # marriage_projection / divorce_projection targets would need to be
-    # re-run too, but they use internal file caching that requires writable
-    # data/cache/ (read-only in Docker). For now, only fertility/mortality
-    # parameter changes produce updated results.
+    # Immigration chain (reads V.A2 from data/raw/)
+    "lpr_distribution",            # For distribution_method
+    "va2_net_immigration",         # For immigration_scenario
+    "lpr_assumptions",             # For lpr_assumptions_source, emigration_ratio
+    "lpr_projection_result",       # Uses updated lpr_distribution + lpr_assumptions
+    "lpr_immigration_projected",   # Extraction
+    "new_arrivals_projected",      # Extraction
+    "aos_projected",               # Extraction
+    "legal_emigration_projected",  # Uses updated lpr_assumptions
+    "net_lpr_immigration",         # Uses updated immigration chain
+    "net_o_for_projection",        # Uses updated va2_net_immigration
+
+    # O-immigration (ARTEMIS-computed, for net_o_source = "artemis")
+    "historical_temp_unlawful",    # For o_population_method (with runtime cache)
+    "o_immigration_projection",    # Pure computation, no cache writes
+    "net_o_immigration",           # Extraction
+
+    # Marriage/divorce (full pipeline with writable temp cache)
+    "marriage_projection",         # Force recompute with runtime cache dir
+    "divorce_projection",          # Force recompute with runtime cache dir
     "marriage_amr_projected",
     "divorce_adr_projected",
+
+    # Starting population (reads from data/raw/ or cached baseline)
+    "starting_population",         # For historical_pop_source
+    "starting_marital_pop",        # Depends on historical_population_marital (cached)
 
     # Core population projection (pure computation)
     "population_projection",
@@ -97,6 +129,9 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     "mortality_qx_projected",
     "marriage_amr_projected",
     "divorce_adr_projected",
+    "marriage_projection",
+    "divorce_projection",
+    "net_lpr_immigration",
     "population_projection_summary"
   )
 

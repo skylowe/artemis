@@ -150,22 +150,30 @@ create_projected_population_targets <- function() {
 
     # Core population projection
     # Note: va2_net_immigration and net_o_for_projection are defined in immigration_targets.R
+    # net_o_source config selects between V.A2 totals and ARTEMIS-computed O-immigration
     targets::tar_target(
       population_projection,
-      run_population_projection(
-        starting_population = starting_population$population,
-        birth_rates = fertility_rates_complete,
-        mortality_qx = mortality_qx_for_projection,
-        net_lpr = net_lpr_immigration,
-        net_o = net_o_for_projection,
-        start_year = config_assumptions$projected_population$starting_year,
-        end_year = config_assumptions$projected_population$projection_end,
-        config = list(sex_ratio_at_birth = config_assumptions$projected_population$sex_ratio_at_birth,
-                      population_status = config_assumptions$projected_population$population_status,
-                      ages = config_assumptions$projected_population$ages),
-        qx_100_119 = qx_100_119,
-        verbose = TRUE
-      )
+      {
+        net_o_source <- config_assumptions$projected_population$net_o_source %||% "va2"
+        net_o <- if (net_o_source == "artemis") net_o_immigration else net_o_for_projection
+        if (net_o_source == "artemis") {
+          cli::cli_alert_info("Using ARTEMIS-computed net O immigration (Section 1.5 pipeline)")
+        }
+        run_population_projection(
+          starting_population = starting_population$population,
+          birth_rates = fertility_rates_complete,
+          mortality_qx = mortality_qx_for_projection,
+          net_lpr = net_lpr_immigration,
+          net_o = net_o,
+          start_year = config_assumptions$projected_population$starting_year,
+          end_year = config_assumptions$projected_population$projection_end,
+          config = list(sex_ratio_at_birth = config_assumptions$projected_population$sex_ratio_at_birth,
+                        population_status = config_assumptions$projected_population$population_status,
+                        ages = config_assumptions$projected_population$ages),
+          qx_100_119 = qx_100_119,
+          verbose = TRUE
+        )
+      }
     ),
 
     targets::tar_target(projected_population, population_projection$population),

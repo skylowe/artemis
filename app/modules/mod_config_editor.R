@@ -8,6 +8,14 @@ mod_config_editor_ui <- function(id) {
   ns <- NS(id)
 
   tagList(
+    # Info panel about scenario projection behavior
+    tags$div(
+      class = "alert alert-info py-1 px-2 small mb-2",
+      tags$strong("Scenario mode:"),
+      " All parameters below are fully functional. Upstream data (Census, DHS,",
+      " ACS) is loaded from the cached baseline."
+    ),
+
     # CRITICAL Parameters - Always Visible
     h5("Critical Parameters", class = "text-primary"),
 
@@ -204,6 +212,16 @@ mod_config_editor_ui <- function(id) {
             "V.A2 flows only" = "va2_flows"
           ),
           selected = "residual"
+        ),
+
+        selectInput(
+          ns("net_o_source"),
+          "Net O Immigration Source",
+          choices = c(
+            "V.A2 Totals (Official)" = "va2",
+            "ARTEMIS Computed" = "artemis"
+          ),
+          selected = "va2"
         )
       )
     ),
@@ -326,6 +344,9 @@ mod_config_editor_server <- function(id, rv) {
       updateSelectInput(session, "o_population_method",
         selected = config$historical_population$o_population$method %||% "residual")
 
+      updateSelectInput(session, "net_o_source",
+        selected = config$projected_population$net_o_source %||% "va2")
+
       # Check if custom recent TFR is enabled and populate values
       has_custom_tfr <- !is.null(config$fertility$custom_recent_tfr) &&
                         length(config$fertility$custom_recent_tfr) > 0
@@ -400,6 +421,12 @@ mod_config_editor_server <- function(id, rv) {
         config$historical_population$o_population <- list()
       }
       config$historical_population$o_population$method <- input$o_population_method
+
+      # Net O immigration source
+      if (is.null(config$projected_population)) {
+        config$projected_population <- list()
+      }
+      config$projected_population$net_o_source <- input$net_o_source
 
       # Store modified config
       modified_config(config)

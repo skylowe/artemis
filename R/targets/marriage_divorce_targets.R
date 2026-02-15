@@ -112,22 +112,31 @@ create_marriage_divorce_targets <- function() {
 
     targets::tar_target(
       marriage_projection,
-      run_marriage_projection(
-        nchs_marriages_1978_1988 = nchs_mra_marriages_1978_1988,
-        cps_unmarried = cps_unmarried_population,
-        nchs_subset = nchs_mra_subset_1989_1995,
-        acs_grids = acs_marriage_grids,
-        nchs_us_totals = nchs_us_total_marriages,
-        standard_pop_by_group = standard_pop_2010,
-        prior_status_data = nchs_prior_status_1978_1988,
-        unmarried_pop_by_status = cps_unmarried_by_prior_status,
-        same_sex_data = acs_same_sex_grids,
-        same_sex_fraction = same_sex_fraction,
-        config = config_assumptions,
-        include_same_sex = TRUE,
-        include_prior_status = TRUE,
-        force_recompute = FALSE
-      )
+      {
+        scenario_mode <- isTRUE(config_assumptions$runtime$scenario_mode)
+        cache_dir <- if (scenario_mode) {
+          file.path(config_assumptions$runtime$cache_dir, "marriage")
+        } else {
+          here::here("data/cache/marriage")
+        }
+        run_marriage_projection(
+          nchs_marriages_1978_1988 = nchs_mra_marriages_1978_1988,
+          cps_unmarried = cps_unmarried_population,
+          nchs_subset = nchs_mra_subset_1989_1995,
+          acs_grids = acs_marriage_grids,
+          nchs_us_totals = nchs_us_total_marriages,
+          standard_pop_by_group = standard_pop_2010,
+          prior_status_data = nchs_prior_status_1978_1988,
+          unmarried_pop_by_status = cps_unmarried_by_prior_status,
+          same_sex_data = acs_same_sex_grids,
+          same_sex_fraction = same_sex_fraction,
+          config = config_assumptions,
+          include_same_sex = TRUE,
+          include_prior_status = TRUE,
+          cache_dir = cache_dir,
+          force_recompute = scenario_mode
+        )
+      }
     ),
 
     targets::tar_target(marriage_rates_all, marriage_projection$all_rates),
@@ -154,14 +163,22 @@ create_marriage_divorce_targets <- function() {
 
     targets::tar_target(
       divorce_projection,
-      run_divorce_projection(
-        cache_dir = here::here("data/cache"),
-        ultimate_adr = config_assumptions$divorce$ultimate_adr,
-        ultimate_year = config_assumptions$divorce$ultimate_year,
-        end_year = config_assumptions$metadata$projection_period$end_year,
-        force = FALSE,
-        config = config_assumptions
-      )
+      {
+        scenario_mode <- isTRUE(config_assumptions$runtime$scenario_mode)
+        cache_dir <- if (scenario_mode) {
+          config_assumptions$runtime$cache_dir
+        } else {
+          here::here("data/cache")
+        }
+        run_divorce_projection(
+          cache_dir = cache_dir,
+          ultimate_adr = config_assumptions$divorce$ultimate_adr,
+          ultimate_year = config_assumptions$divorce$ultimate_year,
+          end_year = config_assumptions$metadata$projection_period$end_year,
+          force = scenario_mode,
+          config = config_assumptions
+        )
+      }
     ),
 
     # Extract divorce outputs

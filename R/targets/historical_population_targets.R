@@ -54,18 +54,27 @@ create_historical_population_targets <- function() {
     # Step 3: Temporary/Unlawfully Present Population (Eq 1.4.3)
     targets::tar_target(
       historical_temp_unlawful,
-      calculate_historical_temp_unlawful(
-        start_year = config_assumptions$historical_population$start_year,
-        end_year = config_assumptions$historical_population$end_year,
-        ages = 0:config_assumptions$historical_population$max_age,
-        config = config_assumptions,
-        total_pop = historical_population,
-        lpr_assumptions = lpr_assumptions,
-        immigration_dist = lpr_distribution,
-        emigration_dist = emigration_distribution,
-        births_by_sex = nchs_births_by_sex,
-        use_cache = TRUE
-      )
+      {
+        scenario_mode <- isTRUE(config_assumptions$runtime$scenario_mode)
+        cache_dir <- if (scenario_mode) {
+          config_assumptions$runtime$cache_dir
+        } else {
+          here::here("data/cache")
+        }
+        calculate_historical_temp_unlawful(
+          start_year = config_assumptions$historical_population$start_year,
+          end_year = config_assumptions$historical_population$end_year,
+          ages = 0:config_assumptions$historical_population$max_age,
+          config = config_assumptions,
+          total_pop = historical_population,
+          lpr_assumptions = lpr_assumptions,
+          immigration_dist = lpr_distribution,
+          emigration_dist = emigration_distribution,
+          births_by_sex = nchs_births_by_sex,
+          use_cache = !scenario_mode,
+          cache_dir = cache_dir
+        )
+      }
     ),
 
     # Step 4: Civilian Noninstitutionalized Population (Eq 1.4.4)

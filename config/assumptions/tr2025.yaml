@@ -696,6 +696,11 @@ projected_population:
     lesbian_percent: 0.045  # 4.5% of female population
     same_sex_start_year: 2013  # Federal recognition year
 
+  # Net O immigration source for projection
+  # "va2" = V.A2 totals with TR-derived distribution (default, matches TR2025)
+  # "artemis" = ARTEMIS-computed O-immigration from full Section 1.5 pipeline
+  net_o_source: "va2"
+
   # Age ranges
   ages:
     min_age: 0
