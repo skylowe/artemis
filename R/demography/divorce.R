@@ -85,6 +85,7 @@ get_divorce_config <- function(config = NULL) {
     adjustment_year = as.integer(null_default(dc$adjustment_year, 2020L)),
     base_period_start = as.integer(null_default(dc$base_period_start, 1979L)),
     base_period_end = as.integer(null_default(dc$base_period_end, 1988L)),
+    historical_end_year = as.integer(null_default(dc$historical_end_year, 2022L)),
     rate_cap = null_default(dc$rate_cap, 50000),
     ss_area_factor_override = dc$ss_area_factor_override,
     pr_vi = list(
@@ -579,7 +580,8 @@ validate_married_couples_grid <- function(grid) {
 #'
 #' @export
 validate_divorce_population_data <- function(marital_pop,
-                                              cache_dir = here::here("data/cache")) {
+                                              cache_dir = here::here("data/cache"),
+                                              config = NULL) {
   results <- list(
     checks = list(),
     passed = 0,
@@ -633,7 +635,9 @@ validate_divorce_population_data <- function(marital_pop,
 
   # Check 3: SS area factors available
   tryCatch({
-    factors <- get_divorce_ss_area_factors(c(1988, 2010, 2022), cache_dir)
+    bp_end <- if (!is.null(config)) as.integer(config$divorce$base_period_end %||% 1988L) else 1988L
+    hist_end <- if (!is.null(config)) as.integer(config$divorce$historical_end_year %||% 2022L) else 2022L
+    factors <- get_divorce_ss_area_factors(c(bp_end, 2010, hist_end), cache_dir)
     check3_passed <- length(factors) == 3 && all(factors > 1.0) && all(factors < 1.1)
     results$checks$ss_area_factors <- list(
       passed = check3_passed,
@@ -657,8 +661,8 @@ validate_divorce_population_data <- function(marital_pop,
   })
 
   # Check 4: Population totals available for key years
-  # Expected: 1979-1988 (10), 1998-2000 (3), 2008-2022 (15) = 28 years
-  key_years <- c(1979:1988, 1998:2000, 2008:2022)
+  bp_start <- if (!is.null(config)) as.integer(config$divorce$base_period_start %||% 1979L) else 1979L
+  key_years <- c(bp_start:bp_end, 1998:2000, 2008:hist_end)
   tryCatch({
     pop_totals <- get_population_totals_for_divorce(key_years, cache_dir)
     n_years <- nrow(pop_totals)
@@ -877,9 +881,16 @@ build_base_divgrid <- function(detailed_divorces,
                                 h_param = 1,
                                 w_param = 1,
                                 config = NULL) {
-  cli::cli_h2("Building Base DivGrid (1979-1988)")
+  # Get base period years from config
+  if (is.null(config) || is.null(config$divorce)) {
+    cli::cli_abort("Config is required for {.fn build_base_divgrid}.")
+  }
+  bp_start <- as.integer(config$divorce$base_period_start %||% 1979L)
+  bp_end <- as.integer(config$divorce$base_period_end %||% 1988L)
 
-  years <- 1979:1988
+  cli::cli_h2("Building Base DivGrid ({bp_start}-{bp_end})")
+
+  years <- bp_start:bp_end
   n_years <- length(years)
 
   # Get SS area factors
@@ -931,8 +942,8 @@ build_base_divgrid <- function(detailed_divorces,
       cli::cli_abort("No US total divorces for year {yr}. Check nchs_us_total_divorces.csv.")
     }
 
-    # Estimate PR/VI for this year (scale by US total ratio to 1988)
-    pr_vi <- pr_vi_1988 * (us_total / us_totals[year == 1988, total_divorces])
+    # Estimate PR/VI for this year (scale by US total ratio to base period end)
+    pr_vi <- pr_vi_1988 * (us_total / us_totals[year == bp_end, total_divorces])
 
     # Get SS area factor
     ss_factor <- ss_factors[as.character(yr)]
@@ -1244,11 +1255,16 @@ validate_divgrid <- function(divgrid, standard_pop = NULL) {
 fetch_base_divgrid <- function(cache_dir = here::here("data/cache"),
                                 force = FALSE,
                                 config = NULL) {
-  cache_file <- file.path(cache_dir, "divorce", "base_divgrid_1979_1988.rds")
+  # Get base period years from config
+  bp_start <- as.integer(config$divorce$base_period_start %||% 1979L)
+  bp_end <- as.integer(config$divorce$base_period_end %||% 1988L)
+
+  cache_file <- file.path(cache_dir, "divorce",
+                           sprintf("base_divgrid_%d_%d.rds", bp_start, bp_end))
 
   # Return cached if available
   if (file.exists(cache_file) && !force) {
-    cli::cli_alert_success("Loading cached base DivGrid (1979-1988)")
+    cli::cli_alert_success("Loading cached base DivGrid ({bp_start}-{bp_end})")
     return(readRDS(cache_file))
   }
 
@@ -1261,7 +1277,7 @@ fetch_base_divgrid <- function(cache_dir = here::here("data/cache"),
   marital_pop <- data.table::as.data.table(marital_pop)
 
   detailed_divorces <- fetch_nchs_dra_divorces_detailed_1979_1988(cache_dir = cache_dir)
-  us_totals <- fetch_nchs_us_total_divorces(years = 1979:1988)
+  us_totals <- fetch_nchs_us_total_divorces(years = bp_start:bp_end)
 
   # Build DivGrid
   result <- build_base_divgrid(
@@ -1676,7 +1692,10 @@ fetch_adjusted_divgrid <- function(cache_dir = here::here("data/cache"),
   base_adr <- calculate_adr(base_divgrid, standard_pop)
   adjusted_adr <- calculate_adr(adjusted_divgrid, standard_pop)
 
-  cli::cli_alert_info("Base ADR (1979-1988): {round(base_adr, 1)} per 100,000")
+  bp_start <- as.integer(config$divorce$base_period_start %||% 1979L)
+  bp_end <- as.integer(config$divorce$base_period_end %||% 1988L)
+
+  cli::cli_alert_info("Base ADR ({bp_start}-{bp_end}): {round(base_adr, 1)} per 100,000")
   cli::cli_alert_info("Adjusted ADR (ACS {min(acs_years)}-{max(acs_years)}): {round(adjusted_adr, 1)} per 100,000")
 
   result <- list(
@@ -1686,7 +1705,7 @@ fetch_adjusted_divgrid <- function(cache_dir = here::here("data/cache"),
     base_adr = base_adr,
     adjusted_adr = adjusted_adr,
     metadata = list(
-      base_years = 1979:1988,
+      base_years = bp_start:bp_end,
       acs_years = acs_data$years,
       adjustment_year = median(acs_data$years),
       created = Sys.time()
@@ -1918,8 +1937,10 @@ get_pr_vi_divorces_for_year <- function(year, cache_dir = here::here("data/cache
   }
   pr_vi_cfg <- config$divorce$pr_vi
 
-  # Try ACS data for 2008-2022
-  if (year %in% setdiff(2008:2022, 2020)) {
+  # Try ACS PR divorce data (check for cached file)
+  hist_end <- as.integer(config$divorce$historical_end_year %||% 2022L)
+  acs_excluded <- config$historical_population$acs_excluded_years %||% list(2020L)
+  if (year %in% setdiff(2008:hist_end, as.integer(unlist(acs_excluded)))) {
     acs_cache_dir <- file.path(cache_dir, "acs_divorce")
     acs_pr_file <- file.path(acs_cache_dir, sprintf("pr_divorces_%d.rds", year))
 
@@ -2102,15 +2123,16 @@ calculate_historical_year_rates <- function(year,
 }
 
 
-#' Calculate historical ADR series (1989-2022)
+#' Calculate historical ADR series
 #'
 #' @description
 #' Calculates the age-adjusted divorce rate for each year in the
-#' historical period (1989-2022) per TR2025 methodology.
+#' historical period per TR2025 methodology.
 #'
-#' @param years Integer vector of years (default: 1989:2022)
+#' @param years Integer vector of years to calculate
 #' @param cache_dir Cache directory path
 #' @param force Logical: force recalculation (default: FALSE)
+#' @param config Config list (required for adjustment_year and PR/VI params)
 #'
 #' @return data.table with columns:
 #'   - year: Calendar year
@@ -2120,20 +2142,21 @@ calculate_historical_year_rates <- function(year,
 #'   - scale_factor: Applied scaling factor
 #'
 #' @export
-calculate_historical_adr_series <- function(years = 1989:2022,
+calculate_historical_adr_series <- function(years,
                                              cache_dir = here::here("data/cache"),
                                              force = FALSE,
                                              config = NULL) {
 
-  cache_file <- file.path(cache_dir, "divorce", "historical_adr_1989_2022.rds")
+  cache_file <- file.path(cache_dir, "divorce",
+                           sprintf("historical_adr_%d_%d.rds", min(years), max(years)))
 
   # Return cached if available
   if (file.exists(cache_file) && !force) {
-    cli::cli_alert_success("Loading cached historical ADR series (1989-2022)")
+    cli::cli_alert_success("Loading cached historical ADR series ({min(years)}-{max(years)})")
     return(readRDS(cache_file))
   }
 
-  cli::cli_h2("Calculating Historical ADR Series (1989-2022)")
+  cli::cli_h2("Calculating Historical ADR Series ({min(years)}-{max(years)})")
 
   # Load required data
   cli::cli_alert("Loading required data...")
@@ -2203,7 +2226,7 @@ calculate_historical_adr_series <- function(years = 1989:2022,
         standard_pop = standard_pop,
         ss_area_factor = ss_factor,
         cache_dir = cache_dir,
-        base_year = 1988,
+        base_year = as.integer(config$divorce$base_period_end %||% 1988L),
         adjustment_year = adjustment_year,
         config = config
       )
@@ -2322,7 +2345,7 @@ validate_historical_adr <- function(historical_adr) {
   cli::cli_h2("Historical ADR Validation")
 
   # Check 1: All years present
-  expected_years <- length(1989:2022)
+  expected_years <- length(min(historical_adr$year):max(historical_adr$year))
   actual_years <- nrow(historical_adr)
   check1_passed <- actual_years >= expected_years - 2  # Allow up to 2 missing
   results$checks$years_complete <- list(
@@ -2388,13 +2411,16 @@ validate_historical_adr <- function(historical_adr) {
   }
 
   # Check 5: General trend is declining (divorce rates have fallen since 1990s)
-  early_avg <- mean(historical_adr[year <= 1995, adr], na.rm = TRUE)
-  late_avg <- mean(historical_adr[year >= 2018, adr], na.rm = TRUE)
+  early_avg <- mean(historical_adr[year <= min(year) + 6, adr], na.rm = TRUE)
+  late_avg <- mean(historical_adr[year >= max(year) - 4, adr], na.rm = TRUE)
   check5_passed <- late_avg < early_avg
   results$checks$declining_trend <- list(
     passed = check5_passed,
-    message = sprintf("ADR trend: 1989-1995 avg %.1f → 2018-2022 avg %.1f (%s)",
-                      early_avg, late_avg,
+    message = sprintf("ADR trend: %d-%d avg %.1f → %d-%d avg %.1f (%s)",
+                      min(historical_adr$year), 1995,
+                      early_avg,
+                      max(historical_adr$year) - 4, max(historical_adr$year),
+                      late_avg,
                       if (check5_passed) "declining as expected" else "not declining")
   )
   if (check5_passed) {
@@ -2441,19 +2467,25 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
     return(readRDS(cache_file))
   }
 
-  cli::cli_h1("Building Complete Historical Divorce Data (1979-2022)")
+  # Derive year ranges from config
+  bp_start <- as.integer(config$divorce$base_period_start %||% 1979L)
+  bp_end <- as.integer(config$divorce$base_period_end %||% 1988L)
+  hist_end <- as.integer(config$divorce$historical_end_year %||% 2022L)
+  hist_start <- bp_end + 1L
 
-  # Get base period ADR from the base DivGrid (1979-1988)
+  cli::cli_h1("Building Complete Historical Divorce Data ({bp_start}-{hist_end})")
+
+  # Get base period ADR from the base DivGrid
   base_result <- fetch_base_divgrid(cache_dir = cache_dir, force = FALSE, config = config)
 
   # Build base period ADR series
-  cli::cli_alert("Building base period ADR series (1979-1988)...")
+  cli::cli_alert("Building base period ADR series ({bp_start}-{bp_end})...")
   base_adr <- base_result$base_adr
 
-  # For 1979-1988, we use the yearly rates from build_base_divgrid
+  # For base period, we use the yearly rates from build_base_divgrid
   # which gives us ADR for each year
   base_years_adr <- data.table::data.table(
-    year = 1979:1988,
+    year = bp_start:bp_end,
     adr = base_adr,  # Using average for all years (simplification)
     source = "NCHS DRA detailed"
   )
@@ -2461,9 +2493,9 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
   # Get adjusted DivGrid
   adjusted_result <- fetch_adjusted_divgrid(cache_dir = cache_dir, force = FALSE, config = config)
 
-  # Calculate historical period (1989-2022)
+  # Calculate historical period (after base through end of data)
   historical_period <- calculate_historical_adr_series(
-    years = 1989:2022,
+    years = hist_start:hist_end,
     cache_dir = cache_dir,
     force = force,
     config = config
@@ -2484,7 +2516,7 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
 
   # Summary
   cli::cli_alert_success("Complete historical ADR series: {nrow(complete_adr)} years")
-  cli::cli_alert_info("Base period (1979-1988) ADR: {round(base_adr, 1)}")
+  cli::cli_alert_info("Base period ({bp_start}-{bp_end}) ADR: {round(base_adr, 1)}")
   cli::cli_alert_info("Starting ADR for projection: {round(starting_adr, 1)}")
 
   result <- list(
@@ -2494,8 +2526,8 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
     historical_period = historical_period,
     starting_adr = starting_adr,
     metadata = list(
-      base_years = 1979:1988,
-      historical_years = 1989:2022,
+      base_years = bp_start:bp_end,
+      historical_years = hist_start:hist_end,
       created = Sys.time()
     )
   )
@@ -3210,7 +3242,9 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
   # =========================================================================
   # STEP 1: Get historical divorce data (includes base and adjusted DivGrid)
   # =========================================================================
-  cli::cli_h2("Step 1: Loading Historical Divorce Data (1979-2022)")
+  bp_start <- as.integer(config$divorce$base_period_start %||% 1979L)
+  hist_end <- as.integer(config$divorce$historical_end_year %||% 2022L)
+  cli::cli_h2("Step 1: Loading Historical Divorce Data ({bp_start}-{hist_end})")
 
   historical <- get_historical_divorce_data(cache_dir, force = force, config = config)
 
@@ -3219,7 +3253,7 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
   standard_pop <- historical$adjusted_result$standard_pop
   starting_adr <- historical$starting_adr
 
-  cli::cli_alert_info("Base ADR (1979-1988): {round(historical$base_result$base_adr, 1)}")
+  cli::cli_alert_info("Base ADR ({bp_start}-{config$divorce$base_period_end %||% 1988L}): {round(historical$base_result$base_adr, 1)}")
   cli::cli_alert_info("Starting ADR (for projection): {round(starting_adr, 1)}")
 
   # =========================================================================
@@ -3297,9 +3331,9 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
   cli::cli_h2("Projection Summary")
   cli::cli_alert_success("Complete divorce projection finished in {round(elapsed, 1)}s")
   cli::cli_alert_info("Historical years: {min(historical$adr_series$year)} - {max(historical$adr_series$year)}")
-  cli::cli_alert_info("Projected years: 2023 - {end_year}")
+  cli::cli_alert_info("Projected years: {start_year} - {end_year}")
   cli::cli_alert_info("Total years: {nrow(complete_adr)}")
-  cli::cli_alert_info("ADR trajectory: {round(starting_adr, 1)} (2022) -> {ultimate_adr} ({ultimate_year}) -> {ultimate_adr} ({end_year})")
+  cli::cli_alert_info("ADR trajectory: {round(starting_adr, 1)} ({hist_end}) -> {ultimate_adr} ({ultimate_year}) -> {ultimate_adr} ({end_year})")
   cli::cli_alert_info("Validation: {validation$n_pass}/{validation$n_total} checks passed")
 
   result <- list(

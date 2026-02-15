@@ -642,6 +642,10 @@ divorce:
   base_period_start: 1979
   base_period_end: 1988
 
+  # Last year of historical divorce data (NCHS US totals)
+  # For TR2026, update to 2023 (or whatever the last available data year is)
+  historical_end_year: 2022
+
   # Maximum plausible divorce rate per 100,000 (cap for extreme cells)
   rate_cap: 50000
 
