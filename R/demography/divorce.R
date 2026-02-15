@@ -398,13 +398,10 @@ calculate_adr <- function(rates, standard_pop) {
     # This matches how the standard_pop grid is constructed (geometric means)
     denominator <- sqrt(total_male * total_female)
   } else {
-    # Estimate from the grid
-    # P_{x,y}^S = sqrt(male_x × female_y)
-    # For the total, we need sqrt(total_male × total_female)
-    # Approximate as sum(P) / n_ages (similar to marriage subprocess)
-    n_ages <- nrow(rates)
-    total_P <- sum(standard_pop, na.rm = TRUE)
-    denominator <- total_P / n_ages
+    cli::cli_abort(c(
+      "Standard population missing {.arg total_married_male}/{.arg total_married_female} attributes.",
+      "i" = "Use {.fn build_standard_married_population} to create standard_pop with required attributes."
+    ))
   }
 
   if (denominator == 0) {
@@ -878,7 +875,8 @@ build_base_divgrid <- function(detailed_divorces,
                                 cache_dir = here::here("data/cache"),
                                 smooth = TRUE,
                                 h_param = 1,
-                                w_param = 1) {
+                                w_param = 1,
+                                config = NULL) {
   cli::cli_h2("Building Base DivGrid (1979-1988)")
 
   years <- 1979:1988
@@ -887,9 +885,12 @@ build_base_divgrid <- function(detailed_divorces,
   # Get SS area factors
   ss_factors <- get_divorce_ss_area_factors(years, cache_dir)
 
-  # Get PR/VI divorces (only have 1988)
-  # For other years, estimate based on 1988 ratio
-  pr_vi_1988 <- 13380  # Approximate from available data
+  # Get PR/VI divorces anchor from config
+  if (!is.null(config) && !is.null(config$divorce$pr_vi$anchor_1988_total)) {
+    pr_vi_1988 <- config$divorce$pr_vi$anchor_1988_total
+  } else {
+    cli::cli_abort("Config is required: config$divorce$pr_vi$anchor_1988_total not set.")
+  }
 
   # Initialize storage
   yearly_rates <- list()
@@ -927,8 +928,7 @@ build_base_divgrid <- function(detailed_divorces,
     # Get US total for this year
     us_total <- us_totals[year == yr, total_divorces]
     if (length(us_total) == 0 || is.na(us_total)) {
-      cli::cli_warn("No US total for year {yr}, using DRA estimate")
-      us_total <- dra_total / 0.48  # Approximate DRA coverage
+      cli::cli_abort("No US total divorces for year {yr}. Check nchs_us_total_divorces.csv.")
     }
 
     # Estimate PR/VI for this year (scale by US total ratio to 1988)
@@ -1269,7 +1269,8 @@ fetch_base_divgrid <- function(cache_dir = here::here("data/cache"),
     marital_pop = marital_pop,
     us_totals = us_totals,
     cache_dir = cache_dir,
-    smooth = TRUE
+    smooth = TRUE,
+    config = config
   )
 
   # Add standard population ADR (using config for standard_population_years, min_age, max_age)
@@ -1641,7 +1642,7 @@ fetch_adjusted_divgrid <- function(cache_dir = here::here("data/cache"),
     if (!is.null(config) && !is.null(config$divorce$acs_years)) {
       acs_years <- as.integer(unlist(config$divorce$acs_years))
     } else {
-      acs_years <- 2018L:2022L
+      cli::cli_abort("Config is required: config$divorce$acs_years not set.")
     }
   }
 
@@ -1863,17 +1864,22 @@ validate_adjusted_divgrid <- function(adjusted_result) {
 estimate_ss_area_divorces <- function(year,
                                        us_divorces,
                                        pr_vi_divorces = NULL,
-                                       ss_area_factor = NULL) {
+                                       ss_area_factor = NULL,
+                                       config = NULL) {
 
-  # If PR/VI divorces not provided, estimate based on historical ratio
-  # PR/VI typically ~1-2% of US total
+  # PR/VI divorces must be provided or derivable from config
   if (is.null(pr_vi_divorces)) {
-    pr_vi_divorces <- us_divorces * 0.012  # ~1.2% of US
+    if (!is.null(config) && !is.null(config$divorce$pr_vi$us_ratio)) {
+      pr_vi_divorces <- us_divorces * config$divorce$pr_vi$us_ratio
+      cli::cli_alert_info("Estimated PR/VI divorces from config ratio: {round(pr_vi_divorces)}")
+    } else {
+      cli::cli_abort("PR/VI divorces not provided and config$divorce$pr_vi$us_ratio not set.")
+    }
   }
 
-  # If SS area factor not provided, use default (~1.02)
+  # SS area factor must be provided
   if (is.null(ss_area_factor)) {
-    ss_area_factor <- 1.02
+    cli::cli_abort("SS area factor is required for {.fn estimate_ss_area_divorces}.")
   }
 
   # SS area divorces = (US + PR/VI) × SS area factor
@@ -1897,13 +1903,20 @@ estimate_ss_area_divorces <- function(year,
 #' @return Numeric: estimated PR + VI divorces
 #'
 #' @export
-get_pr_vi_divorces_for_year <- function(year, cache_dir = here::here("data/cache")) {
+get_pr_vi_divorces_for_year <- function(year, cache_dir = here::here("data/cache"),
+                                        config = NULL) {
 
   # Try to get from NCHS data for available years
   if (year %in% c(1988, 1998:2000)) {
     pr_vi_data <- fetch_pr_vi_divorces(years = year)
     return(sum(pr_vi_data$divorces, na.rm = TRUE))
   }
+
+  # Get PR/VI config parameters
+  if (is.null(config) || is.null(config$divorce$pr_vi)) {
+    cli::cli_abort("Config is required for PR/VI estimation: config$divorce$pr_vi not set.")
+  }
+  pr_vi_cfg <- config$divorce$pr_vi
 
   # Try ACS data for 2008-2022
   if (year %in% setdiff(2008:2022, 2020)) {
@@ -1912,21 +1925,24 @@ get_pr_vi_divorces_for_year <- function(year, cache_dir = here::here("data/cache
 
     if (file.exists(acs_pr_file)) {
       pr_data <- readRDS(acs_pr_file)
-      # Add small estimate for VI (~3% of PR)
-      return(pr_data$total_divorces * 1.03)
+      vi_pr_ratio <- pr_vi_cfg$vi_pr_ratio
+      return(pr_data$total_divorces * (1 + vi_pr_ratio))
     }
   }
 
-  # For other years, estimate based on nearby data
-  # Use 1988 as anchor for pre-2008, ACS average for post-2008
+  # For other years, estimate based on config anchor and decline rate
+  anchor_total <- pr_vi_cfg$anchor_1988_total
+  annual_decline <- pr_vi_cfg$annual_decline
+
   if (year < 2008) {
-    # Estimate based on 1988 value (~13,380) with small annual decline
-    base_pr_vi <- 13380
     years_diff <- year - 1988
-    return(base_pr_vi * (0.99 ^ years_diff))  # ~1% annual decline
+    cli::cli_alert_info("Estimating PR/VI divorces for {year} from 1988 anchor ({anchor_total}) with {annual_decline} annual decline")
+    return(anchor_total * (annual_decline ^ years_diff))
   } else {
-    # Use average from ACS years
-    return(12000)  # Approximate average
+    # Post-2008 without ACS cache: use decline from anchor
+    years_diff <- year - 1988
+    cli::cli_alert_info("Estimating PR/VI divorces for {year} from 1988 anchor (no ACS cache)")
+    return(anchor_total * (annual_decline ^ years_diff))
   }
 }
 
@@ -2034,7 +2050,8 @@ calculate_historical_year_rates <- function(year,
                                              ss_area_factor = NULL,
                                              cache_dir = here::here("data/cache"),
                                              base_year = 1988,
-                                             adjustment_year) {
+                                             adjustment_year,
+                                             config = NULL) {
 
   # Get appropriate DivGrid for this year (weighted average)
   year_divgrid <- get_divgrid_for_year(
@@ -2050,14 +2067,11 @@ calculate_historical_year_rates <- function(year,
 
   # Get SS area factor if not provided
   if (is.null(ss_area_factor)) {
-    ss_area_factor <- tryCatch(
-      get_divorce_ss_area_factor(year, cache_dir),
-      error = function(e) 1.02  # Default fallback
-    )
+    ss_area_factor <- get_divorce_ss_area_factor(year, cache_dir)
   }
 
   # Estimate PR/VI divorces
-  pr_vi_divorces <- get_pr_vi_divorces_for_year(year, cache_dir)
+  pr_vi_divorces <- get_pr_vi_divorces_for_year(year, cache_dir, config = config)
 
   # Estimate SS area total divorces
   ss_area_divorces <- estimate_ss_area_divorces(
@@ -2124,12 +2138,11 @@ calculate_historical_adr_series <- function(years = 1989:2022,
   # Load required data
   cli::cli_alert("Loading required data...")
 
-  # Read adjustment_year from config
-  adjustment_year <- if (!is.null(config) && !is.null(config$divorce$adjustment_year)) {
-    as.integer(config$divorce$adjustment_year)
-  } else {
-    2020L
+  # Read adjustment_year from config (required)
+  if (is.null(config) || is.null(config$divorce$adjustment_year)) {
+    cli::cli_abort("Config is required: config$divorce$adjustment_year not set.")
   }
+  adjustment_year <- as.integer(config$divorce$adjustment_year)
 
   # Get adjusted DivGrid result (includes base, adjusted, and standard_pop)
   adjusted_result <- fetch_adjusted_divgrid(cache_dir = cache_dir, force = FALSE,
@@ -2150,13 +2163,7 @@ calculate_historical_adr_series <- function(years = 1989:2022,
   us_totals <- fetch_nchs_us_total_divorces(years = years)
 
   # Get SS area factors for available years
-  ss_factors <- tryCatch(
-    get_divorce_ss_area_factors(years, cache_dir),
-    error = function(e) {
-      cli::cli_warn("Could not get SS area factors, using default 1.02")
-      setNames(rep(1.02, length(years)), years)
-    }
-  )
+  ss_factors <- get_divorce_ss_area_factors(years, cache_dir)
 
   # Calculate for each year
   results <- list()
@@ -2180,11 +2187,10 @@ calculate_historical_adr_series <- function(years = 1989:2022,
       next
     }
 
-    ss_factor <- if (as.character(yr) %in% names(ss_factors)) {
-      ss_factors[as.character(yr)]
-    } else {
-      1.02
+    if (!(as.character(yr) %in% names(ss_factors))) {
+      cli::cli_abort("No SS area factor available for year {yr}. Check population data.")
     }
+    ss_factor <- ss_factors[as.character(yr)]
 
     # Calculate rates for this year
     tryCatch({
@@ -2198,7 +2204,8 @@ calculate_historical_adr_series <- function(years = 1989:2022,
         ss_area_factor = ss_factor,
         cache_dir = cache_dir,
         base_year = 1988,
-        adjustment_year = adjustment_year
+        adjustment_year = adjustment_year,
+        config = config
       )
 
       results[[as.character(yr)]] <- data.table::data.table(

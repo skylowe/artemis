@@ -449,17 +449,11 @@ load_ipums_marital_data <- function(cache_dir) {
     return(ipums_data)
   }
 
-  cli::cli_alert_warning("IPUMS marital status data not found. Run fetch_ipums_marital_status() first.")
-
-  # Return empty data.table with correct structure
-  data.table::data.table(
-    year = integer(),
-    age = integer(),
-    sex = character(),
-    marital_status = character(),
-    population = numeric(),
-    proportion = numeric()
-  )
+  cli::cli_abort(c(
+    "IPUMS marital status data not found at: {ipums_cache}",
+    "i" = "Run {.fn fetch_ipums_marital_status} to download and process IPUMS data.",
+    "i" = "Or process existing raw extract: {.code ipumsr::read_ipums_micro()}"
+  ))
 }
 
 #' Get ACS marital proportions for a specific year
