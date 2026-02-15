@@ -1045,7 +1045,14 @@ get_tr_lpr_assumptions <- function(years,
                                         alternative,
                                         data_dir,
                                         emigration_ratio) {
-  alternative <- match.arg(alternative, c("intermediate", "low-cost", "high-cost"))
+  # Normalize alternative names: config uses "low"/"high", V.A2 headers use "low-cost"/"high-cost"
+  alternative <- match.arg(alternative, c("intermediate", "low-cost", "high-cost", "low", "high"))
+  # Normalize to the short form used by load_tr_immigration_assumptions
+  alternative <- switch(alternative,
+    "low-cost" = "low",
+    "high-cost" = "high",
+    alternative  # "intermediate", "low", "high" pass through
+  )
 
  # Try to load from V.A2
   va2_available <- tryCatch({
@@ -1081,31 +1088,20 @@ get_tr_lpr_assumptions_va2 <- function(years,
                                             alternative,
                                             data_dir,
                                             emigration_ratio) {
-  # Load V.A2 immigration assumptions
-  imm <- load_tr_immigration_assumptions(data_dir = data_dir, cache = TRUE)
-
-  # For projected years, V.A2 has duplicates for different alternatives
-
-  # Historical years (data_type == "historical") are unique
-  # Projected years appear 3 times (Intermediate, Low-cost, High-cost)
+  # Load V.A2 immigration assumptions for the specified alternative.
+  # load_tr_immigration_assumptions already handles section selection (historical +
+  # alternative-specific projected rows), so no deduplication needed here.
+  imm <- load_tr_immigration_assumptions(
+    data_dir = data_dir,
+    alternative = alternative,
+    cache = TRUE
+  )
 
   # Filter to requested years
   result <- imm[year %in% years]
 
   if (nrow(result) == 0) {
     cli::cli_abort("No V.A2 data found for years {min(years)}-{max(years)}")
-  }
-
-  # Handle duplicates for projected years by keeping first occurrence (Intermediate)
-  # V.A2 structure: Historical first, then Intermediate, then Low-cost, then High-cost
-  # For now, we take the first occurrence which is Intermediate for projected years
-  if (alternative == "intermediate") {
-    result <- result[!duplicated(year)]
-  } else {
-    # For other alternatives, would need to parse the section headers
-    # For now, use the default (Intermediate)
-    cli::cli_alert_warning("Alternative '{alternative}' not yet implemented, using intermediate")
-    result <- result[!duplicated(year)]
   }
 
   # Rename columns to match expected format

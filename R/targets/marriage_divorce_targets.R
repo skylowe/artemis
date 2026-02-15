@@ -165,17 +165,48 @@ create_marriage_divorce_targets <- function() {
       divorce_projection,
       {
         scenario_mode <- isTRUE(config_assumptions$runtime$scenario_mode)
-        cache_dir <- if (scenario_mode) {
-          config_assumptions$runtime$cache_dir
+        if (scenario_mode) {
+          # In scenario mode, data/cache/ is read-only (Docker). Copy baseline
+          # divorce cache to a writable temp dir, then remove only config-dependent
+          # files so they get rebuilt with the user's modified config.
+          # Historical/DRA-based files (base_divgrid, adjusted_divgrid, historical_*)
+          # are config-independent and can be reused.
+          cache_dir <- config_assumptions$runtime$cache_dir
+          baseline_divorce <- here::here("data/cache/divorce")
+          temp_divorce <- file.path(cache_dir, "divorce")
+          dir.create(temp_divorce, showWarnings = FALSE, recursive = TRUE)
+          # Copy all baseline divorce cache files
+          baseline_files <- list.files(baseline_divorce, full.names = TRUE)
+          file.copy(baseline_files, temp_divorce, overwrite = TRUE)
+          # Also copy historical_population cache (needed by fetch_base_divgrid if it rebuilds)
+          baseline_hist_pop <- here::here("data/cache/historical_population")
+          if (dir.exists(baseline_hist_pop)) {
+            temp_hist_pop <- file.path(cache_dir, "historical_population")
+            dir.create(temp_hist_pop, showWarnings = FALSE, recursive = TRUE)
+            file.copy(
+              list.files(baseline_hist_pop, full.names = TRUE),
+              temp_hist_pop, overwrite = TRUE
+            )
+          }
+          # Remove config-dependent files so they get rebuilt
+          config_dependent <- c(
+            "divorce_projection_complete.rds",
+            "projected_adr_2023_2099.rds",
+            "projected_rates_2023_2099.rds"
+          )
+          for (f in config_dependent) {
+            fp <- file.path(temp_divorce, f)
+            if (file.exists(fp)) unlink(fp)
+          }
         } else {
-          here::here("data/cache")
+          cache_dir <- here::here("data/cache")
         }
         run_divorce_projection(
           cache_dir = cache_dir,
           ultimate_adr = config_assumptions$divorce$ultimate_adr,
           ultimate_year = config_assumptions$divorce$ultimate_year,
           end_year = config_assumptions$metadata$projection_period$end_year,
-          force = scenario_mode,
+          force = FALSE,  # Not force — we deleted config-dependent files above
           config = config_assumptions
         )
       }

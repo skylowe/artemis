@@ -135,9 +135,14 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     "population_projection_summary"
   )
 
-  # Run pipeline with progress updates
-  result <- tryCatch({
-    # Check if targets package is available
+  # Run pipeline with progress updates — separate tar_make from data reading
+  # so that partial results are returned even when some targets error.
+
+  # Phase 1: Setup and run tar_make
+  pipeline_error <- NULL
+  store <- NULL
+
+  setup_result <- tryCatch({
     if (!requireNamespace("targets", quietly = TRUE)) {
       stop("targets package not available")
     }
@@ -150,7 +155,7 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     if (!dir.exists(main_store)) {
       stop("Targets store not found at: ", main_store)
     }
-    store <- file.path(tempdir(), paste0("artemis_scenario_", format(Sys.time(), "%Y%m%d%H%M%S")))
+    store <<- file.path(tempdir(), paste0("artemis_scenario_", format(Sys.time(), "%Y%m%d%H%M%S")))
     on.exit(unlink(store, recursive = TRUE), add = TRUE)
 
     report_progress(18, "Copying targets store...")
@@ -174,59 +179,74 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
       # Ignore errors if targets don't exist yet
     })
 
-    report_progress(30, "Running projection pipeline...")
+    list(success = TRUE)
+  }, error = function(e) {
+    list(success = FALSE, error = e$message)
+  })
 
-    # Run with shortcut = TRUE: only build the listed targets, loading all
-    # upstream dependencies (starting_population, historical rates, immigration,
-    # etc.) directly from the cached store without checking staleness.
-    # This prevents cascade into data-loading targets that need files not
-    # available in the Docker container.
+  if (!setup_result$success) {
+    return(list(success = FALSE, error = setup_result$error, data = NULL))
+  }
+
+  # Phase 2: Run tar_make — some targets may error (e.g., divorce_projection in
+  # scenario mode), but other targets (population_projection) may succeed.
+  # tar_make raises a condition when any target errors, but successfully built
+  # targets are still readable from the store.
+  report_progress(30, "Running projection pipeline...")
+  tryCatch({
     targets::tar_make(
       names = tidyselect::any_of(targets_to_make),
       shortcut = TRUE,
       store = store,
       callr_function = NULL  # Run in current session
     )
-
-    report_progress(80, "Loading results...")
-
-    # Load results
-    data <- list()
-    for (target in targets_to_read) {
-      tryCatch({
-        data[[target]] <- targets::tar_read_raw(target, store = store)
-      }, error = function(e) {
-        # Target not available
-      })
-    }
-
-    report_progress(95, "Calculating summary statistics...")
-
-    # Get summary stats
-    pop_2050 <- if (!is.null(data$projected_population)) {
-      sum(data$projected_population[year == 2050]$population, na.rm = TRUE)
-    } else NA
-
-    pop_2099 <- if (!is.null(data$projected_population)) {
-      sum(data$projected_population[year == 2099]$population, na.rm = TRUE)
-    } else NA
-
-    report_progress(100, "Complete")
-
-    list(
-      success = TRUE,
-      data = data,
-      pop_2050 = pop_2050,
-      pop_2099 = pop_2099
-    )
-
   }, error = function(e) {
-    list(
-      success = FALSE,
-      error = e$message,
-      data = NULL
-    )
+    pipeline_error <<- e$message
+    cli::cli_alert_warning("Some targets errored: {e$message}")
   })
+
+  # Phase 3: Load results — read whatever targets succeeded, regardless of
+  # whether tar_make raised a condition.
+  report_progress(80, "Loading results...")
+
+  data <- list()
+  failed_targets <- character()
+  for (target in targets_to_read) {
+    tryCatch({
+      data[[target]] <- targets::tar_read_raw(target, store = store)
+    }, error = function(e) {
+      failed_targets <<- c(failed_targets, target)
+    })
+  }
+
+  report_progress(95, "Calculating summary statistics...")
+
+  # Get summary stats
+  pop_2050 <- if (!is.null(data$projected_population)) {
+    sum(data$projected_population[year == 2050]$population, na.rm = TRUE)
+  } else NA
+
+  pop_2099 <- if (!is.null(data$projected_population)) {
+    sum(data$projected_population[year == 2099]$population, na.rm = TRUE)
+  } else NA
+
+  report_progress(100, "Complete")
+
+  # Return results — success if we got core projection data, even if some
+  # secondary targets (divorce, marriage) failed.
+  has_core_data <- !is.null(data$projected_population) && !is.null(data$population_projection_summary)
+
+  result <- list(
+    success = has_core_data,
+    data = data,
+    pop_2050 = pop_2050,
+    pop_2099 = pop_2099
+  )
+
+  if (!is.null(pipeline_error)) {
+    result$warning <- pipeline_error
+    result$failed_targets <- failed_targets
+  }
 
   result
 }
