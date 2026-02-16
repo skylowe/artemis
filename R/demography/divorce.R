@@ -2431,17 +2431,19 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
   # Get base period ADR from the base DivGrid
   base_result <- fetch_base_divgrid(cache_dir = cache_dir, config = config)
 
-  # Build base period ADR series
+  # Build base period ADR series using year-specific rates
   cli::cli_alert("Building base period ADR series ({bp_start}-{bp_end})...")
-  base_adr <- base_result$base_adr
 
-  # For base period, we use the yearly rates from build_base_divgrid
-  # which gives us ADR for each year
-  base_years_adr <- data.table::data.table(
-    year = bp_start:bp_end,
-    adr = base_adr,  # Using average for all years (simplification)
-    source = "NCHS DRA detailed"
-  )
+  base_years_adr_list <- lapply(names(base_result$yearly_rates), function(yr_str) {
+    yr_rates <- base_result$yearly_rates[[yr_str]]
+    yr_adr <- calculate_adr(yr_rates, base_result$standard_pop)
+    data.table::data.table(
+      year = as.integer(yr_str),
+      adr = yr_adr,
+      source = "NCHS DRA detailed (year-specific)"
+    )
+  })
+  base_years_adr <- data.table::rbindlist(base_years_adr_list)
 
   # Get adjusted DivGrid
   adjusted_result <- fetch_adjusted_divgrid(cache_dir = cache_dir, config = config)
@@ -2468,7 +2470,7 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
 
   # Summary
   cli::cli_alert_success("Complete historical ADR series: {nrow(complete_adr)} years")
-  cli::cli_alert_info("Base period ({bp_start}-{bp_end}) ADR: {round(base_adr, 1)}")
+  cli::cli_alert_info("Base period ({bp_start}-{bp_end}) ADR range: {round(min(base_years_adr$adr), 1)} - {round(max(base_years_adr$adr), 1)} per 100,000")
   cli::cli_alert_info("Starting ADR for projection: {round(starting_adr, 1)}")
 
   result <- list(
