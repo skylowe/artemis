@@ -965,10 +965,12 @@ calculate_historical_population_marital <- function(total_pop,
   cli::cli_alert_info("Mean difference from total: {round(mean_diff, 4)}%")
   cli::cli_alert_info("Max difference from total: {round(max_diff, 4)}%")
 
-  # Cache result
-  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(result, cache_file)
-  cli::cli_alert_success("Cached marital status population")
+  # Cache result — skip if cache disabled (e.g., scenario mode with read-only mount)
+  if (use_cache) {
+    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+    saveRDS(result, cache_file)
+    cli::cli_alert_success("Cached marital status population")
+  }
 
   # Summary statistics
   cli::cli_h2("Summary")

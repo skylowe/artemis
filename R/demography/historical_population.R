@@ -235,13 +235,16 @@ calculate_historical_population <- function(start_year = 1940,
   cli::cli_alert_info("1940 total: {format(total_by_year[year == min(year), total], big.mark = ',', scientific = FALSE)}")
   cli::cli_alert_info("{end_year} total: {format(total_by_year[year == max(year), total], big.mark = ',', scientific = FALSE)}")
 
-  # Save to cache (both population and components)
-  cache_data <- list(
-    population = all_pop,
-    components = component_totals
-  )
-  saveRDS(cache_data, cache_file)
-  cli::cli_alert_success("Saved to cache: {cache_file}")
+  # Save to cache (both population and components) — skip if cache disabled
+  # (e.g., scenario mode where data/cache/ may be read-only)
+  if (use_cache) {
+    cache_data <- list(
+      population = all_pop,
+      components = component_totals
+    )
+    saveRDS(cache_data, cache_file)
+    cli::cli_alert_success("Saved to cache: {cache_file}")
+  }
 
   all_pop
 }
