@@ -618,6 +618,9 @@ divorce:
 
   # Standard population for ADR calculation
   # Per TR2025: "averaged 2009 and 2010 December 31 marriage grids"
+  # DEVIATION: TR2025 Input #1 specifies grids "from the 2015 TR." ARTEMIS
+  # computes these grids from Census/ACS data via the historical population
+  # subprocess. Values may differ slightly from 2015 TR outputs.
   standard_population_years: [2009, 2010]
 
   # Convergence: ADR(t) = ultimate + (starting - ultimate) * (1 - progress)^exponent
@@ -656,6 +659,9 @@ divorce:
 
   # PR/VI divorce estimation parameters
   # Used for gap years when no NCHS or ACS data is available
+  # DEVIATION: TR2025 Inputs #9 and #11 provide PR/VI data for 1988,
+  # 1998-2000, and 2008-2022 only. For gap years (1989-1997, 2001-2007),
+  # ARTEMIS interpolates using exponential decay from the 1988 anchor.
   pr_vi:
     anchor_1988_total: 13380   # Combined PR+VI divorces in 1988
     us_ratio: 0.012            # PR/VI as fraction of US divorces (~1.2%)

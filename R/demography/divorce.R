@@ -13,6 +13,42 @@
 NULL
 
 # =============================================================================
+# KNOWN DEVIATIONS FROM TR2025 (Section 1.7)
+# =============================================================================
+#
+# 1. ACS PUMS substitute for 18-state health department data (Input #10)
+#    TR2025 uses divorce data by husband-age x wife-age from 18 states
+#    (~2009-2012) obtained directly from state health departments. This data
+#    is not publicly available. ARTEMIS substitutes ACS PUMS divorced-in-
+#    past-12-months marginal age distributions (configurable via `acs_years`).
+#    ACS cannot link ex-spouses, so only 1D marginals are available, not the
+#    2D husband x wife grid. Geometric-mean ratioing approximates cell-level
+#    adjustment. See: config `divorce.acs_years`, `divorce.adjustment_year`.
+#
+# 2. Standard population from ARTEMIS vs 2015 TR (Input #1)
+#    TR2025 specifies "averaged 2009 and 2010 December 31 marriage grids
+#    from the 2015 TR." ARTEMIS computes these grids from the same source
+#    data (Census/ACS) via the historical population subprocess, but values
+#    may differ slightly from 2015 TR outputs. Making this a loadable data
+#    file would allow exact matching if official grids become available.
+#    See: config `divorce.standard_population_years`.
+#
+# 3. PR/VI divorce estimation for gap years (1989-1997, 2001-2007)
+#    TR2025 Input #9 provides PR/VI data for 1988, 1998-2000 only. Input #11
+#    provides ACS-based estimates for 2008-2022. For intervening gap years,
+#    ARTEMIS interpolates using exponential decay from the 1988 anchor.
+#    Parameters are configurable via `divorce.pr_vi.*` in YAML.
+#
+# 4. Adjustment year 2020 vs TR2025's 2011
+#    TR2025 uses 2011 state data as the DivGrid adjustment target (Section
+#    1.7.c). ARTEMIS uses ACS midpoint ~2020 because the 18-state data is
+#    unavailable. This lengthens the base-to-adjustment transition from 23
+#    years (1988-2011) to 32 years (1988-2020), making the DivGrid shift
+#    more gradual. See: config `divorce.adjustment_year`.
+#
+# =============================================================================
+
+# =============================================================================
 # CONSTANTS (defaults when config not provided)
 # =============================================================================
 
