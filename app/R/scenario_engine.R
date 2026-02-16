@@ -140,7 +140,6 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
 
   # Phase 1: Setup and run tar_make
   pipeline_error <- NULL
-  store <- NULL
 
   setup_result <- tryCatch({
     if (!requireNamespace("targets", quietly = TRUE)) {
@@ -155,15 +154,14 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     if (!dir.exists(main_store)) {
       stop("Targets store not found at: ", main_store)
     }
-    store <<- file.path(tempdir(), paste0("artemis_scenario_", format(Sys.time(), "%Y%m%d%H%M%S")))
-    on.exit(unlink(store, recursive = TRUE), add = TRUE)
+    store_path <- file.path(tempdir(), paste0("artemis_scenario_", format(Sys.time(), "%Y%m%d%H%M%S")))
 
     report_progress(18, "Copying targets store...")
-    copy_ok <- file.copy(main_store, dirname(store), recursive = TRUE)
+    copy_ok <- file.copy(main_store, dirname(store_path), recursive = TRUE)
     if (!copy_ok) {
       stop("Failed to copy _targets store to temp directory")
     }
-    file.rename(file.path(dirname(store), basename(main_store)), store)
+    file.rename(file.path(dirname(store_path), basename(main_store)), store_path)
 
     # Invalidate ONLY the targets we intend to re-run (targets_to_make).
     # IMPORTANT: Do NOT invalidate targets outside this list — tar_invalidate
@@ -173,16 +171,23 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     tryCatch({
       targets::tar_invalidate(
         names = tidyselect::any_of(targets_to_make),
-        store = store
+        store = store_path
       )
     }, error = function(e) {
       # Ignore errors if targets don't exist yet
     })
 
-    list(success = TRUE)
+    list(success = TRUE, store = store_path)
   }, error = function(e) {
     list(success = FALSE, error = e$message)
   })
+
+  # Extract store path from result — must be done outside tryCatch to stay
+  # in the function's local scope (<<- inside tryCatch body assigns to global).
+  store <- setup_result$store
+  if (!is.null(store)) {
+    on.exit(unlink(store, recursive = TRUE), add = TRUE)
+  }
 
   if (!setup_result$success) {
     return(list(success = FALSE, error = setup_result$error, data = NULL))
