@@ -1244,34 +1244,23 @@ validate_divgrid <- function(divgrid, standard_pop = NULL) {
 # CONVENIENCE FUNCTIONS
 # =============================================================================
 
-#' Fetch or build base DivGrid with caching
+#' Build base DivGrid from source data
 #'
 #' @description
-#' Loads cached DivGrid if available, otherwise builds from source data.
+#' Builds the base DivGrid from source data.
 #' This is the main entry point for obtaining the base DivGrid.
 #'
-#' @param cache_dir Character path to cache directory
-#' @param force Logical: force rebuild even if cached (default: FALSE)
+#' @param cache_dir Character path to cache directory (for reading source data)
 #' @param config Optional config list for parameters (standard_population_years, min_age, max_age)
 #'
 #' @return List with divgrid matrix and metadata
 #'
 #' @export
 fetch_base_divgrid <- function(cache_dir = here::here("data/cache"),
-                                force = FALSE,
                                 config = NULL) {
   # Get base period years from config
   bp_start <- as.integer(config$divorce$base_period_start)
   bp_end <- as.integer(config$divorce$base_period_end)
-
-  cache_file <- file.path(cache_dir, "divorce",
-                           sprintf("base_divgrid_%d_%d.rds", bp_start, bp_end))
-
-  # Return cached if available
-  if (file.exists(cache_file) && !force) {
-    cli::cli_alert_success("Loading cached base DivGrid ({bp_start}-{bp_end})")
-    return(readRDS(cache_file))
-  }
 
   # Build from source data
   cli::cli_alert_info("Building base DivGrid from source data...")
@@ -1281,7 +1270,9 @@ fetch_base_divgrid <- function(cache_dir = here::here("data/cache"),
                                     "ss_population_marital_1940_2022.rds"))
   marital_pop <- data.table::as.data.table(marital_pop)
 
-  detailed_divorces <- fetch_nchs_dra_divorces_detailed_1979_1988(cache_dir = cache_dir)
+  detailed_divorces <- fetch_nchs_dra_divorces_detailed_1979_1988(
+    cache_dir = file.path(cache_dir, "nber_divorce")
+  )
   us_totals <- fetch_nchs_us_total_divorces(years = bp_start:bp_end)
 
   # Build DivGrid
@@ -1298,11 +1289,6 @@ fetch_base_divgrid <- function(cache_dir = here::here("data/cache"),
   std_pop <- build_standard_married_population(marital_pop, config = config)
   result$base_adr <- calculate_adr(result$divgrid, std_pop)
   result$standard_pop <- std_pop
-
-  # Cache result
-  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(result, cache_file)
-  cli::cli_alert_success("Cached base DivGrid to {cache_file}")
 
   result
 }
@@ -1633,15 +1619,14 @@ get_divgrid_for_year <- function(year,
 }
 
 
-#' Fetch ACS-adjusted DivGrid with caching
+#' Build ACS-adjusted DivGrid
 #'
 #' @description
 #' Main entry point for obtaining ACS-adjusted DivGrid.
 #' Builds base DivGrid and applies ACS adjustment.
 #'
-#' @param cache_dir Character path to cache directory
+#' @param cache_dir Character path to cache directory (for reading source data)
 #' @param acs_years Integer vector of ACS years to use for adjustment
-#' @param force Logical: force rebuild (default: FALSE)
 #' @param config Optional config list for parameters
 #'
 #' @return List with:
@@ -1655,7 +1640,6 @@ get_divgrid_for_year <- function(year,
 #' @export
 fetch_adjusted_divgrid <- function(cache_dir = here::here("data/cache"),
                                     acs_years = NULL,
-                                    force = FALSE,
                                     config = NULL) {
 
   # Read acs_years from config if not provided
@@ -1667,18 +1651,10 @@ fetch_adjusted_divgrid <- function(cache_dir = here::here("data/cache"),
     }
   }
 
-  cache_file <- file.path(cache_dir, "divorce", "adjusted_divgrid.rds")
-
-  # Return cached if available
-  if (file.exists(cache_file) && !force) {
-    cli::cli_alert_success("Loading cached ACS-adjusted DivGrid")
-    return(readRDS(cache_file))
-  }
-
   cli::cli_h2("Building ACS-Adjusted DivGrid")
 
   # Get base DivGrid (pass config for standard_population_years, min_age, max_age)
-  base_result <- fetch_base_divgrid(cache_dir = cache_dir, force = FALSE, config = config)
+  base_result <- fetch_base_divgrid(cache_dir = cache_dir, config = config)
   base_divgrid <- base_result$divgrid
   standard_pop <- base_result$standard_pop
 
@@ -1716,11 +1692,6 @@ fetch_adjusted_divgrid <- function(cache_dir = here::here("data/cache"),
       created = Sys.time()
     )
   )
-
-  # Cache result
-  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(result, cache_file)
-  cli::cli_alert_success("Cached ACS-adjusted DivGrid")
 
   result
 }
@@ -2138,8 +2109,7 @@ calculate_historical_year_rates <- function(year,
 #' historical period per TR2025 methodology.
 #'
 #' @param years Integer vector of years to calculate
-#' @param cache_dir Cache directory path
-#' @param force Logical: force recalculation (default: FALSE)
+#' @param cache_dir Cache directory path (for reading source data)
 #' @param config Config list (required for adjustment_year and PR/VI params)
 #'
 #' @return data.table with columns:
@@ -2152,17 +2122,7 @@ calculate_historical_year_rates <- function(year,
 #' @export
 calculate_historical_adr_series <- function(years,
                                              cache_dir = here::here("data/cache"),
-                                             force = FALSE,
                                              config = NULL) {
-
-  cache_file <- file.path(cache_dir, "divorce",
-                           sprintf("historical_adr_%d_%d.rds", min(years), max(years)))
-
-  # Return cached if available
-  if (file.exists(cache_file) && !force) {
-    cli::cli_alert_success("Loading cached historical ADR series ({min(years)}-{max(years)})")
-    return(readRDS(cache_file))
-  }
 
   cli::cli_h2("Calculating Historical ADR Series ({min(years)}-{max(years)})")
 
@@ -2176,7 +2136,7 @@ calculate_historical_adr_series <- function(years,
   adjustment_year <- as.integer(config$divorce$adjustment_year)
 
   # Get adjusted DivGrid result (includes base, adjusted, and standard_pop)
-  adjusted_result <- fetch_adjusted_divgrid(cache_dir = cache_dir, force = FALSE,
+  adjusted_result <- fetch_adjusted_divgrid(cache_dir = cache_dir,
                                             config = config)
   base_divgrid <- adjusted_result$base_divgrid
   adjusted_divgrid <- adjusted_result$adjusted_divgrid
@@ -2273,11 +2233,6 @@ calculate_historical_adr_series <- function(years,
   # Add metadata
   attr(historical_adr, "created") <- Sys.time()
   attr(historical_adr, "years") <- years
-
-  # Cache result
-  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(historical_adr, cache_file)
-  cli::cli_alert_success("Cached historical ADR series")
 
   historical_adr
 }
@@ -2451,8 +2406,7 @@ validate_historical_adr <- function(historical_adr) {
 #' Main entry point for historical divorce data including both the
 #' detailed period (1979-1988) and scaled period (1989-2022).
 #'
-#' @param cache_dir Cache directory path
-#' @param force Logical: force recalculation (default: FALSE)
+#' @param cache_dir Cache directory path (for reading source data)
 #' @param config Optional config list for parameters
 #'
 #' @return List with:
@@ -2464,16 +2418,7 @@ validate_historical_adr <- function(historical_adr) {
 #'
 #' @export
 get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
-                                         force = FALSE,
                                          config = NULL) {
-
-  cache_file <- file.path(cache_dir, "divorce", "historical_complete.rds")
-
-  # Return cached if available
-  if (file.exists(cache_file) && !force) {
-    cli::cli_alert_success("Loading cached complete historical divorce data")
-    return(readRDS(cache_file))
-  }
 
   # Derive year ranges from config
   bp_start <- as.integer(config$divorce$base_period_start)
@@ -2484,7 +2429,7 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
   cli::cli_h1("Building Complete Historical Divorce Data ({bp_start}-{hist_end})")
 
   # Get base period ADR from the base DivGrid
-  base_result <- fetch_base_divgrid(cache_dir = cache_dir, force = FALSE, config = config)
+  base_result <- fetch_base_divgrid(cache_dir = cache_dir, config = config)
 
   # Build base period ADR series
   cli::cli_alert("Building base period ADR series ({bp_start}-{bp_end})...")
@@ -2499,13 +2444,12 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
   )
 
   # Get adjusted DivGrid
-  adjusted_result <- fetch_adjusted_divgrid(cache_dir = cache_dir, force = FALSE, config = config)
+  adjusted_result <- fetch_adjusted_divgrid(cache_dir = cache_dir, config = config)
 
   # Calculate historical period (after base through end of data)
   historical_period <- calculate_historical_adr_series(
     years = hist_start:hist_end,
     cache_dir = cache_dir,
-    force = force,
     config = config
   )
 
@@ -2539,11 +2483,6 @@ get_historical_divorce_data <- function(cache_dir = here::here("data/cache"),
       created = Sys.time()
     )
   )
-
-  # Cache result
-  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(result, cache_file)
-  cli::cli_alert_success("Cached complete historical divorce data")
 
   result
 }
@@ -2843,50 +2782,32 @@ validate_adr_projection <- function(adr_projection,
 #' Get projected ADR series
 #'
 #' @description
-#' Main entry point for Phase 7F. Calculates and caches the projected
+#' Main entry point for Phase 7F. Calculates the projected
 #' ADR series from 2023 to 2099.
 #'
-#' @param cache_dir Cache directory path
-#' @param force Logical: force recalculation (default: FALSE)
-#' @param ultimate_adr Numeric: ultimate ADR (default from config or 1700)
-#' @param ultimate_year Integer: year to reach ultimate (default: 2049, or from config)
-#' @param start_year Integer: first projection year (default: 2023, or from config)
-#' @param end_year Integer: final projection year (default: 2099, or from config)
-#' @param config List: optional configuration object to derive parameters
+#' @param cache_dir Cache directory path (for reading source data)
+#' @param config List: configuration object to derive parameters
 #'
 #' @return data.table with projected ADR series
 #'
 #' @export
 get_projected_adr <- function(cache_dir = here::here("data/cache"),
-                              force = FALSE,
-                              ultimate_adr = NULL,
-                              ultimate_year = NULL,
-                              start_year = NULL,
-                              end_year = NULL,
                               config = NULL) {
   # Derive parameters from config — config is required
   if (!is.null(config)) {
     years <- get_projection_years(config, "divorce")
-    if (is.null(start_year)) start_year <- years$projection_start
-    if (is.null(end_year)) end_year <- years$projection_end
-    if (is.null(ultimate_year)) ultimate_year <- years$ultimate_year
-    if (is.null(ultimate_adr)) ultimate_adr <- config$divorce$ultimate_adr
+    start_year <- years$projection_start
+    end_year <- years$projection_end
+    ultimate_year <- years$ultimate_year
+    ultimate_adr <- config$divorce$ultimate_adr
   } else {
     cli::cli_abort("Config is required for {.fn get_projected_adr}. Pass config from pipeline.")
-  }
-
-  cache_file <- file.path(cache_dir, "divorce", get_cache_filename("projected_adr", start_year, end_year))
-
-  # Return cached if available
-  if (file.exists(cache_file) && !force) {
-    cli::cli_alert_success("Loading cached projected ADR series")
-    return(readRDS(cache_file))
   }
 
   cli::cli_h1("Phase 7F: ADR Projection ({start_year}-{end_year})")
 
   # Get historical data to calculate starting ADR
-  historical_data <- get_historical_divorce_data(cache_dir, force = FALSE, config = config)
+  historical_data <- get_historical_divorce_data(cache_dir, config = config)
   starting_adr <- historical_data$starting_adr
 
   cli::cli_alert_info("Starting ADR (from historical): {round(starting_adr, 1)}")
@@ -2916,11 +2837,6 @@ get_projected_adr <- function(cache_dir = here::here("data/cache"),
   attr(adr_projection, "validation") <- validation
   attr(adr_projection, "created") <- Sys.time()
 
-  # Cache result
-  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(adr_projection, cache_file)
-  cli::cli_alert_success("Cached projected ADR series")
-
   adr_projection
 }
 
@@ -2943,11 +2859,7 @@ get_projected_adr <- function(cache_dir = here::here("data/cache"),
 #' @param base_divgrid Matrix: base DivGrid to scale (87x87)
 #' @param adr_projection data.table: projected ADR from project_adr()
 #' @param standard_pop Matrix: standard population for ADR calculation
-#' @param start_year Integer: first projection year (default: 2023, or from config)
-#' @param end_year Integer: last projection year (default: 2099, or from config)
-#' @param cache_dir Character: cache directory path
-#' @param force Logical: force recalculation (default: FALSE)
-#' @param config List: optional configuration object to derive year parameters
+#' @param config List: configuration object to derive year parameters
 #'
 #' @return List with:
 #'   - rates: Named list of 87x87 matrices, one per year
@@ -2958,35 +2870,14 @@ get_projected_adr <- function(cache_dir = here::here("data/cache"),
 project_divorce_rates <- function(base_divgrid,
                                    adr_projection,
                                    standard_pop,
-                                   start_year = NULL,
-                                   end_year = NULL,
-                                   cache_dir = here::here("data/cache"),
-                                   force = FALSE,
                                    config = NULL) {
   # Derive parameters from config — config is required
   if (!is.null(config)) {
     years <- get_projection_years(config, "divorce")
-    if (is.null(start_year)) start_year <- years$projection_start
-    if (is.null(end_year)) end_year <- years$projection_end
+    start_year <- years$projection_start
+    end_year <- years$projection_end
   } else {
     cli::cli_abort("Config is required for {.fn project_divorce_rates}. Pass config from pipeline.")
-  }
-
-  cache_file <- file.path(cache_dir, "divorce", get_cache_filename("projected_rates", start_year, end_year))
-
-  # Return cached if available
-  if (file.exists(cache_file) && !force) {
-    cli::cli_alert_success("Loading cached projected divorce rates ({start_year}-{end_year})")
-    cached <- readRDS(cache_file)
-
-    # Verify cache integrity
-    if (all(c("rates", "adr", "years") %in% names(cached))) {
-      cli::cli_alert_info(
-        "Cached: {length(cached$rates)} years, ADR {round(cached$adr[1, projected_adr], 1)} -> {round(cached$adr[.N, projected_adr], 1)}"
-      )
-      return(cached)
-    }
-    cli::cli_warn("Cache file corrupt, recomputing...")
   }
 
   cli::cli_h2("Projecting Divorce Rates ({start_year}-{end_year})")
@@ -3040,11 +2931,6 @@ project_divorce_rates <- function(base_divgrid,
     start_year = start_year,
     end_year = end_year
   )
-
-  # Cache result
-  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(result, cache_file)
-  cli::cli_alert_success("Cached projected divorce rates")
 
   result
 }
@@ -3197,13 +3083,8 @@ validate_projected_rates <- function(projected_result,
 #' 4. Projects ADR to ultimate (1,700 by 2049)
 #' 5. Scales DivGrid to match projected ADR for each year
 #'
-#' @param cache_dir Character: cache directory path
-#' @param ultimate_adr Numeric: ultimate ADR target (default: 1700, or from config)
-#' @param ultimate_year Integer: year to reach ultimate (default: 2049, or from config)
-#' @param start_year Integer: first projection year (default: 2023, or from config)
-#' @param end_year Integer: final projection year (default: 2099, or from config)
-#' @param force Logical: force recalculation (default: FALSE)
-#' @param config List: optional configuration object to derive parameters
+#' @param cache_dir Character: cache directory path (for reading source data)
+#' @param config List: configuration object to derive parameters
 #'
 #' @return List with:
 #'   - historical: Historical divorce data (1979-2022)
@@ -3215,30 +3096,16 @@ validate_projected_rates <- function(projected_result,
 #'
 #' @export
 run_divorce_projection <- function(cache_dir = here::here("data/cache"),
-                                    ultimate_adr = NULL,
-                                    ultimate_year = NULL,
-                                    start_year = NULL,
-                                    end_year = NULL,
-                                    force = FALSE,
                                     config = NULL) {
   # Derive parameters from config — config is required
   if (!is.null(config)) {
     years <- get_projection_years(config, "divorce")
-    if (is.null(start_year)) start_year <- years$projection_start
-    if (is.null(end_year)) end_year <- years$projection_end
-    if (is.null(ultimate_year)) ultimate_year <- years$ultimate_year
-    if (is.null(ultimate_adr)) ultimate_adr <- config$divorce$ultimate_adr
+    start_year <- years$projection_start
+    end_year <- years$projection_end
+    ultimate_year <- years$ultimate_year
+    ultimate_adr <- config$divorce$ultimate_adr
   } else {
     cli::cli_abort("Config is required for {.fn run_divorce_projection}. Pass config from pipeline.")
-  }
-
-  cache_file <- file.path(cache_dir, "divorce", "divorce_projection_complete.rds")
-
-  # Return cached if available
-  if (file.exists(cache_file) && !force) {
-    cli::cli_alert_success("Loading cached complete divorce projection")
-    cached <- readRDS(cache_file)
-    return(cached)
   }
 
   cli::cli_h1("Running Complete Divorce Projection (TR2025 Section 1.7)")
@@ -3254,7 +3121,7 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
   hist_end <- as.integer(config$divorce$historical_end_year)
   cli::cli_h2("Step 1: Loading Historical Divorce Data ({bp_start}-{hist_end})")
 
-  historical <- get_historical_divorce_data(cache_dir, force = force, config = config)
+  historical <- get_historical_divorce_data(cache_dir, config = config)
 
   base_divgrid <- historical$base_result$divgrid
   adjusted_divgrid <- historical$adjusted_result$adjusted_divgrid
@@ -3271,11 +3138,6 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
 
   projected_adr <- get_projected_adr(
     cache_dir = cache_dir,
-    force = force,
-    ultimate_adr = ultimate_adr,
-    ultimate_year = ultimate_year,
-    start_year = start_year,
-    end_year = end_year,
     config = config
   )
 
@@ -3290,10 +3152,6 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
     base_divgrid = adjusted_divgrid,
     adr_projection = projected_adr,
     standard_pop = standard_pop,
-    start_year = start_year,
-    end_year = end_year,
-    cache_dir = cache_dir,
-    force = force,
     config = config
   )
 
@@ -3360,11 +3218,6 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
       created = Sys.time()
     )
   )
-
-  # Cache complete result
-  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(result, cache_file)
-  cli::cli_alert_success("Cached complete divorce projection")
 
   result
 }

@@ -91,9 +91,9 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     "o_immigration_projection",    # Pure computation, no cache writes
     "net_o_immigration",           # Extraction
 
-    # Marriage/divorce (full pipeline with writable temp cache)
-    "marriage_projection",         # Force recompute with runtime cache dir
-    "divorce_projection",          # Force recompute with runtime cache dir
+    # Marriage/divorce (pure computation — no internal caching)
+    "marriage_projection",
+    "divorce_projection",
     "marriage_amr_projected",
     "divorce_adr_projected",
 

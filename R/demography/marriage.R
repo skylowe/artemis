@@ -1830,9 +1830,6 @@ aggregate_grid_to_age_groups <- function(grid) {
 #' - 1996-2007: Linear interpolation
 #' - 2008-2022: ACS data adjusted MarGrid
 #'
-#' Results are cached to disk for performance. Use `force_recompute = TRUE`
-#' to regenerate cached results.
-#'
 #' @param base_margrid Matrix: base MarGrid from build_base_margrid()
 #' @param nchs_subset data.table: NCHS MRA subset marriages (1989-1995)
 #' @param acs_grids List of ACS marriage grids (2008-2022)
@@ -1841,8 +1838,6 @@ aggregate_grid_to_age_groups <- function(grid) {
 #' @param ss_area_factor Numeric or NULL: SS area adjustment factor. If NULL
 #'   (default), calculates dynamically from historical population data.
 #' @param smooth Logical: apply graduation after adjustment (default: TRUE)
-#' @param cache_dir Character: directory for caching results
-#' @param force_recompute Logical: force recomputation even if cache exists
 #'
 #' @return list with:
 #'   - rates: List of rate matrices by year (1989-2022)
@@ -1859,27 +1854,7 @@ calculate_historical_period <- function(base_margrid,
                                           acs_end = 2022,
                                           ss_area_factor = NULL,
                                           smooth = TRUE,
-                                          cache_dir = here::here("data/cache/marriage"),
-                                          force_recompute = FALSE,
                                           same_sex_estimates = NULL) {
-  # Check for cached results
-  cache_file <- file.path(cache_dir, sprintf("historical_rates_1989_%d.rds", acs_end))
-  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
-
-  if (file.exists(cache_file) && !force_recompute) {
-    cli::cli_alert_success("Loading cached historical rates (1989-{acs_end})")
-    cached <- readRDS(cache_file)
-
-    # Verify cache integrity
-    if (all(c("rates", "amr", "summary") %in% names(cached))) {
-      cli::cli_alert_info(
-        "Cached AMR range: {round(min(cached$amr$amr))} - {round(max(cached$amr$amr))}"
-      )
-      return(cached)
-    }
-    cli::cli_warn("Cache file corrupt, recomputing...")
-  }
-
   cli::cli_h1("Phase 6D: Historical Period (1989-{acs_end})")
 
   # =========================================================================
@@ -2001,10 +1976,6 @@ calculate_historical_period <- function(base_margrid,
     amr = all_amr,
     summary = summary_stats
   )
-
-  # Cache results for future use
-  saveRDS(result, cache_file)
-  cli::cli_alert_success("Cached historical rates to {cache_file}")
 
   result
 }
@@ -2188,8 +2159,6 @@ scale_margrid_to_target_amr <- function(base_margrid, target_amr, standard_pop_g
 #' 2. Project AMR to ultimate value (4,000) by ultimate year (2047)
 #' 3. Scale base MarGrid to match projected AMR for each year
 #'
-#' Results are cached to disk for performance.
-#'
 #' @param base_margrid Matrix: base MarGrid to scale
 #' @param historical_amr data.table: historical AMR values for starting calculation
 #' @param standard_pop_grid Matrix: 2010 standard population for AMR calculation
@@ -2200,8 +2169,6 @@ scale_margrid_to_target_amr <- function(base_margrid, target_amr, standard_pop_g
 #' @param convergence_exp Numeric: convergence exponent
 #' @param starting_amr_n_years Integer: number of years for starting AMR average
 #' @param starting_amr_weights Numeric vector or NULL: weights for starting AMR average
-#' @param cache_dir Character: directory for caching results
-#' @param force_recompute Logical: force recomputation even if cache exists
 #'
 #' @return list with:
 #'   - rates: List of rate matrices by year (2023-2099)
@@ -2218,27 +2185,7 @@ project_marriage_rates <- function(base_margrid,
                                     end_year,
                                     convergence_exp,
                                     starting_amr_n_years,
-                                    starting_amr_weights = NULL,
-                                    cache_dir = here::here("data/cache/marriage"),
-                                    force_recompute = FALSE) {
-  # Check for cached results
-  cache_file <- file.path(cache_dir, get_cache_filename("projected_rates", start_year, end_year))
-  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
-
-  if (file.exists(cache_file) && !force_recompute) {
-    cli::cli_alert_success("Loading cached projected rates ({start_year}-{end_year})")
-    cached <- readRDS(cache_file)
-
-    # Verify cache integrity
-    if (all(c("rates", "amr", "starting_amr") %in% names(cached))) {
-      cli::cli_alert_info(
-        "Cached projection: AMR {round(cached$starting_amr, 1)} → {ultimate_amr}"
-      )
-      return(cached)
-    }
-    cli::cli_warn("Cache file corrupt, recomputing...")
-  }
-
+                                    starting_amr_weights = NULL) {
   cli::cli_h1("Phase 6E: AMR Projection ({start_year}-{end_year})")
 
   # =========================================================================
@@ -2303,10 +2250,6 @@ project_marriage_rates <- function(base_margrid,
     ultimate_amr = ultimate_amr,
     ultimate_year = ultimate_year
   )
-
-  # Cache results
-  saveRDS(result, cache_file)
-  cli::cli_alert_success("Cached projected rates to {cache_file}")
 
   result
 }
@@ -2893,8 +2836,6 @@ separate_marriage_types <- function(marriage_rates,
 #'   read from config$marriage.
 #' @param include_same_sex Logical: separate same-sex rates (default: TRUE)
 #' @param include_prior_status Logical: apply prior status differentials (default: TRUE)
-#' @param cache_dir Directory for caching results
-#' @param force_recompute Force recomputation even if cache exists
 #'
 #' @return list with:
 #'   - historical_rates: Rate matrices for 1989-2022
@@ -2921,20 +2862,7 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
                                      same_sex_fraction = NULL,
                                      config,
                                      include_same_sex = TRUE,
-                                     include_prior_status = TRUE,
-                                     cache_dir = here::here("data/cache/marriage"),
-                                     force_recompute = FALSE) {
-
-  # Check for complete cached result
-  cache_file <- file.path(cache_dir, "marriage_projection_complete.rds")
-  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
-
-  if (file.exists(cache_file) && !force_recompute) {
-    cli::cli_alert_success("Loading cached complete marriage projection")
-    cached <- readRDS(cache_file)
-    return(cached)
-  }
-
+                                     include_prior_status = TRUE) {
   cli::cli_h1("Running Complete Marriage Projection (TR2025 Section 1.6)")
 
   start_time <- Sys.time()
@@ -3022,8 +2950,6 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
     unmarried_pop_grid = standard_pop_grid,
     acs_start = acs_start,
     acs_end = acs_end,
-    cache_dir = cache_dir,
-    force_recompute = force_recompute,
     same_sex_estimates = same_sex_estimates
   )
 
@@ -3046,9 +2972,7 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
     end_year = end_year,
     convergence_exp = convergence_exp,
     starting_amr_n_years = starting_amr_n_years,
-    starting_amr_weights = starting_amr_weights,
-    cache_dir = cache_dir,
-    force_recompute = force_recompute
+    starting_amr_weights = starting_amr_weights
   )
 
   # Combine all rates
@@ -3157,10 +3081,6 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
     computed_at = Sys.time(),
     elapsed_minutes = as.numeric(elapsed)
   )
-
-  # Cache complete result
-  saveRDS(result, cache_file)
-  cli::cli_alert_success("Cached complete projection to {cache_file}")
 
   cli::cli_h1("Marriage Projection Complete")
   cli::cli_alert_success("Historical: {length(result$historical_years)} years ({min(result$historical_years)}-{max(result$historical_years)})")
