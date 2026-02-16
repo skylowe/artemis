@@ -97,9 +97,13 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     "marriage_amr_projected",
     "divorce_adr_projected",
 
-    # Starting population (reads from data/raw/ or cached baseline)
-    "starting_population",         # For historical_pop_source
-    "starting_marital_pop",        # Depends on historical_population_marital (cached)
+    # Historical population (recomputed when population_source changes)
+    "historical_population",       # For historical_pop_source (census/hybrid/ssa)
+    "historical_population_marital", # Depends on historical_population
+
+    # Starting population (reads from data/raw/ or cached historical)
+    "starting_population",         # For use_tr_historical_population
+    "starting_marital_pop",        # Depends on historical_population_marital
 
     # Core population projection (pure computation)
     "population_projection",

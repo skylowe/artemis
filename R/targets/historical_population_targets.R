@@ -24,31 +24,37 @@ create_historical_population_targets <- function() {
     # Step 1: Historical Population by Age and Sex (Eq 1.4.1)
     targets::tar_target(
       historical_population,
-      calculate_historical_population(
-        start_year = config_assumptions$historical_population$start_year,
-        end_year = config_assumptions$historical_population$end_year,
-        ages = 0:config_assumptions$historical_population$max_age,
-        config = config_assumptions,
-        lpr_assumptions = lpr_assumptions,
-        immigration_dist = lpr_distribution,
-        emigration_dist = emigration_distribution,
-        births_by_sex = nchs_births_by_sex,
-        use_cache = TRUE
-      )
+      {
+        scenario_mode <- isTRUE(config_assumptions$runtime$scenario_mode)
+        calculate_historical_population(
+          start_year = config_assumptions$historical_population$start_year,
+          end_year = config_assumptions$historical_population$end_year,
+          ages = 0:config_assumptions$historical_population$max_age,
+          config = config_assumptions,
+          lpr_assumptions = lpr_assumptions,
+          immigration_dist = lpr_distribution,
+          emigration_dist = emigration_distribution,
+          births_by_sex = nchs_births_by_sex,
+          use_cache = !scenario_mode
+        )
+      }
     ),
 
     # Step 2: Historical Population by Marital Status (Eq 1.4.2)
     targets::tar_target(
       historical_population_marital,
-      calculate_historical_population_marital(
-        total_pop = historical_population,
-        start_year = config_assumptions$historical_population$start_year,
-        end_year = config_assumptions$historical_population$end_year,
-        ages = 14:config_assumptions$historical_population$max_age,
-        config = config_assumptions,
-        use_cache = TRUE,
-        include_same_sex = TRUE
-      )
+      {
+        scenario_mode <- isTRUE(config_assumptions$runtime$scenario_mode)
+        calculate_historical_population_marital(
+          total_pop = historical_population,
+          start_year = config_assumptions$historical_population$start_year,
+          end_year = config_assumptions$historical_population$end_year,
+          ages = 14:config_assumptions$historical_population$max_age,
+          config = config_assumptions,
+          use_cache = !scenario_mode,
+          include_same_sex = TRUE
+        )
+      }
     ),
 
     # Step 3: Temporary/Unlawfully Present Population (Eq 1.4.3)
