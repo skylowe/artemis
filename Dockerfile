@@ -79,6 +79,7 @@ RUN R_PROFILE_USER=/tmp/.Rprofile.build Rscript -e " \
 COPY --chown=artemis:artemis R/ R/
 COPY --chown=artemis:artemis app/ app/
 COPY --chown=artemis:artemis config/ config/
+COPY --chown=artemis:artemis data/processed/ data/processed/
 COPY --chown=artemis:artemis _targets.R _targets.R
 COPY --chown=artemis:artemis scripts/ scripts/
 COPY --chown=artemis:artemis run_app.R run_app.R
