@@ -20,14 +20,11 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
   report_progress(5, "Validating configuration...")
 
   # Inject runtime section so targets know they're in scenario mode.
-  # This enables writable temp cache dirs and forces recomputation of
-  # targets that normally use cached results from data/cache/ (read-only
-  # in Docker containers).
-  scenario_cache_dir <- file.path(tempdir(), "artemis_cache")
-  dir.create(scenario_cache_dir, showWarnings = FALSE, recursive = TRUE)
+  # Targets check runtime$scenario_mode to bypass internal RDS caching
+  # (use_cache = !scenario_mode), since data/cache/ is read-only in Docker.
+  # Results are persisted by the {targets} store instead.
   config$runtime <- list(
-    scenario_mode = TRUE,
-    cache_dir = scenario_cache_dir
+    scenario_mode = TRUE
   )
 
   # Create temporary config file (must happen after runtime injection)

@@ -278,9 +278,11 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
     cli::cli_alert_info("{yr}: {format(round(total), big.mark = ',')}")
   }
 
-  # Save to cache
-  saveRDS(o_adjusted, cache_file)
-  cli::cli_alert_success("Saved to cache: {cache_file}")
+  # Save to cache — skip if cache disabled (e.g., scenario mode with read-only mount)
+  if (use_cache) {
+    saveRDS(o_adjusted, cache_file)
+    cli::cli_alert_success("Saved to cache: {cache_file}")
+  }
 
   o_adjusted
 }

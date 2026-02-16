@@ -62,11 +62,6 @@ create_historical_population_targets <- function() {
       historical_temp_unlawful,
       {
         scenario_mode <- isTRUE(config_assumptions$runtime$scenario_mode)
-        cache_dir <- if (scenario_mode) {
-          config_assumptions$runtime$cache_dir
-        } else {
-          here::here("data/cache")
-        }
         calculate_historical_temp_unlawful(
           start_year = config_assumptions$historical_population$start_year,
           end_year = config_assumptions$historical_population$end_year,
@@ -77,8 +72,7 @@ create_historical_population_targets <- function() {
           immigration_dist = lpr_distribution,
           emigration_dist = emigration_distribution,
           births_by_sex = nchs_births_by_sex,
-          use_cache = !scenario_mode,
-          cache_dir = cache_dir
+          use_cache = !scenario_mode
         )
       }
     ),
