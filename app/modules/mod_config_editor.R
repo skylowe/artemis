@@ -180,6 +180,16 @@ mod_config_editor_ui <- function(id) {
           selected = "va2"
         ),
 
+        conditionalPanel(
+          condition = sprintf("input['%s'] == 'cbo'", ns("lpr_assumptions_source")),
+          tags$div(
+            class = "alert alert-warning py-1 px-2 small mb-2",
+            "CBO provides a single projection. The Immigration Scenario",
+            " dropdown (Low/Intermediate/High) has no effect on LPR totals",
+            " when this source is selected."
+          )
+        ),
+
         selectInput(
           ns("distribution_method"),
           "Age-Sex Distribution",
