@@ -4625,181 +4625,148 @@ calculate_cni_from_civilian <- function(civilian_pop, cni_civilian_ratios) {
 #' Disaggregate CNI Population by Marital Status (Phase 8E.5) - Vectorized
 #'
 #' @description
-#' Disaggregates CNI population into five marital statuses using vectorized operations.
+#' Disaggregate CNI Population by Marital Status
 #'
-#' Per TR2025: CNI marital statuses are:
+#' @description
+#' Disaggregates CNI population into five marital statuses using Phase 8C
+#' marital proportions and separated ratios from historical CNI data.
+#'
+#' Per TR2025 (Eq 1.8.7): CNI marital statuses are:
 #' - single (never married)
 #' - married_spouse_present
 #' - separated
 #' - widowed
 #' - divorced
 #'
-#' @param cni_pop data.table: CNI population by age/sex
-#' @param marital_adjustments data.table: Marital status adjustments by age/sex
-#' @param separated_ratios data.table: Separated/married ratios by age/sex
-#' @param cni_marital_ratios data.table: CNI/total ratios by age/sex/marital
-#' @param marital_pop_total data.table: Total population by marital status (optional)
+#' The "married" proportion from Phase 8C is split into married_spouse_present
+#' and separated using the separated ratios (TR2025 Input #20).
+#'
+#' @param cni_pop data.table: CNI population by age/sex. Required.
+#' @param separated_ratios data.table: Separated/married ratios by age/sex from
+#'   historical CNI data (TR2025 Input #20). Required.
+#' @param marital_pop_total data.table: Phase 8C marital population by age/sex/marital_status.
+#'   Required — provides the 4-category proportions (single, married, divorced, widowed).
 #'
 #' @return data.table with CNI population by age, sex, marital_status
 #'
 #' @keywords internal
 disaggregate_cni_marital <- function(cni_pop,
-                                      marital_adjustments = NULL,
-                                      separated_ratios = NULL,
-                                      cni_marital_ratios = NULL,
-                                      marital_pop_total = NULL) {
+                                      separated_ratios,
+                                      marital_pop_total) {
 
-  # Ensure cni_pop is properly structured
+  # Validate required inputs
   cni_pop <- data.table::as.data.table(cni_pop)
   if (!"population" %in% names(cni_pop)) {
     cli::cli_abort("cni_pop must have a 'population' column")
   }
 
-  # Handle separated ratios
-  if (is.null(separated_ratios)) {
-    # Default separated ratio by age (increases with age)
-    separated_ratios <- data.table::data.table(
-      age = 0:100,
-      separated_ratio = pmin(0.10, 0.02 + (0:100) * 0.0008)
-    )
+  if (is.null(separated_ratios) || nrow(separated_ratios) == 0) {
+    cli::cli_abort(c(
+      "Separated ratios are required for CNI marital disaggregation (TR2025 Input #20)",
+      "i" = "Ensure historical CNI data with 'separated' marital status is available"
+    ))
   }
 
-  # If we have marital_pop_total, use it for proportions
-  if (!is.null(marital_pop_total) && nrow(marital_pop_total) > 0) {
-    # Make a clean copy of marital_pop_total with explicit column selection
-    marital_dt <- data.table::data.table(
-      age = as.integer(marital_pop_total$age),
-      sex = as.character(marital_pop_total$sex),
-      marital_status = as.character(marital_pop_total$marital_status),
-      population = as.numeric(marital_pop_total$population)
-    )
-
-    # Aggregate marital_pop_total by age/sex/marital_status
-    marital_props <- marital_dt[, list(population = sum(population, na.rm = TRUE)),
-                                 by = list(age, sex, marital_status)]
-    marital_props[, total := sum(population), by = list(age, sex)]
-    marital_props[, prop := fifelse(total > 0, population / total, 0)]
-
-    # Standardize marital status names (Phase 8C uses "single", "married", "divorced", "widowed")
-    # CNI uses: "single", "married_spouse_present", "separated", "widowed", "divorced"
-    # Map "single" -> "single", "married" -> split to married_spouse_present + separated
-
-    # Get only ages/sexes that exist in cni_pop
-    cni_ages_sex <- unique(cni_pop[, list(age, sex)])
-
-    # Merge proportions with CNI population
-    result <- merge(cni_ages_sex, cni_pop[, list(age, sex, cni_total = population)],
-                    by = c("age", "sex"), all.x = TRUE)
-    result[is.na(cni_total), cni_total := 0]
-
-    # Build wide format of proportions
-    prop_wide <- data.table::dcast(marital_props, age + sex ~ marital_status,
-                                   value.var = "prop", fill = 0)
-
-    # Merge with cni data
-    result <- merge(result, prop_wide, by = c("age", "sex"), all.x = TRUE)
-
-    # Handle missing proportions with age-based defaults
-    result[is.na(single), single := fifelse(age < 15, 1.0, fifelse(age < 25, 0.70,
-                                            fifelse(age < 65, 0.15, 0.05)))]
-    result[is.na(married), married := fifelse(age < 15, 0.0, fifelse(age < 25, 0.25,
-                                              fifelse(age < 65, 0.60, 0.50)))]
-    result[is.na(divorced), divorced := fifelse(age < 15, 0.0, fifelse(age < 25, 0.04,
-                                                fifelse(age < 65, 0.15, 0.12)))]
-    result[is.na(widowed), widowed := fifelse(age < 15, 0.0, fifelse(age < 25, 0.01,
-                                              fifelse(age < 65, 0.10, 0.33)))]
-
-    # Normalize proportions to sum to 1
-    result[, prop_sum := single + married + divorced + widowed]
-    result[prop_sum > 0, `:=`(
-      single = single / prop_sum,
-      married = married / prop_sum,
-      divorced = divorced / prop_sum,
-      widowed = widowed / prop_sum
-    )]
-
-    # Merge separated ratios (merge by age and sex since separated_ratios has both)
-    result <- merge(result, separated_ratios, by = c("age", "sex"), all.x = TRUE)
-    result[is.na(separated_ratio), separated_ratio := 0.05]
-
-    # Calculate populations for each marital status
-    result[, `:=`(
-      pop_single = cni_total * single,
-      pop_married_sp = cni_total * married * (1 - separated_ratio),
-      pop_separated = cni_total * married * separated_ratio,
-      pop_divorced = cni_total * divorced,
-      pop_widowed = cni_total * widowed
-    )]
-
-    # Reshape to long format
-    final <- data.table::melt(
-      result[, list(age, sex, pop_single, pop_married_sp, pop_separated, pop_divorced, pop_widowed)],
-      id.vars = c("age", "sex"),
-      variable.name = "marital_status",
-      value.name = "population"
-    )
-
-    # Clean up marital status names
-    final[, marital_status := gsub("pop_", "", marital_status)]
-    final[marital_status == "married_sp", marital_status := "married_spouse_present"]
-
-    data.table::setorder(final, age, sex, marital_status)
-    return(final)
+  if (is.null(marital_pop_total) || nrow(marital_pop_total) == 0) {
+    cli::cli_abort(c(
+      "Phase 8C marital population data is required for CNI marital disaggregation",
+      "i" = "Ensure marital_projection target completed successfully"
+    ))
   }
 
-  # Fallback: use vectorized default proportions
-  # Create full grid
-  all_ages <- unique(cni_pop$age)
-  all_sexes <- unique(cni_pop$sex)
-  cni_statuses <- c("single", "married_spouse_present", "separated", "widowed", "divorced")
+  # Make a clean copy of marital_pop_total with explicit column selection
+  marital_dt <- data.table::data.table(
+    age = as.integer(marital_pop_total$age),
+    sex = as.character(marital_pop_total$sex),
+    marital_status = as.character(marital_pop_total$marital_status),
+    population = as.numeric(marital_pop_total$population)
+  )
 
-  grid <- data.table::CJ(age = all_ages, sex = all_sexes, marital_status = cni_statuses)
+  # Aggregate marital_pop_total by age/sex/marital_status
+  marital_props <- marital_dt[, list(population = sum(population, na.rm = TRUE)),
+                               by = list(age, sex, marital_status)]
+  marital_props[, total := sum(population), by = list(age, sex)]
+  marital_props[, prop := data.table::fifelse(total > 0, population / total, 0)]
 
-  # Merge with CNI totals
-  grid <- merge(grid, cni_pop[, .(age, sex, cni_total = population)],
-                by = c("age", "sex"), all.x = TRUE)
-  grid[is.na(cni_total), cni_total := 0]
+  # Phase 8C provides: "single", "married", "divorced", "widowed"
+  # CNI needs: "single", "married_spouse_present", "separated", "widowed", "divorced"
+  # "married" is split into married_spouse_present + separated using separated_ratios
 
-  # Assign proportions based on age (vectorized)
-  grid[, prop := 0]
+  # Get only ages/sexes that exist in cni_pop
+  cni_ages_sex <- unique(cni_pop[, list(age, sex)])
 
-  # Age < 15: all single
-  grid[age < 15 & marital_status == "single", prop := 1]
+  # Merge proportions with CNI population
+  result <- merge(cni_ages_sex, cni_pop[, list(age, sex, cni_total = population)],
+                  by = c("age", "sex"), all.x = TRUE)
+  result[is.na(cni_total), cni_total := 0]
 
-  # Age 15-24
-  grid[age >= 15 & age < 25 & marital_status == "single", prop := 0.70]
-  grid[age >= 15 & age < 25 & marital_status == "married_spouse_present", prop := 0.24]
-  grid[age >= 15 & age < 25 & marital_status == "separated", prop := 0.01]
-  grid[age >= 15 & age < 25 & marital_status == "widowed", prop := 0.005]
-  grid[age >= 15 & age < 25 & marital_status == "divorced", prop := 0.045]
+  # Build wide format of proportions
+  prop_wide <- data.table::dcast(marital_props, age + sex ~ marital_status,
+                                 value.var = "prop", fill = 0)
 
-  # Age 25-44
-  grid[age >= 25 & age < 45 & marital_status == "single", prop := 0.25]
-  grid[age >= 25 & age < 45 & marital_status == "married_spouse_present", prop := 0.55]
-  grid[age >= 25 & age < 45 & marital_status == "separated", prop := 0.03]
-  grid[age >= 25 & age < 45 & marital_status == "widowed", prop := 0.02]
-  grid[age >= 25 & age < 45 & marital_status == "divorced", prop := 0.15]
+  # Merge with cni data
+  result <- merge(result, prop_wide, by = c("age", "sex"), all.x = TRUE)
 
-  # Age 45-64
-  grid[age >= 45 & age < 65 & marital_status == "single", prop := 0.12]
-  grid[age >= 45 & age < 65 & marital_status == "married_spouse_present", prop := 0.58]
-  grid[age >= 45 & age < 65 & marital_status == "separated", prop := 0.02]
-  grid[age >= 45 & age < 65 & marital_status == "widowed", prop := 0.10]
-  grid[age >= 45 & age < 65 & marital_status == "divorced", prop := 0.18]
+  # Ages below marriage minimum are structurally 100% single (never married)
+  # Phase 8C only covers marriage-eligible ages, so pre-marriage ages have no data
+  pre_marriage <- result[is.na(single) & is.na(married) & is.na(divorced) & is.na(widowed)]
+  if (nrow(pre_marriage) > 0) {
+    result[is.na(single) & is.na(married) & is.na(divorced) & is.na(widowed),
+           `:=`(single = 1.0, married = 0.0, divorced = 0.0, widowed = 0.0)]
+  }
 
-  # Age 65+
-  grid[age >= 65 & marital_status == "single", prop := 0.05]
-  grid[age >= 65 & marital_status == "married_spouse_present", prop := 0.42]
-  grid[age >= 65 & marital_status == "separated", prop := 0.01]
-  grid[age >= 65 & marital_status == "widowed", prop := 0.38]
-  grid[age >= 65 & marital_status == "divorced", prop := 0.14]
+  # For marriage-eligible ages, marital proportions must be present
+  marriage_age_missing <- result[cni_total > 0 &
+                                 (is.na(single) | is.na(married) | is.na(divorced) | is.na(widowed))]
+  if (nrow(marriage_age_missing) > 0) {
+    cli::cli_abort(c(
+      "Missing marital proportions for {nrow(marriage_age_missing)} populated marriage-eligible age/sex cells",
+      "i" = "Ages affected: {paste(head(unique(marriage_age_missing$age), 10), collapse=', ')}",
+      "i" = "Phase 8C marital projection must cover all marriage-eligible ages in CNI population"
+    ))
+  }
+  # For unpopulated age/sex cells (cni_total == 0), fill with 0 proportions
+  for (col in c("single", "married", "divorced", "widowed")) {
+    result[is.na(get(col)), (col) := 0]
+  }
 
-  # Calculate population
-  grid[, population := cni_total * prop]
-  grid[, c("cni_total", "prop") := NULL]
+  # Normalize proportions to sum to 1
+  result[, prop_sum := single + married + divorced + widowed]
+  result[prop_sum > 0, `:=`(
+    single = single / prop_sum,
+    married = married / prop_sum,
+    divorced = divorced / prop_sum,
+    widowed = widowed / prop_sum
+  )]
 
-  data.table::setorder(grid, age, sex, marital_status)
-  grid
+  # Merge separated ratios by age and sex
+  result <- merge(result, separated_ratios, by = c("age", "sex"), all.x = TRUE)
+  # For ages below marriage age (no separated ratio), default to 0
+  result[is.na(separated_ratio), separated_ratio := 0]
+
+  # Calculate populations for each marital status
+  result[, `:=`(
+    pop_single = cni_total * single,
+    pop_married_sp = cni_total * married * (1 - separated_ratio),
+    pop_separated = cni_total * married * separated_ratio,
+    pop_divorced = cni_total * divorced,
+    pop_widowed = cni_total * widowed
+  )]
+
+  # Reshape to long format
+  final <- data.table::melt(
+    result[, list(age, sex, pop_single, pop_married_sp, pop_separated, pop_divorced, pop_widowed)],
+    id.vars = c("age", "sex"),
+    variable.name = "marital_status",
+    value.name = "population"
+  )
+
+  # Clean up marital status names
+  final[, marital_status := gsub("pop_", "", marital_status)]
+  final[marital_status == "married_sp", marital_status := "married_spouse_present"]
+
+  data.table::setorder(final, age, sex, marital_status)
+  final
 }
 
 
@@ -5015,8 +4982,22 @@ prepare_cni_starting_data <- function(historical_cni,
   cni_marital <- cni_start[, .(population = sum(population, na.rm = TRUE)),
                            by = .(age, sex, marital_status)]
 
-  # Calculate separated ratios from historical data
-  separated_ratios <- calculate_separated_ratios(cni_marital, max_age)
+  # Calculate separated ratios from historical data (TR2025 Input #20)
+  sep_smoothing <- if (!is.null(cni_config$separated_ratios$smoothing)) {
+    cni_config$separated_ratios$smoothing
+  } else {
+    "loess"
+  }
+  sep_span <- if (!is.null(cni_config$separated_ratios$smoothing_span)) {
+    cni_config$separated_ratios$smoothing_span
+  } else {
+    0.3
+  }
+  separated_ratios <- calculate_separated_ratios(
+    cni_marital, max_age,
+    smoothing = sep_smoothing,
+    smoothing_span = sep_span
+  )
 
   # Totals for logging
   cni_total <- sum(cni_by_age_sex$population, na.rm = TRUE)
@@ -5043,8 +5024,26 @@ prepare_cni_starting_data <- function(historical_cni,
 
 #' Calculate Separated/Married Ratios from Historical CNI
 #'
+#' @description
+#' Computes the ratio of separated to total married (married + separated) persons
+#' by age and sex from historical CNI data. TR2025 Input #20 requires these ratios
+#' to be data-driven, not fabricated.
+#'
+#' @param cni_marital data.table with columns: age, sex, marital_status, population.
+#'   Must contain "separated" and "married"/"married_spouse_present" statuses.
+#' @param max_age integer: Maximum age (default: 100)
+#' @param smoothing character: Smoothing method ("loess", "rolling_mean", or "none")
+#' @param smoothing_span numeric: Span parameter for loess smoothing (default: 0.3)
+#'
+#' @return data.table with columns: age, sex, separated_ratio
+#'
 #' @keywords internal
-calculate_separated_ratios <- function(cni_marital, max_age = 100) {
+calculate_separated_ratios <- function(cni_marital, max_age = 100,
+                                       smoothing = "loess", smoothing_span = 0.3) {
+
+  if (is.null(cni_marital) || nrow(cni_marital) == 0) {
+    cli::cli_abort("Historical CNI marital data is required to compute separated ratios (TR2025 Input #20)")
+  }
 
   # Get married and separated populations
   married <- cni_marital[marital_status %in% c("married", "married_spouse_present"),
@@ -5055,11 +5054,49 @@ calculate_separated_ratios <- function(cni_marital, max_age = 100) {
                            .(separated = sum(population, na.rm = TRUE)),
                            by = .(age, sex)]
 
+  if (nrow(married) == 0) {
+    cli::cli_abort("No married population data found in historical CNI for separated ratio calculation")
+  }
+  if (nrow(separated) == 0) {
+    cli::cli_abort("No separated population data found in historical CNI for separated ratio calculation")
+  }
+
   result <- merge(married, separated, by = c("age", "sex"), all.x = TRUE)
   result[is.na(separated), separated := 0]
-  result[, separated_ratio := separated / (married + separated)]
-  result[is.na(separated_ratio), separated_ratio := 0.05]
-  result[separated_ratio > 0.3, separated_ratio := 0.3]  # Cap at 30%
+
+  # Compute raw ratio: separated / (married + separated)
+  result[, separated_ratio := data.table::fifelse(
+    married + separated > 0,
+    separated / (married + separated),
+    0
+  )]
+
+  # Apply smoothing by sex to reduce noise across ages
+  if (smoothing == "loess" && nrow(result) > 5) {
+    for (s in unique(result$sex)) {
+      idx <- result$sex == s & result$age >= 15  # Only smooth marriage-age population
+      if (sum(idx) > 5) {
+        fit <- stats::loess(separated_ratio ~ age, data = result[idx, ],
+                            span = smoothing_span)
+        smoothed <- stats::predict(fit)
+        smoothed[smoothed < 0] <- 0  # Ratios cannot be negative
+        result[idx, separated_ratio := smoothed]
+      }
+    }
+  } else if (smoothing == "rolling_mean" && nrow(result) > 5) {
+    for (s in unique(result$sex)) {
+      idx <- which(result$sex == s)
+      if (length(idx) > 5) {
+        vals <- result$separated_ratio[idx]
+        smoothed <- stats::filter(vals, rep(1/5, 5), sides = 2)
+        non_na <- !is.na(smoothed)
+        result[idx[non_na], separated_ratio := as.numeric(smoothed[non_na])]
+      }
+    }
+  }
+
+  cli::cli_alert_info("Separated ratios computed from historical CNI (smoothing: {smoothing})")
+  cli::cli_alert_info("Separated ratio range: {round(min(result[age >= 15]$separated_ratio), 4)} - {round(max(result[age >= 15]$separated_ratio), 4)}")
 
   result[, .(age, sex, separated_ratio)]
 }
@@ -5150,20 +5187,19 @@ project_cni_population <- function(phase8b_result,
   # Store starting year CNI
   cni_start <- starting_data$cni_pop
 
-  # Get marital population for start year
+  # Get marital population for start year (required — Phase 8C must provide this)
   marital_start <- marital_pop[year == start_year]
-  if (nrow(marital_start) > 0) {
-    cni_marital_start <- disaggregate_cni_marital(
-      cni_start,
-      separated_ratios = separated_ratios,
-      marital_pop_total = marital_start
-    )
-  } else {
-    cni_marital_start <- disaggregate_cni_marital(
-      cni_start,
-      separated_ratios = separated_ratios
-    )
+  if (nrow(marital_start) == 0) {
+    cli::cli_abort(c(
+      "No Phase 8C marital population data for starting year {start_year}",
+      "i" = "Phase 8C marital projection must cover the starting year for CNI disaggregation"
+    ))
   }
+  cni_marital_start <- disaggregate_cni_marital(
+    cni_start,
+    separated_ratios = separated_ratios,
+    marital_pop_total = marital_start
+  )
   cni_marital_start[, year := start_year]
   all_cni[[as.character(start_year)]] <- cni_marital_start
 
@@ -5223,22 +5259,18 @@ project_cni_population <- function(phase8b_result,
     # Calculate CNI population (civilian × CNI/civilian ratio)
     cni <- calculate_cni_from_civilian(civilian, cni_civilian_ratios)
 
-    # Get marital population for this year for disaggregation
+    # Get marital population for this year for disaggregation (required)
     marital_yr <- marital_pop[year == yr]
+    if (nrow(marital_yr) == 0) {
+      cli::cli_abort("No Phase 8C marital population data for year {yr}")
+    }
 
     # Disaggregate CNI by marital status (5 categories)
-    if (nrow(marital_yr) > 0) {
-      cni_marital <- disaggregate_cni_marital(
-        cni,
-        separated_ratios = separated_ratios,
-        marital_pop_total = marital_yr
-      )
-    } else {
-      cni_marital <- disaggregate_cni_marital(
-        cni,
-        separated_ratios = separated_ratios
-      )
-    }
+    cni_marital <- disaggregate_cni_marital(
+      cni,
+      separated_ratios = separated_ratios,
+      marital_pop_total = marital_yr
+    )
     cni_marital[, year := yr]
 
     # Store results
