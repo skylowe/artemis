@@ -173,22 +173,38 @@ sudo systemctl restart jupyterhub
 
 ## Known Methodology Deviations from TR2025
 
+### Fertility
 1. **Fertility Step 1 (2024):** Uses actual NCHS preliminary data (TFR=1.602) instead of TR estimate (1.62). Configurable via `custom_recent_tfr`.
+
+### Mortality
 2. **Mortality ages 65+:** Uses NCHS deaths / Census population instead of CMS Medicare data. CMS data is not publicly available in the single-year-of-age form SSA uses (requires ResDAC/CCW restricted access). HMD calibration at ages 85+ partially compensates (configurable via `hmd_calibration.enabled`).
+
+### Immigration
 3. **Immigration distribution:** TR-derived age-sex distribution back-calculated from TR2025 projections instead of unpublished Census data.
 4. **Immigration totals:** V.A2 net immigration totals (~1.3M/yr) are lower than what TR2025 population projections imply (~2.0M/yr), causing ~1.2% population divergence.
+
+### Marriage
 5. **Marriage same-sex data (Input #15):** Same-sex separation uses ACS PUMS prevalence (2015-2022) instead of state vital statistics (2004-2012). Configurable via `marriage.same_sex.reference_years`.
-12. **Marriage MRA unmarried population (Input #5):** Uses CPS national unmarried population instead of MRA-specific data (not in NBER public archive). SS area factor partially compensates.
-13. **Marriage MRA-to-national adjustment (Input #7):** MRA state composition by year unavailable; adjustment omitted. SS area factor partially compensates.
-14. **Marriage prior status population (Input #10):** Uses CPS national unmarried population by prior status instead of MRA-specific data. Configurable via `marriage.prior_status.population_source`.
-6. **Divorce DivGrid adjustment (Input #10):** ACS PUMS data (2018-2022) for DivGrid adjustment instead of 18-state health department data (~2009-2012). ACS provides only marginal age distributions (cannot link ex-spouses), so geometric-mean ratioing substitutes for TR2025's cell-level ratioing. Adjustment year is 2020 (ACS midpoint) vs TR2025's 2011, lengthening the transition from 23 to 32 years. Configurable via `divorce.acs_years` and `divorce.adjustment_year`.
-15. **Divorce standard population (Input #1):** TR2025 specifies grids "from the 2015 TR." ARTEMIS computes from Census/ACS data; values may differ slightly. Configurable via `divorce.standard_population_years`.
-16. **Divorce PR/VI gap-year estimation:** TR2025 provides PR/VI data for 1988, 1998-2000, and 2008-2022. For gap years (1989-1997, 2001-2007), ARTEMIS interpolates using exponential decay from the 1988 anchor. Configurable via `divorce.pr_vi.*`.
-7. **O-population stock (Eq 1.4.3):** TR2025 builds stock directly from residuals, then modifies stock levels. ARTEMIS uses V.A2 o_net totals for annual stock levels and residuals only for age-sex distribution shape. This is because ARTEMIS component inputs (immigration distributions, AOS ratios) differ from OCACT's internal data, causing residual-built stocks to diverge pre-2000. Configurable via `historical_population.o_population.method` (`"residual"` default, `"va2_flows"` alternative).
-8. **ACS undercount (O immigration):** Uses single calibrated factor per age group instead of TR2025's three-component model (ACS-DHS gap, PUMS-Census gap, PR foreign-born). Individual components not published by SSA. Configurable via `immigration.o_immigration.acs_undercount_factors`.
-9. **O departure rates:** Approximated via multiplicative adjustments on a single base rate schedule instead of TR2025's separate rate tables from the 2014 TR stock build-up. Actual SSA internal rates (Inputs #26-30) not published. Configurable via `immigration.o_immigration.departure_rates`.
-10. **DHS admissions NI calibration:** Not implemented (placeholder). I-94 detail data at required age/sex granularity not publicly available.
-11. **NI "other in" factor:** Not implemented (placeholder). DHS parolee/EWI data not available at required granularity.
+6. **Marriage MRA unmarried population (Input #5):** Uses CPS national unmarried population instead of MRA-specific data (not in NBER public archive). SS area factor partially compensates.
+7. **Marriage MRA-to-national adjustment (Input #7):** MRA state composition by year unavailable; adjustment omitted. SS area factor partially compensates.
+8. **Marriage prior status population (Input #10):** Uses CPS national unmarried population by prior status instead of MRA-specific data. Configurable via `marriage.prior_status.population_source`.
+
+### Divorce
+9. **Divorce DivGrid adjustment (Input #10):** ACS PUMS data (2018-2022) for DivGrid adjustment instead of 18-state health department data (~2009-2012). ACS provides only marginal age distributions (cannot link ex-spouses), so geometric-mean ratioing substitutes for TR2025's cell-level ratioing. Adjustment year is 2020 (ACS midpoint) vs TR2025's 2011, lengthening the transition from 23 to 32 years. Configurable via `divorce.acs_years` and `divorce.adjustment_year`.
+10. **Divorce standard population (Input #1):** TR2025 specifies grids "from the 2015 TR." ARTEMIS computes from Census/ACS data; values may differ slightly. Configurable via `divorce.standard_population_years`.
+11. **Divorce PR/VI gap-year estimation:** TR2025 provides PR/VI data for 1988, 1998-2000, and 2008-2022. For gap years (1989-1997, 2001-2007), ARTEMIS interpolates using exponential decay from the 1988 anchor. Configurable via `divorce.pr_vi.*`.
+
+### Historical Population / Immigration
+12. **O-population stock (Eq 1.4.3):** TR2025 builds stock directly from residuals, then modifies stock levels. ARTEMIS uses V.A2 o_net totals for annual stock levels and residuals only for age-sex distribution shape. This is because ARTEMIS component inputs (immigration distributions, AOS ratios) differ from OCACT's internal data, causing residual-built stocks to diverge pre-2000. Configurable via `historical_population.o_population.method` (`"residual"` default, `"va2_flows"` alternative).
+13. **ACS undercount (O immigration):** Uses single calibrated factor per age group instead of TR2025's three-component model (ACS-DHS gap, PUMS-Census gap, PR foreign-born). Individual components not published by SSA. Configurable via `immigration.o_immigration.acs_undercount_factors`.
+14. **O departure rates:** Approximated via multiplicative adjustments on a single base rate schedule instead of TR2025's separate rate tables from the 2014 TR stock build-up. Actual SSA internal rates (Inputs #26-30) not published. Configurable via `immigration.o_immigration.departure_rates`.
+15. **DHS admissions NI calibration:** Not implemented (placeholder). I-94 detail data at required age/sex granularity not publicly available.
+16. **NI "other in" factor:** Not implemented (placeholder). DHS parolee/EWI data not available at required granularity.
+
+### Projected Population
+17. **Midyear unmarried population (Eq 1.8.5):** Uses geometric mean (`BOY * sqrt(ratio)`) to estimate midyear unmarried population. TR2025 specifies "using the relationship between" prior and current BOY populations but does not prescribe the exact formula. Geometric and arithmetic means produce nearly identical results for typical year-to-year ratios (0.95-1.05). Configurable via `projected_population.marital.midyear_ratio_cap`.
+18. **Monthly births not modeled:** TR2025 Input #33 lists NCHS monthly births by sex, but Equation 1.8.1 uses annual birth rates applied to midyear female population. Monthly disaggregation is not used — annual-level calculation is standard practice for long-range projections.
+19. **CNI marital status ratios:** Uses Census ACS CNI data (configurable year range) instead of internal OCACT CNI series. Ratios are averaged over the full historical range. Configurable via `projected_population.cni.ratio_years`.
 
 ## Key Rules
 1. **Real data only** - No synthetic/mock data. Tasks are not complete until working with real API/file data.

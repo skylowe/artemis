@@ -1096,6 +1096,12 @@ calculate_projected_births <- function(year,
     config <- get_projected_population_config()
   }
 
+  # TR2025 Input #33 lists "births by month and sex of child" from NCHS,
+  # but the projection equation (1.8.1) uses annual birth rates applied to
+  # midyear female population. Monthly disaggregation is not used in the
+  # long-range projection — annual-level calculation is standard practice
+  # for 75-year horizons where monthly timing has negligible impact.
+
   # Get birth rates for this year
   target_year <- year  # Create local variable for data.table subsetting
   year_rates <- birth_rates[year == target_year]
@@ -1280,6 +1286,14 @@ calculate_net_immigration <- function(year,
 
   year_lpr <- net_lpr[year == target_year, .(age, sex, net_lpr = get(lpr_value_col))]
 
+  # Handle age -1 (TR2025 Inputs 6-8: age -1 represents births during the year)
+  # Fold age -1 into age 0 since these are births to immigrant mothers in transit
+  if (any(year_lpr$age == -1)) {
+    cli::cli_inform("Year {target_year}: folding {sum(year_lpr[age == -1]$net_lpr)} age -1 LPR immigrants into age 0")
+    year_lpr[age == -1, age := 0L]
+    year_lpr <- year_lpr[, .(net_lpr = sum(net_lpr, na.rm = TRUE)), by = .(age, sex)]
+  }
+
   # Get net O for this year
   o_value_col <- intersect(c("net_o", "net_o_immigration", "net_immigration"), names(net_o))[1]
   if (is.na(o_value_col)) {
@@ -1287,6 +1301,12 @@ calculate_net_immigration <- function(year,
   }
 
   year_o <- net_o[year == target_year, .(age, sex, net_o = get(o_value_col))]
+
+  # Handle age -1 for O immigration as well
+  if (any(year_o$age == -1)) {
+    cli::cli_inform("Year {target_year}: folding {sum(year_o[age == -1]$net_o)} age -1 O immigrants into age 0")
+    year_o[age == -1, age := 0L]
+  }
 
   # Aggregate net_o by age and sex (may have multiple types)
   year_o <- year_o[, .(net_o = sum(net_o, na.rm = TRUE)), by = .(age, sex)]
@@ -2056,13 +2076,21 @@ calculate_midyear_unmarried <- function(marital_pop_boy, marital_pop_prior_boy =
   merged <- merge(unmarried_boy, unmarried_prior, by = c("age", "sex"), all.x = TRUE)
   merged[is.na(pop_prior), pop_prior := pop_boy]
 
-  # Midyear = average of BOY and what we'd expect from aging prior year
-  # Approximation: midyear ≈ (current_boy + prior_boy_aged) / 2
-  # For simplicity, use geometric mean approach
+  # TR2025 Section 1.8.c (Eq 1.8.5): midyear unmarried population is "calculated
+  # by adjusting the number of unmarried men at the beginning of the year to
+  # represent midyear using the relationship between the prior beginning of year
+  # and the current beginning of year unmarried male populations."
+  #
+  # We use the geometric mean: midyear = BOY_z * sqrt(BOY_z / BOY_{z-1}).
+  # This is chosen over the arithmetic mean because:
+  # (1) It naturally handles multiplicative population change (growth/decline)
+  # (2) It is symmetric in log-space: log(midyear) = (log(BOY_z) + log(BOY_{z+1}))/2
+  # (3) For typical year-to-year ratios (0.95-1.05), results are nearly identical
+  #     to the arithmetic mean; divergence only matters for rapid changes
+  # The ratio cap (default 2.0, configurable) prevents extreme midyear estimates
+  # when the unmarried population changes dramatically between years.
   merged[pop_prior > 0, ratio := pop_boy / pop_prior]
   merged[pop_prior == 0, ratio := 1]
-
-  # Midyear = BOY * sqrt(ratio) centers between years
   merged[, midyear_unmarried := pop_boy * sqrt(pmin(ratio, ratio_cap))]
 
   merged[, .(age, sex, midyear_unmarried)]
@@ -3735,12 +3763,48 @@ adjust_children_to_total <- function(children_array,
       0
     }
 
-    # Calculate scaling factor
+    # Step 1: Multiplicative scaling
     if (calc_total > 0 && target > 0) {
       scale_factor <- target / calc_total
-
-      # Apply scaling to all dimensions for this child age
       adjusted[c_age + 1, , , ] <- children_array[c_age + 1, , , ] * scale_factor
+    }
+
+    # Step 2: Unit-level rounding adjustment (TR2025 Section 1.8.c)
+    # "For any remaining difference, an adjustment of one is made for each
+    # age of husband crossed with age of wife until the total number of
+    # children match."
+    integer_target <- round(target)
+    if (integer_target > 0) {
+      slice <- adjusted[c_age + 1, , , ]
+      dims <- dim(slice)
+
+      # Flatten to vector, compute fractional parts for largest-remainder method
+      flat <- as.vector(slice)
+      floored <- floor(flat)
+      remainders <- flat - floored
+
+      current_sum <- sum(floored, na.rm = TRUE)
+      deficit <- integer_target - current_sum
+
+      if (deficit > 0 && deficit <= length(flat)) {
+        # Round up cells with largest fractional remainders
+        candidates <- which(!is.na(remainders) & remainders > 0)
+        if (length(candidates) > 0) {
+          n_adjust <- min(deficit, length(candidates))
+          adjust_idx <- candidates[order(remainders[candidates], decreasing = TRUE)[1:n_adjust]]
+          floored[adjust_idx] <- floored[adjust_idx] + 1
+        }
+      } else if (deficit < 0 && abs(deficit) <= length(flat)) {
+        # Round down cells with smallest fractional remainders (closest to integer already)
+        candidates <- which(!is.na(remainders) & floored > 0)
+        if (length(candidates) > 0) {
+          n_adjust <- min(abs(deficit), length(candidates))
+          adjust_idx <- candidates[order(remainders[candidates], decreasing = FALSE)[1:n_adjust]]
+          floored[adjust_idx] <- floored[adjust_idx] - 1
+        }
+      }
+
+      adjusted[c_age + 1, , , ] <- array(floored, dim = dims)
     }
   }
 
