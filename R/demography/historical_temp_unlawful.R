@@ -908,124 +908,92 @@ calculate_other_residuals <- function(total_pop,
                                        years,
                                        ages) {
   max_age <- max(ages)
-  result_list <- list()
+  calc_years <- years[-1]  # Skip first year (need begin pop)
 
-  for (yr in years[-1]) {  # Start from second year (need begin pop)
-    prev_yr <- yr - 1
-
-    # Get beginning (Dec 31 Y-1) and end (Dec 31 Y) populations
-    begin_pop <- total_pop[year == prev_yr & age %in% ages]
-    end_pop <- total_pop[year == yr & age %in% ages]
-
-    if (nrow(begin_pop) == 0 || nrow(end_pop) == 0) {
-      cli::cli_alert_warning("Missing population data for {yr}, skipping")
-      next
+  # --- Validate inputs ---
+  required <- c("births", "mortality", "lpr_immigration", "emigration", "aos")
+  for (comp_name in required) {
+    comp <- components[[comp_name]]
+    if (is.null(comp)) {
+      cli::cli_abort("{comp_name} component is NULL in residual calculation")
     }
-
-    # Get births (1940+ from extended nchs_births_by_sex target)
-    # TR2025 Items 35/32: "births by month and sex of child, for years 1931-2023"
-    births_data <- components$births
-    if (is.null(births_data) || !yr %in% births_data$year) {
-      cli::cli_abort(c(
-        "Births data missing for year {yr} in residual calculation",
-        "i" = "nchs_births_by_sex target should cover 1940+ (pre-1968 from CDC NVSR, post-1968 from NBER)"
-      ))
-    }
-    births_male <- births_data[year == yr, male]
-    births_female <- births_data[year == yr, female]
-    if (length(births_male) == 0 || length(births_female) == 0) {
-      cli::cli_abort("Births data incomplete for year {yr}: male={length(births_male)}, female={length(births_female)}")
-    }
-
-    # Get mortality
-    mortality <- components$mortality
-    if (is.null(mortality) || !yr %in% mortality$year) {
-      cli::cli_abort(c(
-        "Mortality data missing for year {yr} in residual calculation",
-        "i" = "Ensure TR2025 DeathProbsE files are configured in config"
-      ))
-    }
-    qx_yr <- mortality[year == yr]
-
-    # Get LPR immigration
-    lpr <- components$lpr_immigration
-    if (is.null(lpr) || !yr %in% lpr$year) {
-      cli::cli_abort("LPR immigration data missing for year {yr} in residual calculation")
-    }
-    lpr_yr <- lpr[year == yr]
-
-    # Get emigration
-    emig <- components$emigration
-    if (is.null(emig) || !yr %in% emig$year) {
-      cli::cli_abort("Emigration data missing for year {yr} in residual calculation")
-    }
-    emig_yr <- emig[year == yr]
-
-    # Get AOS
-    aos <- components$aos
-    if (is.null(aos) || !yr %in% aos$year) {
-      cli::cli_abort("AOS data missing for year {yr} in residual calculation")
-    }
-    aos_yr <- aos[year == yr]
-
-    # Compute residual for each age-sex cell using cohort accounting
-    yr_residuals <- list()
-
-    for (s in c("male", "female")) {
-      for (a in ages) {
-        end_p <- end_pop[age == a & sex == s, population]
-        if (length(end_p) == 0) end_p <- 0
-
-        # Expected population from cohort aging
-        if (a == 0) {
-          # Age 0: expected = births surviving infant mortality
-          birth_count <- if (s == "male") births_male else births_female
-          q0 <- qx_yr[age == 0 & sex == s, qx]
-          if (length(q0) == 0) q0 <- 0
-          expected <- birth_count * (1 - q0 / 2)
-        } else if (a == max_age) {
-          # Open-ended group: survivors from age max_age-1 + survivors from max_age
-          prev_below <- begin_pop[age == (a - 1) & sex == s, population]
-          prev_stay <- begin_pop[age == a & sex == s, population]
-          if (length(prev_below) == 0) prev_below <- 0
-          if (length(prev_stay) == 0) prev_stay <- 0
-          q_below <- qx_yr[age == (a - 1) & sex == s, qx]
-          q_stay <- qx_yr[age == a & sex == s, qx]
-          if (length(q_below) == 0) q_below <- 0
-          if (length(q_stay) == 0) q_stay <- 0
-          expected <- prev_below * (1 - q_below) + prev_stay * (1 - q_stay)
-        } else {
-          # Standard: survivors from age a-1 last year
-          prev_a <- begin_pop[age == (a - 1) & sex == s, population]
-          if (length(prev_a) == 0) prev_a <- 0
-          q <- qx_yr[age == a & sex == s, qx]
-          if (length(q) == 0) q <- 0
-          expected <- prev_a * (1 - q)
-        }
-
-        # Add net LPR migration and AOS
-        imm_val <- lpr_yr[age == a & sex == s, immigration]
-        if (length(imm_val) == 0) imm_val <- 0
-        emig_val <- emig_yr[age == a & sex == s, emigration]
-        if (length(emig_val) == 0) emig_val <- 0
-        aos_val <- aos_yr[age == a & sex == s, aos]
-        if (length(aos_val) == 0) aos_val <- 0
-
-        expected <- expected + imm_val - emig_val + aos_val
-
-        # Residual = actual - expected = net other immigration
-        residual <- end_p - expected
-
-        yr_residuals[[length(yr_residuals) + 1L]] <- data.table::data.table(
-          year = as.integer(yr), age = a, sex = s, residual = residual
-        )
+    if ("year" %in% names(comp)) {
+      missing_yrs <- setdiff(calc_years, unique(comp$year))
+      if (length(missing_yrs) > 0) {
+        cli::cli_abort(c(
+          "{comp_name} data missing for {length(missing_yrs)} year(s) in residual calculation",
+          "i" = "Missing: {paste(head(missing_yrs, 5), collapse=', ')}"
+        ))
       }
     }
-
-    result_list[[as.character(yr)]] <- data.table::rbindlist(yr_residuals)
   }
 
-  data.table::rbindlist(result_list)
+  # Check total_pop covers all needed years (calc_years AND their predecessors)
+  needed_pop_years <- unique(c(calc_years, calc_years - 1L))
+  missing_pop_yrs <- setdiff(needed_pop_years, unique(total_pop$year))
+  if (length(missing_pop_yrs) > 0) {
+    cli::cli_alert_warning("Missing population data for {length(missing_pop_yrs)} year(s), residuals will be 0")
+  }
+
+  # --- Build scaffold: all (year, age, sex) combinations ---
+  scaffold <- data.table::CJ(year = calc_years, age = ages, sex = c("female", "male"))
+  scaffold[, `:=`(prev_yr = year - 1L, prev_age = age - 1L)]
+
+  # --- Join end-of-year population: total_pop at (year, age, sex) ---
+  scaffold[total_pop, end_pop := i.population, on = .(year, age, sex)]
+
+  # --- Join begin-of-year population at age-1: cohort aging up ---
+  # For ages 1+: person was age (a-1) at Dec 31 of prev year
+  scaffold[total_pop, begin_prev := i.population, on = .(prev_yr = year, prev_age = age, sex)]
+
+  # --- Join begin-of-year population at same age: for max_age open-ended group ---
+  scaffold[total_pop, begin_same := i.population, on = .(prev_yr = year, age, sex)]
+
+  # --- Join mortality qx at (year, age, sex) ---
+  scaffold[components$mortality, qx := i.qx, on = .(year, age, sex)]
+
+  # --- Join mortality qx at (year, age-1, sex) for max_age survivors-from-below ---
+  scaffold[components$mortality, qx_below := i.qx, on = .(year, prev_age = age, sex)]
+
+  # --- Join immigration, emigration, AOS ---
+  scaffold[components$lpr_immigration, immigration := i.immigration, on = .(year, age, sex)]
+  scaffold[components$emigration, emigration := i.emigration, on = .(year, age, sex)]
+  scaffold[components$aos, aos := i.aos, on = .(year, age, sex)]
+
+  # --- Join births (wide -> long for join) ---
+  births <- components$births
+  births_long <- data.table::data.table(
+    year = rep(births$year, 2L),
+    sex = c(rep("male", nrow(births)), rep("female", nrow(births))),
+    births_count = c(births$male, births$female)
+  )
+  scaffold[births_long, births_count := i.births_count, on = .(year, sex)]
+
+  # --- Fill NAs with 0 (matches original length-0 -> 0 fallbacks) ---
+  na_cols <- c("end_pop", "begin_prev", "begin_same", "qx", "qx_below",
+               "immigration", "emigration", "aos", "births_count")
+  for (col in na_cols) {
+    data.table::set(scaffold, which(is.na(scaffold[[col]])), col, 0)
+  }
+
+  # --- Compute expected population (vectorized across all year-age-sex) ---
+  # Age 0:        births surviving infant mortality
+  # Ages 1-99:    survivors from age a-1 last year
+  # Age max_age:  survivors from age-1 (aging up) + survivors at same age (staying)
+  scaffold[, expected := data.table::fcase(
+    age == 0L,      births_count * (1 - qx / 2),
+    age == max_age, begin_prev * (1 - qx_below) + begin_same * (1 - qx),
+    rep(TRUE, .N),  begin_prev * (1 - qx)
+  )]
+
+  # Add net LPR migration and AOS
+  scaffold[, expected := expected + immigration - emigration + aos]
+
+  # Residual = actual - expected = net other immigration
+  scaffold[, residual := end_pop - expected]
+
+  # Return clean result matching original output format
+  scaffold[, .(year = as.integer(year), age, sex, residual)]
 }
 
 #' Modify Residuals for Reasonableness
