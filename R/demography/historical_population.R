@@ -158,6 +158,7 @@ calculate_historical_population <- function(start_year = 1940,
         lpr_assumptions = lpr_assumptions,
         immigration_dist = immigration_dist,
         emigration_dist = emigration_dist,
+        mortality_qx = mortality_qx,
         births_by_sex = births_by_sex
       )
       component_totals <- compute_component_totals(components, config)
@@ -186,6 +187,7 @@ calculate_historical_population <- function(start_year = 1940,
       lpr_assumptions = lpr_assumptions,
       immigration_dist = immigration_dist,
       emigration_dist = emigration_dist,
+      mortality_qx = mortality_qx,
       births_by_sex = births_by_sex
     )
 
@@ -378,6 +380,7 @@ gather_population_components <- function(years,
                                           lpr_assumptions = NULL,
                                           immigration_dist = NULL,
                                           emigration_dist = NULL,
+                                          mortality_qx = NULL,
                                           births_by_sex = NULL) {
   components <- list()
 
