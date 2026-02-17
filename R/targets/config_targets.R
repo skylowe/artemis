@@ -56,12 +56,22 @@ get_config_file <- function() {
 #'
 #' @export
 create_config_targets <- function() {
-  # Uncompressed RDS format — deterministic across R sessions.
-  # Default gzip-compressed RDS produces different bytes on host vs container,
-  # defeating targets early cutoff for unchanged config sections.
+  # Version-stable RDS format — deterministic across R patch versions.
+  # saveRDS() embeds the writer's R version in the file header (e.g., 4.5.0
+  # vs 4.5.2), so identical objects produce different file hashes when built
+  # on the host (R 4.5.2) vs in the container (R 4.5.0). This defeats
+  # {targets} early cutoff for unchanged config sections.
+  # Fix: write uncompressed RDS, then zero out the 4-byte R version field
+  # (header bytes 7-10). readRDS() ignores these bytes, so the files remain
+  # fully readable.
   format_config <- targets::tar_format(
     read = function(path) readRDS(path),
-    write = function(object, path) saveRDS(object, path, compress = FALSE)
+    write = function(object, path) {
+      saveRDS(object, path, compress = FALSE)
+      raw <- readBin(path, "raw", file.info(path)$size)
+      raw[7:10] <- as.raw(0)
+      writeBin(raw, path)
+    }
   )
 
   list(
