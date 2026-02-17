@@ -132,31 +132,32 @@ The container startup script (`docker/start.sh`) copies baseline `_targets` from
 
 ### Updating the Dashboard After Code Changes
 
+**CRITICAL: Always rebuild the host pipeline before building the Docker image.** The Docker container copies the host `_targets` store as its baseline. If the host baseline is stale (built before the latest code changes), the container will detect function hash mismatches and unnecessarily rebuild targets on every scenario run. This is the #1 cause of slow first-run performance.
+
 After making changes to R source code, config, or Shiny app files:
 
 ```bash
-# 1. Build the new Docker image
+# 1. ALWAYS run the host pipeline first to ensure _targets store matches current code
+Rscript -e "targets::tar_make()"
+
+# 2. Build the new Docker image
 docker build -t artemis:latest /home/skylowe/projects/artemis
 
-# 2. Remove the existing user container (JupyterHub will respawn with new image)
+# 3. Remove the existing user container (JupyterHub will respawn with new image)
 docker rm -f jupyter-skylowe
 
-# 3. Visit the JupyterHub URL to trigger a new container spawn
+# 4. Visit the JupyterHub URL to trigger a new container spawn
 #    The new container will use the updated image
 ```
 
 If the **pipeline code or baseline computation changed** (e.g., modified R/demography/ files, changed config defaults, updated data acquisition logic), you must also clear the cached `_targets` in the persist volume so the container copies the fresh baseline on next start:
 
 ```bash
-# Run the pipeline on the host first to build updated baseline
-Rscript -e "targets::tar_make()"
-
 # Clear cached _targets AND scenario store for each user so fresh baseline is copied on next start
-# Note: persist volume root is /home/jupyterhub/users/{username}/ (no persist/ subdirectory)
-rm -rf /home/jupyterhub/users/skylowe/_targets
-rm -rf /home/jupyterhub/users/skylowe/_targets_scenario
+rm -rf /home/jupyterhub/users/skylowe/persist/_targets
+rm -rf /home/jupyterhub/users/skylowe/persist/_targets_scenario
 
-# Then rebuild the image and remove the container (steps 1-2 above)
+# Then rebuild the image and remove the container (steps 2-3 above)
 # The new container will copy the updated _targets from the bind mount
 ```
 
