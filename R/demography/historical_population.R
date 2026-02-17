@@ -80,6 +80,7 @@ calculate_historical_population <- function(start_year = 1940,
                                              lpr_assumptions = NULL,
                                              immigration_dist = NULL,
                                              emigration_dist = NULL,
+                                             mortality_qx = NULL,
                                              births_by_sex = NULL,
                                              cache_dir = here::here("data/cache"),
                                              use_cache = TRUE) {
@@ -409,8 +410,14 @@ gather_population_components <- function(years,
   components$armed_forces <- fetch_armed_forces_for_historical(years)
 
   # 8. Mortality data (qx)
-  cli::cli_alert("Loading mortality data...")
-  components$mortality <- load_mortality_data(config)
+  cli::cli_alert("Using mortality data from upstream target...")
+  if (is.null(mortality_qx)) {
+    cli::cli_abort(c(
+      "mortality_qx is required for historical population calculation",
+      "i" = "Pass mortality_qx_historical target as mortality_qx parameter"
+    ))
+  }
+  components$mortality <- mortality_qx
 
   # 9. Immigration/emigration from upstream LPR subprocess
   cli::cli_alert("Building immigration/emigration from LPR assumptions...")
@@ -1020,114 +1027,9 @@ fetch_armed_forces_for_historical <- function(years) {
   result
 }
 
-# =============================================================================
-# MORTALITY AND DEMOGRAPHIC COMPONENTS
-# =============================================================================
-
-#' Load Mortality Data for Population Calculations
-#'
-#' @description
-#' Loads death probabilities (qx) by year, age, and sex. Tries the mortality
-#' subprocess cache first, then TR2025 DeathProbsE files via config paths.
-#' Errors if neither source is available.
-#'
-#' @keywords internal
-load_mortality_data <- function(config = NULL) {
-  # Try mortality subprocess cache
-  qx_file <- here::here("data/cache/mortality/historical_qx.rds")
-  if (file.exists(qx_file)) {
-    return(readRDS(qx_file))
-  }
-
-  # Try TR2025 DeathProbsE files (these are primary data, not a "fallback")
-  # The mortality subprocess may not have been run yet, but the TR2025 raw
-  # files contain the same qx data that the subprocess would produce.
-  if (!is.null(config$mortality$starting_tr_qx)) {
-    cli::cli_alert_info("Mortality cache not found, loading from TR2025 DeathProbsE files")
-    return(load_tr_mortality(config))
-  }
-
-  cli::cli_abort(c(
-    "Mortality data unavailable",
-    "x" = "Cache not found: {qx_file}",
-    "x" = "Config missing {.field mortality.starting_tr_qx} file paths",
-    "i" = "Run mortality subprocess: targets::tar_make(names = matches('mortality'))",
-    "i" = "Or ensure TR2025 DeathProbsE files are configured in config YAML"
-  ))
-}
-
-#' Load TR2025 Mortality Data from DeathProbsE Files
-#'
-#' @description
-#' Reads death probability files specified in config. Uses historical file
-#' (1900-2022) and projected file (2023-2100). File paths come from
-#' `config$mortality$starting_tr_qx`.
-#'
-#' @param config List: configuration with mortality file paths
-#'
-#' @keywords internal
-load_tr_mortality <- function(config = NULL) {
-  # Resolve file paths from config
-  tr_year <- if (!is.null(config)) config$metadata$trustees_report_year else 2025
-  tr_dir <- here::here(paste0("data/raw/SSA_TR", tr_year))
-
-  if (!is.null(config$mortality$starting_tr_qx)) {
-    male_hist <- here::here(config$mortality$starting_tr_qx$male_qx_hist_file)
-    female_hist <- here::here(config$mortality$starting_tr_qx$female_qx_hist_file)
-    male_proj <- here::here(config$mortality$starting_tr_qx$male_qx_file)
-    female_proj <- here::here(config$mortality$starting_tr_qx$female_qx_file)
-  } else {
-    cli::cli_abort(c(
-      "Config missing {.field mortality.starting_tr_qx} file paths",
-      "i" = "Add male_qx_hist_file, female_qx_hist_file, male_qx_file, female_qx_file to config"
-    ))
-  }
-
-  # Need at least historical files
-  if (!file.exists(male_hist) || !file.exists(female_hist)) {
-    cli::cli_abort(c(
-      "TR{tr_year} historical mortality files not found",
-      "x" = "Male file: {male_hist}",
-      "x" = "Female file: {female_hist}",
-      "i" = "Place TR{tr_year} DeathProbsE files in {tr_dir}/"
-    ))
-  }
-
-  read_qx_file <- function(filepath, sex_label) {
-    # Skip first row (description line), then read CSV
-    raw <- data.table::fread(filepath, skip = 1)
-    # Columns: Year, 0, 1, 2, ..., 119
-    data.table::melt(
-      raw,
-      id.vars = "Year",
-      variable.name = "age_col",
-      value.name = "qx"
-    )[, .(
-      year = Year,
-      age = as.integer(as.character(age_col)),
-      sex = sex_label,
-      qx = qx
-    )]
-  }
-
-  result_parts <- list()
-  result_parts$male_hist <- read_qx_file(male_hist, "male")
-  result_parts$female_hist <- read_qx_file(female_hist, "female")
-
-  # Add projected if available (for years beyond historical coverage)
-  if (file.exists(male_proj)) {
-    result_parts$male_proj <- read_qx_file(male_proj, "male")
-  }
-  if (file.exists(female_proj)) {
-    result_parts$female_proj <- read_qx_file(female_proj, "female")
-  }
-
-  result <- data.table::rbindlist(result_parts)
-  # Remove duplicates (projected overlaps at boundary year)
-  result <- unique(result, by = c("year", "age", "sex"))
-  data.table::setorder(result, year, sex, age)
-  result
-}
+# load_mortality_data() and load_tr_mortality() — REMOVED
+# Mortality data is now passed as an explicit targets dependency (mortality_qx)
+# instead of being loaded via side-channel cache files or config fallbacks.
 
 #' Build Historical Immigration and Emigration from Upstream LPR Data
 #'

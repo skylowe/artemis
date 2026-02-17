@@ -33,12 +33,12 @@ create_historical_population_targets <- function() {
           config = list(
             data_sources = config_data_sources,
             historical_population = config_historical_pop,
-            metadata = config_metadata,
-            mortality = list(starting_tr_qx = config_mortality$starting_tr_qx)
+            metadata = config_metadata
           ),
           lpr_assumptions = lpr_assumptions,
           immigration_dist = lpr_distribution,
           emigration_dist = emigration_distribution,
+          mortality_qx = mortality_qx_historical,
           births_by_sex = nchs_births_by_sex,
           use_cache = !scenario_mode
         )
@@ -74,15 +74,12 @@ create_historical_population_targets <- function() {
           start_year = config_historical_pop$start_year,
           end_year = config_historical_pop$end_year,
           ages = 0:config_historical_pop$max_age,
-          config = list(
-            historical_population = config_historical_pop,
-            metadata = config_metadata,
-            mortality = list(starting_tr_qx = config_mortality$starting_tr_qx)
-          ),
+          config = list(historical_population = config_historical_pop),
           total_pop = historical_population,
           lpr_assumptions = lpr_assumptions,
           immigration_dist = lpr_distribution,
           emigration_dist = emigration_distribution,
+          mortality_qx = mortality_qx_historical,
           births_by_sex = nchs_births_by_sex,
           use_cache = !scenario_mode
         )

@@ -79,6 +79,9 @@ NULL
 #'   Required for "residual" method (provides immigration/emigration/AOS totals).
 #' @param immigration_dist Immigration age-sex distribution (from lpr_distribution target).
 #' @param emigration_dist Emigration age-sex distribution (from emigration_distribution target).
+#' @param mortality_qx data.table: Historical death probabilities (from mortality_qx_historical target).
+#'   Columns: year, age, sex, qx. When provided, used directly instead of loading
+#'   from cache or TR files.
 #' @param births_by_sex data.table: Births by sex (from nchs_births_by_sex target).
 #' @param use_cache Logical: Use cached results if available
 #' @param cache_dir Character: Directory for caching
@@ -99,6 +102,7 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
                                                 lpr_assumptions = NULL,
                                                 immigration_dist = NULL,
                                                 emigration_dist = NULL,
+                                                mortality_qx = NULL,
                                                 births_by_sex = NULL,
                                                 use_cache = TRUE,
                                                 cache_dir = here::here("data/cache")) {
@@ -153,6 +157,7 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
       lpr_assumptions = lpr_assumptions,
       immigration_dist = immigration_dist,
       emigration_dist = emigration_dist,
+      mortality_qx = mortality_qx,
       births_by_sex = births_by_sex
     )
 
@@ -218,9 +223,15 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
     n_years_dist <- length(unique(age_sex_dist$year))
     cli::cli_alert_info("Distribution covers {nrow(age_sex_dist)} age-sex-year cells ({n_years_dist} years)")
 
-    cli::cli_h2("Step 3: Loading Mortality Data")
-    mortality <- load_mortality_for_o(years, config)
-    cli::cli_alert_info("Loaded mortality for {length(unique(mortality$year))} years")
+    cli::cli_h2("Step 3: Using Mortality Data")
+    if (is.null(mortality_qx)) {
+      cli::cli_abort(c(
+        "mortality_qx is required for O-population calculation",
+        "i" = "Pass mortality_qx_historical target as mortality_qx parameter"
+      ))
+    }
+    mortality <- mortality_qx
+    cli::cli_alert_info("Using mortality data for {length(unique(mortality$year))} years")
 
     cli::cli_h2("Step 4: Building O Stock from TR2025 Flows")
     o_stock <- build_o_stock_from_flows(
@@ -654,12 +665,19 @@ gather_o_components <- function(years, ages, cache_dir, config = NULL,
                                  lpr_assumptions = NULL,
                                  immigration_dist = NULL,
                                  emigration_dist = NULL,
+                                 mortality_qx = NULL,
                                  births_by_sex = NULL) {
   components <- list()
 
   # 1. Mortality data (qx)
-  cli::cli_alert("  Loading mortality data...")
-  components$mortality <- load_mortality_for_o(years, config)
+  cli::cli_alert("  Using mortality data from upstream target...")
+  if (is.null(mortality_qx)) {
+    cli::cli_abort(c(
+      "mortality_qx is required for O-population residual calculation",
+      "i" = "Pass mortality_qx_historical target as mortality_qx parameter"
+    ))
+  }
+  components$mortality <- mortality_qx
 
   # 2-3. LPR Immigration and Emigration from upstream targets
   cli::cli_alert("  Building LPR immigration/emigration from upstream data...")
@@ -730,22 +748,9 @@ load_total_population <- function(start_year, end_year, cache_dir) {
   }
 }
 
-#' Load Mortality Data for O Calculation
-#'
-#' @description
-#' Loads death probabilities (qx) for the O-population calculation.
-#' Uses the same config-driven approach as the historical population module:
-#' tries mortality subprocess cache first, then TR2025 DeathProbsE files.
-#'
-#' @param years Integer vector of years
-#' @param config List: configuration with mortality file paths
-#'
-#' @keywords internal
-load_mortality_for_o <- function(years, config = NULL) {
-  # Use the shared load_mortality_data function from historical_population.R
-  # which handles cache + config-driven TR file paths
-  load_mortality_data(config)
-}
+# load_mortality_for_o() — REMOVED
+# Mortality data is now passed as an explicit targets dependency (mortality_qx)
+# instead of being loaded via side-channel cache files or config fallbacks.
 
 # generate_simplified_mortality() — REMOVED
 # Synthetic mortality rates were a silent fallback. Real qx data from TR2025
