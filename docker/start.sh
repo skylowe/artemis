@@ -6,6 +6,7 @@ set -eo pipefail
 PROJECT_DIR="/home/artemis/project"
 PERSIST_DIR="/home/artemis/persist"
 BASELINE_TARGETS="/home/artemis/baseline_targets"
+BASELINE_CACHE="/home/artemis/baseline_cache"
 
 echo "=== ARTEMIS container starting ==="
 
@@ -41,6 +42,22 @@ fi
 if [ ! -e "${PROJECT_DIR}/_targets" ]; then
     ln -s "${PERSIST_DIR}/_targets" "${PROJECT_DIR}/_targets"
 fi
+
+# Copy baseline data/cache to per-user persist on first start.
+# Each user gets a writable copy so scenario runs that trigger new code paths
+# (e.g., different historical population source) can write new cache files.
+if [ -d "${BASELINE_CACHE}" ] && [ ! -d "${PERSIST_DIR}/cache" ]; then
+    echo "First start: copying baseline data/cache to persist..."
+    mkdir -p "${PERSIST_DIR}/cache"
+    cp -r "${BASELINE_CACHE}/." "${PERSIST_DIR}/cache/" || echo "WARNING: cache copy failed with exit code $?"
+    echo "Baseline cache copied ($(du -sh ${PERSIST_DIR}/cache | cut -f1))"
+else
+    echo "Using existing cache from persist volume ($(du -sh ${PERSIST_DIR}/cache 2>/dev/null | cut -f1 || echo 'empty'))"
+fi
+
+# Symlink writable cache into project directory (replace ro mount)
+rm -rf "${PROJECT_DIR}/data/cache"
+ln -sf "${PERSIST_DIR}/cache" "${PROJECT_DIR}/data/cache"
 
 # Replace image directories with symlinks to persist volume
 # (COPY app/ in Dockerfile creates real dirs that block symlink creation)

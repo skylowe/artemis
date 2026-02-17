@@ -124,11 +124,11 @@ Baseline files are saved to `data/baseline/tr2025/` (gitignored, ~90MB of .rds f
 |-----------|---------------|------|
 | `/home/jupyterhub/users/{username}` | `/home/artemis/persist` | rw |
 | `projects/artemis/data/raw` | `/home/artemis/project/data/raw` | ro |
-| `projects/artemis/data/cache` | `/home/artemis/project/data/cache` | ro |
+| `projects/artemis/data/cache` | `/home/artemis/baseline_cache` | ro |
 | `projects/artemis/_targets` | `/home/artemis/baseline_targets` | ro |
 | `~/.Renviron` | `/home/artemis/.Renviron` | ro |
 
-The container startup script (`docker/start.sh`) copies baseline `_targets` from the read-only mount into the user's writable persist volume on **first start only**. Subsequent container restarts reuse the cached `_targets`, so config changes on the dashboard only rebuild affected targets (~1-2 min) instead of a full from-scratch build (~6-7 min).
+The container startup script (`docker/start.sh`) copies baseline `_targets` and `data/cache` from read-only mounts into the user's writable persist volume on **first start only**. Subsequent container restarts reuse the cached copies, so config changes on the dashboard only rebuild affected targets (~1-2 min) instead of a full from-scratch build (~6-7 min). The per-user writable cache allows scenario runs that trigger new code paths (e.g., different historical population source) to write new cache files without affecting other users.
 
 ### Updating the Dashboard After Code Changes
 
