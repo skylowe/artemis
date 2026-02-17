@@ -170,6 +170,8 @@ sudo systemctl restart jupyterhub
 - After rebuilding the image, you must remove the old container for changes to take effect
 - The container name follows the pattern `jupyter-{username}` (e.g., `jupyter-skylowe`)
 - JupyterHub's idle culler removes containers after 1 hour of inactivity
+- **Scenario store persistence:** `_targets_scenario` preserves target metadata (including errors) across container restarts. If scenario runs show persistent errors for targets that should be cached (e.g., divorce, marriage, CNI), clear it: `rm -rf /home/jupyterhub/users/{username}/_targets_scenario`. This forces a fresh copy from the baseline store on next start.
+- **Cache completeness:** The `data/cache` persist copy is only made on first start. If new cache files are generated on the host after the initial copy (e.g., new ACS PUMS downloads), clear the persist cache to trigger a fresh copy: `rm -rf /home/jupyterhub/users/{username}/cache`
 
 ## Known Methodology Deviations from TR2025
 

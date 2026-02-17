@@ -283,6 +283,12 @@ if (dir.exists(r_dir)) {
   }
 }
 
+# Register www/ directory for static file serving
+www_dir <- file.path(APP_DIR, "www")
+if (dir.exists(www_dir)) {
+  addResourcePath("www", www_dir)
+}
+
 # Source modules
 modules_dir <- file.path(APP_DIR, "modules")
 if (dir.exists(modules_dir)) {

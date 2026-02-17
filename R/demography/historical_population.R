@@ -115,6 +115,10 @@ calculate_historical_population <- function(start_year = 1940,
     cli::cli_alert_success("Loading cached historical population")
     cached <- readRDS(cache_file)
 
+    # Ensure unhashed copy exists for divorce/marriage cache readers
+    unhashed <- file.path(cache_subdir, sprintf("ss_population_%d_%d.rds", start_year, end_year))
+    if (!file.exists(unhashed)) file.copy(cache_file, unhashed)
+
     # Handle both old format (data.table) and new format (list with components)
     if (is.list(cached) && "population" %in% names(cached)) {
       pop_data <- cached$population
@@ -238,6 +242,8 @@ calculate_historical_population <- function(start_year = 1940,
       components = component_totals
     )
     saveRDS(cache_data, cache_file)
+    # Also write unhashed name for divorce/marriage cache readers
+    file.copy(cache_file, file.path(cache_subdir, sprintf("ss_population_%d_%d.rds", start_year, end_year)), overwrite = TRUE)
     cli::cli_alert_success("Saved to cache: {cache_file}")
   }
 

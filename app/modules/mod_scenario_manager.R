@@ -51,6 +51,27 @@ mod_scenario_manager_ui <- function(id) {
       )
     ),
 
+    # Console output card
+    card(
+      card_header(
+        class = "d-flex justify-content-between align-items-center",
+        "Console Output",
+        actionButton(
+          ns("clear_console"),
+          "Clear",
+          icon = icon("eraser"),
+          class = "btn-outline-secondary btn-sm"
+        )
+      ),
+      card_body(
+        class = "p-0",
+        tags$pre(
+          id = ns("console_output"),
+          class = "scenario-console"
+        )
+      )
+    ),
+
     # Saved scenarios card
     card(
       card_header(class = "bg-secondary text-white", "Saved Scenarios"),
@@ -158,25 +179,57 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
         id = session$ns("projection_running")
       )
 
+      # Clear console and prepare for new run
+      console_id <- session$ns("console_output")
+      session$sendCustomMessage("scenario_console_clear", list(id = console_id))
+
+      # Helper to push a line to the browser console
+      console_log <- function(text) {
+        tryCatch(
+          session$sendCustomMessage("scenario_console_log",
+                                    list(id = console_id, text = text)),
+          error = function(e) NULL
+        )
+      }
+
+      console_log("Starting projection pipeline...\n")
+      run_start <- Sys.time()
+
       # Run synchronously with withProgress() to keep the WebSocket alive
-      # (the previous session$onFlushed() pattern caused results to be lost
-      # because the 60+ second blocking tar_make() call could timeout the
-      # WebSocket, and reactive value updates inside onFlushed callbacks
-      # did not reliably trigger UI re-renders)
+      # withCallingHandlers captures cli/message output and pushes to browser
       result <- NULL
       withProgress(message = "Running projection pipeline...", value = 0, {
-        result <- tryCatch({
-          run_scenario_projection(
-            config = config,
-            artemis_root = ARTEMIS_ROOT,
-            progress_callback = function(pct, msg) {
-              setProgress(pct / 100, message = msg)
+        result <- tryCatch(
+          withCallingHandlers(
+            run_scenario_projection(
+              config = config,
+              artemis_root = ARTEMIS_ROOT,
+              progress_callback = function(pct, msg) {
+                setProgress(pct / 100, message = msg)
+              }
+            ),
+            message = function(m) {
+              tryCatch({
+                line <- cli::ansi_strip(conditionMessage(m))
+                console_log(line)
+              }, error = function(e) NULL)
+              invokeRestart("muffleMessage")
             }
-          )
-        }, error = function(e) {
-          list(success = FALSE, error = e$message, data = NULL)
-        })
+          ),
+          error = function(e) {
+            console_log(paste0("Error: ", e$message, "\n"))
+            list(success = FALSE, error = e$message, data = NULL)
+          }
+        )
       })
+
+      # Summary line
+      elapsed <- as.numeric(difftime(Sys.time(), run_start, units = "secs"))
+      if (!is.null(result) && result$success) {
+        console_log(sprintf("\nProjection complete [%.1f seconds]\n", elapsed))
+      } else {
+        console_log(sprintf("\nProjection failed [%.1f seconds]\n", elapsed))
+      }
 
       # Remove the running notification
       removeNotification(session$ns("projection_running"))
@@ -193,6 +246,12 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
           type = "error"
         )
       }
+    })
+
+    # Clear console button
+    observeEvent(input$clear_console, {
+      session$sendCustomMessage("scenario_console_clear",
+                                list(id = session$ns("console_output")))
     })
 
     # Scenarios table

@@ -857,6 +857,9 @@ calculate_historical_population_marital <- function(total_pop,
 
   if (use_cache && file.exists(cache_file)) {
     cli::cli_alert_success("Loading cached marital status population")
+    # Ensure unhashed copy exists for divorce cache readers
+    unhashed <- file.path(dirname(cache_file), sprintf("ss_population_marital_%d_%d.rds", start_year, end_year))
+    if (!file.exists(unhashed)) file.copy(cache_file, unhashed)
     return(readRDS(cache_file))
   }
 
@@ -972,6 +975,8 @@ calculate_historical_population_marital <- function(total_pop,
   if (use_cache) {
     dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
     saveRDS(result, cache_file)
+    # Also write unhashed name for divorce cache readers
+    file.copy(cache_file, file.path(dirname(cache_file), sprintf("ss_population_marital_%d_%d.rds", start_year, end_year)), overwrite = TRUE)
     cli::cli_alert_success("Cached marital status population")
   }
 

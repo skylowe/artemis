@@ -13,7 +13,8 @@ ui <- page_navbar(
     if (requireNamespace("shinyjs", quietly = TRUE)) shinyjs::useShinyjs(),
     if (requireNamespace("waiter", quietly = TRUE)) waiter::useWaiter(),
     tags$head(
-      tags$link(rel = "stylesheet", type = "text/css", href = "styles.css")
+      tags$link(rel = "stylesheet", type = "text/css", href = "www/styles.css"),
+      tags$script(src = "www/console.js")
     )
   ),
 
