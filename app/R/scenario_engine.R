@@ -72,7 +72,6 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     "config_projected_pop",
     "config_metadata",
     "config_data_sources",
-    "config_runtime",
 
     # Fertility chain (pure computation — no file I/O)
     "fertility_ultimate_years",

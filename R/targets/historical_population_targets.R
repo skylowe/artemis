@@ -22,68 +22,63 @@ create_historical_population_targets <- function() {
     # ==========================================================================
 
     # Step 1: Historical Population by Age and Sex (Eq 1.4.1)
+    # Always use_cache = TRUE: targets handles invalidation via config gates.
+    # The internal RDS cache provides fast reads (~50ms) from the bind-mounted
+    # data/cache directory. No need to recompute in scenario mode — if
+    # config_historical_pop changes, targets rebuilds this target automatically.
     targets::tar_target(
       historical_population,
-      {
-        scenario_mode <- isTRUE(config_runtime$scenario_mode)
-        calculate_historical_population(
-          start_year = config_historical_pop$start_year,
-          end_year = config_historical_pop$end_year,
-          ages = 0:config_historical_pop$max_age,
-          config = list(
-            data_sources = config_data_sources,
-            historical_population = config_historical_pop,
-            metadata = config_metadata
-          ),
-          lpr_assumptions = lpr_assumptions,
-          immigration_dist = lpr_distribution,
-          emigration_dist = emigration_distribution,
-          mortality_qx = mortality_qx_historical,
-          births_by_sex = nchs_births_by_sex,
-          use_cache = !scenario_mode
-        )
-      }
+      calculate_historical_population(
+        start_year = config_historical_pop$start_year,
+        end_year = config_historical_pop$end_year,
+        ages = 0:config_historical_pop$max_age,
+        config = list(
+          data_sources = config_data_sources,
+          historical_population = config_historical_pop,
+          metadata = config_metadata
+        ),
+        lpr_assumptions = lpr_assumptions,
+        immigration_dist = lpr_distribution,
+        emigration_dist = emigration_distribution,
+        mortality_qx = mortality_qx_historical,
+        births_by_sex = nchs_births_by_sex,
+        use_cache = TRUE
+      )
     ),
 
     # Step 2: Historical Population by Marital Status (Eq 1.4.2)
     targets::tar_target(
       historical_population_marital,
-      {
-        scenario_mode <- isTRUE(config_runtime$scenario_mode)
-        calculate_historical_population_marital(
-          total_pop = historical_population,
-          start_year = config_historical_pop$start_year,
-          end_year = config_historical_pop$end_year,
-          ages = 14:config_historical_pop$max_age,
-          config = list(
-            historical_population = config_historical_pop,
-            projected_population = list(population_status = config_projected_pop$population_status)
-          ),
-          use_cache = !scenario_mode,
-          include_same_sex = TRUE
-        )
-      }
+      calculate_historical_population_marital(
+        total_pop = historical_population,
+        start_year = config_historical_pop$start_year,
+        end_year = config_historical_pop$end_year,
+        ages = 14:config_historical_pop$max_age,
+        config = list(
+          historical_population = config_historical_pop,
+          projected_population = list(population_status = config_projected_pop$population_status)
+        ),
+        use_cache = TRUE,
+        include_same_sex = TRUE
+      )
     ),
 
     # Step 3: Temporary/Unlawfully Present Population (Eq 1.4.3)
     targets::tar_target(
       historical_temp_unlawful,
-      {
-        scenario_mode <- isTRUE(config_runtime$scenario_mode)
-        calculate_historical_temp_unlawful(
-          start_year = config_historical_pop$start_year,
-          end_year = config_historical_pop$end_year,
-          ages = 0:config_historical_pop$max_age,
-          config = list(historical_population = config_historical_pop),
-          total_pop = historical_population,
-          lpr_assumptions = lpr_assumptions,
-          immigration_dist = lpr_distribution,
-          emigration_dist = emigration_distribution,
-          mortality_qx = mortality_qx_historical,
-          births_by_sex = nchs_births_by_sex,
-          use_cache = !scenario_mode
-        )
-      }
+      calculate_historical_temp_unlawful(
+        start_year = config_historical_pop$start_year,
+        end_year = config_historical_pop$end_year,
+        ages = 0:config_historical_pop$max_age,
+        config = list(historical_population = config_historical_pop),
+        total_pop = historical_population,
+        lpr_assumptions = lpr_assumptions,
+        immigration_dist = lpr_distribution,
+        emigration_dist = emigration_distribution,
+        mortality_qx = mortality_qx_historical,
+        births_by_sex = nchs_births_by_sex,
+        use_cache = TRUE
+      )
     ),
 
     # Step 4: Civilian Noninstitutionalized Population (Eq 1.4.4)
