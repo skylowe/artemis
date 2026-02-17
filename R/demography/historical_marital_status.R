@@ -847,10 +847,11 @@ calculate_historical_population_marital <- function(total_pop,
   cli::cli_alert_info("Period: {start_year} to {end_year}")
   cli::cli_alert_info("Ages: {min(ages)} to {max(ages)}")
 
-  # Check cache
+  # Check cache — key includes config hash so config changes miss cache
+  config_hash <- substr(digest::digest(config$historical_population), 1, 8)
   cache_file <- file.path(
     cache_dir, "historical_population",
-    sprintf("ss_population_marital_%d_%d.rds", start_year, end_year)
+    sprintf("ss_population_marital_%d_%d_%s.rds", start_year, end_year, config_hash)
   )
 
   if (use_cache && file.exists(cache_file)) {

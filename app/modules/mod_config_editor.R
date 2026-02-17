@@ -131,6 +131,11 @@ mod_config_editor_ui <- function(id) {
           ),
           selected = "regression"
         ),
+        helpText(
+          "Regression uses NCHS-derived mortality for 1980+",
+          "and SSA/TR2025 historical data for pre-1980 years.",
+          "TR2025 Official uses SSA data for all years."
+        ),
 
         checkboxInput(
           ns("apply_covid_adjustments"),
@@ -312,7 +317,7 @@ mod_config_editor_server <- function(id, rv) {
         value = config$mortality$ultimate_year %||% 2043)
 
       updateSelectInput(session, "starting_aax_method",
-        selected = config$mortality$starting_aax_method %||% "tr_qx")
+        selected = config$mortality$starting_aax_method)
 
       updateCheckboxInput(session, "apply_covid_adjustments",
         value = config$mortality$apply_covid_adjustments %||% TRUE)

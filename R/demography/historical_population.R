@@ -101,13 +101,14 @@ calculate_historical_population <- function(start_year = 1940,
     cli::cli_alert_info("Using Census Vintage {vintage}")
   }
 
-  # Check cache first
+  # Check cache first — key includes config hash so config changes miss cache
   cache_subdir <- file.path(cache_dir, "historical_population")
   if (!dir.exists(cache_subdir)) dir.create(cache_subdir, recursive = TRUE)
 
+  config_hash <- substr(digest::digest(config$historical_population), 1, 8)
   cache_file <- file.path(
     cache_subdir,
-    sprintf("ss_population_%d_%d.rds", start_year, end_year)
+    sprintf("ss_population_%d_%d_%s.rds", start_year, end_year, config_hash)
   )
 
   if (use_cache && file.exists(cache_file)) {

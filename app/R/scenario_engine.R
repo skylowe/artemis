@@ -84,6 +84,7 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     "nchs_deaths_raw",             # For use_wonder_provisional (reads from existing cache)
     "mortality_mx_projected",      # For starting_aax_method, ultimate_year, elderly_aax_cap, apply_covid
     "mortality_qx_historical",     # For hmd_calibration changes on historical qx
+    "mortality_qx_full_historical", # Merged: TR2025 pre-1980 + NCHS 1980+ (for hist pop)
     "mortality_qx_projected",
     "mortality_qx_for_projection",
 

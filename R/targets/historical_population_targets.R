@@ -40,7 +40,7 @@ create_historical_population_targets <- function() {
         lpr_assumptions = lpr_assumptions,
         immigration_dist = lpr_distribution,
         emigration_dist = emigration_distribution,
-        mortality_qx = mortality_qx_historical,
+        mortality_qx = mortality_qx_full_historical,
         births_by_sex = nchs_births_by_sex,
         use_cache = TRUE
       )
@@ -75,7 +75,7 @@ create_historical_population_targets <- function() {
         lpr_assumptions = lpr_assumptions,
         immigration_dist = lpr_distribution,
         emigration_dist = emigration_distribution,
-        mortality_qx = mortality_qx_historical,
+        mortality_qx = mortality_qx_full_historical,
         births_by_sex = nchs_births_by_sex,
         use_cache = TRUE
       )

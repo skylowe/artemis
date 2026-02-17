@@ -224,6 +224,27 @@ create_mortality_targets <- function() {
       }
     ),
 
+    # Step 6b2: Full historical qx for historical population interpolation
+    # The component method (Eq 1.4.1) needs qx back to 1940 for inter-tab-year
+    # interpolation, but NCHS-derived qx only starts at 1980 (Census denominators).
+    # - regression method: TR2025 for pre-1980, NCHS-derived for 1980+
+    # - tr_qx method: TR2025 for all years
+    targets::tar_target(
+      mortality_qx_full_historical,
+      {
+        method <- config_mortality$starting_aax_method %||% "regression"
+        if (method == "tr_qx") {
+          tr2025_qx_historical
+        } else {
+          nchs_min_year <- min(mortality_qx_historical$year)
+          data.table::rbindlist(list(
+            tr2025_qx_historical[year < nchs_min_year],
+            mortality_qx_historical
+          ))
+        }
+      }
+    ),
+
     # Step 6c: Compute infant separation factor (f0) from actual death timing
     targets::tar_target(
       mortality_infant_f0,
