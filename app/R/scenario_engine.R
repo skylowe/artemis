@@ -221,7 +221,8 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
       names = tidyselect::any_of(targets_to_make),
       shortcut = TRUE,
       store = store,
-      callr_function = NULL  # Run in current session
+      callr_function = NULL,  # Run in current session
+      envir = globalenv()    # Use global env to match callr::r import hashing
     )
   }, error = function(e) {
     pipeline_error <<- e$message
