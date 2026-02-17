@@ -161,14 +161,17 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     persist_dir <- Sys.getenv("ARTEMIS_PERSIST_DIR", "/home/artemis/persist")
     store_path <- file.path(persist_dir, "_targets_scenario")
 
+    # Resolve the baseline store path (main_store may be a symlink)
+    baseline_store <- normalizePath(main_store, mustWork = TRUE)
+
     if (!dir.exists(file.path(store_path, "meta"))) {
       report_progress(18, "First run: copying baseline targets store...")
       if (dir.exists(store_path)) unlink(store_path, recursive = TRUE)
-      copy_ok <- file.copy(main_store, dirname(store_path), recursive = TRUE)
-      if (!copy_ok) {
+      # Use system cp to avoid R's file.copy symlink issues
+      exit_code <- system2("cp", c("-r", baseline_store, store_path))
+      if (exit_code != 0) {
         stop("Failed to copy _targets store to scenario directory")
       }
-      file.rename(file.path(dirname(store_path), basename(main_store)), store_path)
     } else {
       report_progress(18, "Using cached scenario store...")
     }
