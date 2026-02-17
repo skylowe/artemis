@@ -151,8 +151,9 @@ If the **pipeline code or baseline computation changed** (e.g., modified R/demog
 # Run the pipeline on the host first to build updated baseline
 Rscript -e "targets::tar_make()"
 
-# Clear cached _targets for each user so fresh baseline is copied on next start
+# Clear cached _targets AND scenario store for each user so fresh baseline is copied on next start
 rm -rf /home/jupyterhub/users/skylowe/persist/_targets
+rm -rf /home/jupyterhub/users/skylowe/persist/_targets_scenario
 
 # Then rebuild the image and remove the container (steps 1-2 above)
 # The new container will copy the updated _targets from the bind mount
@@ -172,7 +173,7 @@ sudo systemctl restart jupyterhub
 - After rebuilding the image, you must remove the old container for changes to take effect
 - The container name follows the pattern `jupyter-{username}` (e.g., `jupyter-skylowe`)
 - JupyterHub's idle culler removes containers after 1 hour of inactivity
-- **Clearing persist `_targets`:** When pipeline code changes, delete `/home/jupyterhub/users/{username}/persist/_targets` so the container copies the updated baseline on next start. Without this, the container reuses stale cached results that may not match the new code.
+- **Clearing persist stores:** When pipeline code changes, delete both `/home/jupyterhub/users/{username}/persist/_targets` and `/home/jupyterhub/users/{username}/persist/_targets_scenario` so the container copies the updated baseline on next start. Without this, the container reuses stale cached results that may not match the new code.
 
 ## Known Methodology Deviations from TR2025
 
