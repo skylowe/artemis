@@ -192,6 +192,18 @@ create_projected_population_targets <- function() {
                                            config = config_assumptions)
     ),
 
+    # Historical married couples grid (husband age × wife age) from ACS PUMS
+    # TR2025 Input #10: Used as base distribution for IPF (replaces normal distribution)
+    targets::tar_target(
+      historical_couples_grid,
+      fetch_married_couples_grid(
+        years = config_assumptions$projected_population$couples_grid$reference_years,
+        min_age = config_assumptions$projected_population$ages$marriage_min,
+        max_age = config_assumptions$projected_population$ages$max_age_group,
+        cache_dir = here::here("data/cache/acs_pums")
+      )
+    ),
+
     targets::tar_target(
       marital_projection,
       run_marital_projection(
@@ -201,10 +213,13 @@ create_projected_population_targets <- function() {
         marriage_rates = marriage_projection,
         divorce_rates = divorce_projection,
         mortality_qx = mortality_qx_for_projection,
+        historical_couples_grid = historical_couples_grid,
+        ipf_config = config_assumptions$projected_population$couples_grid,
         start_year = config_assumptions$projected_population$starting_year,
         end_year = config_assumptions$projected_population$projection_end,
         min_age = config_assumptions$projected_population$ages$marriage_min,
         max_age = config_assumptions$projected_population$ages$max_age_group,
+        midyear_ratio_cap = config_assumptions$projected_population$marital$midyear_ratio_cap,
         verbose = TRUE
       )
     ),
@@ -234,7 +249,7 @@ create_projected_population_targets <- function() {
         comparison[, diff := abs(marital_total - phase8b_total)]
         comparison[phase8b_total > 0, pct_diff := diff / phase8b_total * 100]
         max_pct_diff <- comparison[, max(pct_diff, na.rm = TRUE)]
-        tolerance <- 0.01
+        tolerance <- config_assumptions$projected_population$validation$marital_tolerance
         valid <- max_pct_diff < tolerance
         if (valid) cli::cli_alert_success("PASS: Marital totals match Phase 8B")
         else cli::cli_alert_warning("WARNING: Some differences > {tolerance}%")
@@ -249,12 +264,13 @@ create_projected_population_targets <- function() {
     targets::tar_target(
       children_fate_projection,
       {
-        parent_age_groups <- list("14-24" = 14:24, "25-34" = 25:34, "35-44" = 35:44,
-                                   "45-54" = 45:54, "55-64" = 55:64, "65-100" = 65:100)
+        # Build parent age groups from config (each entry is [min, max])
+        pag_config <- config_assumptions$projected_population$children$parent_age_groups
+        parent_age_groups <- lapply(pag_config, function(x) x[[1]]:x[[2]])
         project_children_fate(
           phase8b_result = population_projection,
           marital_result = marital_projection,
-          birth_rates = fertility_rates_for_projection,
+          birth_rates = fertility_rates_complete,
           mortality_qx = mortality_qx_for_projection,
           parent_age_groups = parent_age_groups,
           start_year = config_assumptions$projected_population$starting_year,
@@ -274,12 +290,25 @@ create_projected_population_targets <- function() {
       validate_children_fate(children_fate_result = children_fate_projection,
                               phase8b_result = population_projection,
                               max_child_age = config_assumptions$projected_population$ages$children_max,
-                              tolerance = 0.01)
+                              tolerance = config_assumptions$projected_population$validation$children_fate_tolerance,
+                              orphan_rate_upper_bound = config_assumptions$projected_population$validation$orphan_rate_upper_bound)
     ),
 
     # ==========================================================================
     # PHASE 8E: CNI POPULATION
     # ==========================================================================
+
+    # Armed forces data from DoD DMDC (troopdata + ACS PUMS)
+    # Provides total and overseas AF by age/sex for CNI projection
+    targets::tar_target(
+      armed_forces_for_projection,
+      fetch_total_armed_forces(
+        years = config_assumptions$projected_population$starting_year,
+        ages = config_assumptions$projected_population$armed_forces$military_age_range[1]:
+               config_assumptions$projected_population$armed_forces$military_age_range[2],
+        cache_dir = here::here("data/raw/dmdc")
+      )
+    ),
 
     targets::tar_target(
       cni_projection,
@@ -287,6 +316,8 @@ create_projected_population_targets <- function() {
         phase8b_result = population_projection,
         marital_result = marital_projection,
         historical_cni = historical_civilian_noninst,
+        armed_forces_data = armed_forces_for_projection,
+        cni_config = config_assumptions$projected_population$cni,
         start_year = config_assumptions$projected_population$starting_year,
         end_year = config_assumptions$projected_population$projection_end,
         verbose = TRUE
@@ -297,7 +328,8 @@ create_projected_population_targets <- function() {
     targets::tar_target(cni_summary, cni_projection$summary),
     targets::tar_target(
       cni_validation,
-      validate_cni_projection(cni_result = cni_projection, phase8b_result = population_projection, tolerance = 0.02)
+      validate_cni_projection(cni_result = cni_projection, phase8b_result = population_projection,
+                             tolerance = config_assumptions$projected_population$validation$cni_tolerance)
     ),
 
     # ==========================================================================
@@ -326,7 +358,8 @@ create_projected_population_targets <- function() {
           } else NULL
         }, error = function(e) NULL)
         validate_projected_population_comprehensive(projection_results = projection_results,
-                                                      tr2025_pop = tr2025_pop, tolerance = 0.02)
+                                                      tr2025_pop = tr2025_pop,
+                                                      tolerance = config_assumptions$projected_population$validation$comprehensive_tolerance)
       }
     ),
 
