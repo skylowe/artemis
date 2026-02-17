@@ -152,6 +152,7 @@ docker rm -f jupyter-skylowe
 #    Skip this step if only Shiny UI/app code changed (no pipeline changes).
 rm -rf /home/jupyterhub/users/skylowe/_targets
 rm -rf /home/jupyterhub/users/skylowe/_targets_scenario
+rm -rf /home/jupyterhub/users/skylowe/cache
 
 # 5. Visit the JupyterHub URL to trigger a new container spawn
 #    The new container will use the updated image
