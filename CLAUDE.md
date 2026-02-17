@@ -154,8 +154,8 @@ If the **pipeline code or baseline computation changed** (e.g., modified R/demog
 
 ```bash
 # Clear cached _targets AND scenario store for each user so fresh baseline is copied on next start
-rm -rf /home/jupyterhub/users/skylowe/persist/_targets
-rm -rf /home/jupyterhub/users/skylowe/persist/_targets_scenario
+rm -rf /home/jupyterhub/users/skylowe/_targets
+rm -rf /home/jupyterhub/users/skylowe/_targets_scenario
 
 # Then rebuild the image and remove the container (steps 2-3 above)
 # The new container will copy the updated _targets from the bind mount
