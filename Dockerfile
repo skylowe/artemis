@@ -1,6 +1,6 @@
 # ARTEMIS JupyterHub Single-User Container
 # Based on rocker/r-ver matching renv.lock R version
-FROM rocker/r-ver:4.5.0
+FROM rocker/r-ver:4.5.2
 
 LABEL maintainer="skylowe"
 LABEL description="ARTEMIS OASDI Projection Model - JupyterHub container"
