@@ -298,7 +298,8 @@ beers_interpolate_2d <- function(grid,
 #' @export
 get_marital_status_proportions <- function(years = 1940:2022,
                                            ages = 14:100,
-                                           cache_dir = here::here("data/cache")) {
+                                           cache_dir = here::here("data/cache"),
+                                           config = NULL) {
 
   cache_file <- file.path(cache_dir, "historical_population",
                           sprintf("marital_proportions_%d_%d.rds",
@@ -312,7 +313,7 @@ get_marital_status_proportions <- function(years = 1940:2022,
   cli::cli_alert("Building marital status proportions for {min(years)}-{max(years)}...")
 
   # Load data sources
-  acs_data <- load_acs_marital_data(cache_dir)
+  acs_data <- load_acs_marital_data(cache_dir, config = config)
   ipums_data <- load_ipums_marital_data(cache_dir)
 
   results <- list()
@@ -379,7 +380,7 @@ get_marital_status_proportions <- function(years = 1940:2022,
 #' Load ACS marital status data
 #'
 #' @keywords internal
-load_acs_marital_data <- function(cache_dir) {
+load_acs_marital_data <- function(cache_dir, config = NULL) {
   # Try to load from cache
   acs_cache <- file.path(cache_dir, "acs_pums", "marital_all_years.rds")
 
@@ -864,7 +865,8 @@ calculate_historical_population_marital <- function(total_pop,
   marital_props <- get_marital_status_proportions(
     years = start_year:end_year,
     ages = ages,
-    cache_dir = cache_dir
+    cache_dir = cache_dir,
+    config = config
   )
 
   # Calculate preliminary populations

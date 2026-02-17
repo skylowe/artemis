@@ -128,35 +128,49 @@ get_valid_years_for_concept <- function(concept, reference_date) {
 #'
 #' @keywords internal
 fetch_resident_population <- function(years, ages, reference_date, cache_dir) {
-  # Use existing fetch_census_population_both_sexes for July 1
-  # For January 1, we need different approach
+  # Check cache
+  cache_file <- file.path(
+    cache_dir,
+    sprintf("pop_resident_%s_%d_%d.rds", reference_date, min(years), max(years))
+  )
+
+  if (file.exists(cache_file)) {
+    cli::cli_alert_success("Loading cached resident population")
+    cached <- data.table::setDT(readRDS(cache_file))
+    return(cached[year %in% years & age %in% ages])
+  }
 
   if (reference_date == "jul1") {
-    # Delegate to existing function
     result <- fetch_census_population_both_sexes(
       years = years,
       ages = ages,
       cache_dir = cache_dir
     )
-    return(result)
+  } else {
+    # January 1 - interpolate from surrounding July 1 estimates
+    cli::cli_alert_info("Fetching January 1 resident population via interpolation...")
+
+    all_years <- c(min(years) - 1, years, max(years))
+    all_years <- all_years[all_years >= 1980 & all_years <= 2024]
+
+    jul1_data <- fetch_census_population_both_sexes(
+      years = all_years,
+      ages = ages,
+      cache_dir = cache_dir
+    )
+
+    result <- interpolate_jul1_to_jan1(jul1_data, years)
   }
 
-  # January 1 - need to interpolate from surrounding July 1 estimates
-  # or use specific January 1 files if available
-  cli::cli_alert_info("Fetching January 1 resident population via interpolation...")
+  # Cache result
+  tryCatch({
+    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+    saveRDS(result, cache_file)
+  }, error = function(e) {
+    cli::cli_alert_warning("Cache write skipped: {basename(cache_file)}")
+  })
 
-  # Get July 1 data for surrounding years
-  all_years <- c(min(years) - 1, years, max(years))
-  all_years <- all_years[all_years >= 1980 & all_years <= 2024]
-
-  jul1_data <- fetch_census_population_both_sexes(
-    years = all_years,
-    ages = ages,
-    cache_dir = cache_dir
-  )
-
-  # Interpolate to January 1
-  interpolate_jul1_to_jan1(jul1_data, years)
+  result
 }
 
 # =============================================================================
@@ -778,7 +792,7 @@ fetch_puerto_rico_population_pep <- function(years, by_age = FALSE, cache_dir) {
             dt[, population := as.numeric(POP)]
             dt[, age := as.integer(AGE)]
             dt[, sex_code := as.integer(SEX)]
-            dt[, sex := fifelse(sex_code == 1, "male", fifelse(sex_code == 2, "female", "both"))]
+            dt[, sex := data.table::fifelse(sex_code == 1, "male", data.table::fifelse(sex_code == 2, "female", "both"))]
 
             # Filter to individual sexes (not both)
             dt <- dt[sex_code %in% c(1, 2)]
@@ -1029,7 +1043,7 @@ fetch_territory_populations_by_age_sex <- function(years = 2000:2023,
 
           # Filter to male (SEX=1) and female (SEX=2), not combined (SEX=0)
           dt <- dt[sex_code %in% c(1, 2)]
-          dt[, sex := fifelse(sex_code == 1, "male", "female")]
+          dt[, sex := data.table::fifelse(sex_code == 1, "male", "female")]
 
           # Keep only needed columns
           dt_clean <- dt[, .(year, territory, age, sex, population)]
@@ -1052,9 +1066,16 @@ fetch_territory_populations_by_age_sex <- function(years = 2000:2023,
 
   combined <- data.table::rbindlist(results, use.names = TRUE)
 
-  # Cache result (skip gracefully on read-only filesystems, e.g., Docker)
+  # Cache result — merge with existing cache to accumulate territories/years
+  # (this function may be called per-territory with different year ranges)
   tryCatch({
     dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+    if (file.exists(cache_file)) {
+      existing <- data.table::setDT(readRDS(cache_file))
+      # Remove rows that will be replaced by fresh data
+      existing <- existing[!(year %in% combined$year & territory %in% combined$territory)]
+      combined <- data.table::rbindlist(list(existing, combined), use.names = TRUE)
+    }
     saveRDS(combined, cache_file)
   }, error = function(e) {
     cli::cli_alert_warning("Cache write skipped (read-only filesystem?): {basename(cache_file)}")
@@ -1064,7 +1085,7 @@ fetch_territory_populations_by_age_sex <- function(years = 2000:2023,
     "Retrieved territory age/sex data: {length(unique(combined$territory))} territories, {length(unique(combined$year))} years"
   )
 
-  combined[age %in% ages]
+  combined[territory %in% territories & age %in% ages]
 }
 
 #' Get territory population totals from age/sex detail

@@ -22,6 +22,18 @@ NULL
 fetch_census_population_both_sexes <- function(years,
                                                 ages = 0:100,
                                                 cache_dir = here::here("data/raw/census")) {
+  # Check cache — covers all Census API calls for resident population
+  cache_file <- file.path(
+    cache_dir,
+    sprintf("pop_both_sexes_%d_%d.rds", min(years), max(years))
+  )
+
+  if (file.exists(cache_file)) {
+    cli::cli_alert_success("Loading cached population data (both sexes)")
+    cached <- data.table::setDT(readRDS(cache_file))
+    return(cached[year %in% years & age %in% ages])
+  }
+
   cli::cli_alert_info("Fetching population data for both sexes...")
 
   # Fetch males
@@ -45,6 +57,15 @@ fetch_census_population_both_sexes <- function(years,
   # Combine
   combined <- data.table::rbindlist(list(pop_male, pop_female), use.names = TRUE)
   data.table::setorder(combined, year, sex, age)
+
+  # Cache result (skip gracefully on read-only filesystems)
+  tryCatch({
+    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+    saveRDS(combined, cache_file)
+    cli::cli_alert_success("Cached population data: {basename(cache_file)}")
+  }, error = function(e) {
+    cli::cli_alert_warning("Cache write skipped: {basename(cache_file)}")
+  })
 
   cli::cli_alert_success(
     "Retrieved population data for {length(unique(combined$year))} years, both sexes"
