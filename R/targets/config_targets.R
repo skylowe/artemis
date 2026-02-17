@@ -56,6 +56,14 @@ get_config_file <- function() {
 #'
 #' @export
 create_config_targets <- function() {
+  # Uncompressed RDS format — deterministic across R sessions.
+  # Default gzip-compressed RDS produces different bytes on host vs container,
+  # defeating targets early cutoff for unchanged config sections.
+  format_config <- targets::tar_format(
+    read = function(path) readRDS(path),
+    write = function(object, path) saveRDS(object, path, compress = FALSE)
+  )
+
   list(
     # Track the YAML file itself — format="file" hashes file CONTENT,
     # mode="always" re-checks on every tar_make() so env var changes
@@ -83,37 +91,54 @@ create_config_targets <- function() {
     # ── Domain config gates (one per demography subprocess) ──────────
     # Each extracts its subprocess's config section.
     # Early cutoff: if the section didn't change, downstream targets skip.
+    #
+    # Uses uncompressed RDS (format_config) instead of the default gzip-
+    # compressed RDS. Gzip output varies across R sessions/environments,
+    # so the same R object can produce different file hashes — defeating
+    # early cutoff when host and container serialize separately.
+    # Uncompressed RDS is deterministic: identical objects always produce
+    # identical bytes on disk.
 
     # Subprocess 1: Fertility
-    targets::tar_target(config_fertility, config_assumptions$fertility),
+    targets::tar_target(config_fertility, config_assumptions$fertility,
+                        format = format_config),
 
     # Subprocess 2: Mortality
-    targets::tar_target(config_mortality, config_assumptions$mortality),
+    targets::tar_target(config_mortality, config_assumptions$mortality,
+                        format = format_config),
 
     # Subprocess 3: LPR Immigration (lpr, emigration, va2, cbo)
     targets::tar_target(config_lpr_immigration, config_assumptions$immigration[c(
       "lpr", "emigration", "va2_alternative", "va2_file", "cbo_file",
       "ultimate_net_lpr_immigration"
-    )]),
+    )], format = format_config),
 
     # Subprocess 5: Temp/Unlawful Immigration (o_immigration, daca)
-    targets::tar_target(config_o_immigration, config_assumptions$immigration$o_immigration),
+    targets::tar_target(config_o_immigration, config_assumptions$immigration$o_immigration,
+                        format = format_config),
 
     # Subprocess 4: Historical Population
-    targets::tar_target(config_historical_pop, config_assumptions$historical_population),
+    targets::tar_target(config_historical_pop, config_assumptions$historical_population,
+                        format = format_config),
 
     # Subprocess 6: Marriage
-    targets::tar_target(config_marriage, config_assumptions$marriage),
+    targets::tar_target(config_marriage, config_assumptions$marriage,
+                        format = format_config),
 
     # Subprocess 7: Divorce
-    targets::tar_target(config_divorce, config_assumptions$divorce),
+    targets::tar_target(config_divorce, config_assumptions$divorce,
+                        format = format_config),
 
     # Subprocess 8: Projected Population
-    targets::tar_target(config_projected_pop, config_assumptions$projected_population),
+    targets::tar_target(config_projected_pop, config_assumptions$projected_population,
+                        format = format_config),
 
     # Cross-cutting sections
-    targets::tar_target(config_metadata, config_assumptions$metadata),
-    targets::tar_target(config_data_sources, config_assumptions$data_sources),
-    targets::tar_target(config_runtime, config_assumptions$runtime)
+    targets::tar_target(config_metadata, config_assumptions$metadata,
+                        format = format_config),
+    targets::tar_target(config_data_sources, config_assumptions$data_sources,
+                        format = format_config),
+    targets::tar_target(config_runtime, config_assumptions$runtime,
+                        format = format_config)
   )
 }
