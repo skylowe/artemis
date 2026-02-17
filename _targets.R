@@ -19,6 +19,7 @@
 
 library(targets)
 library(tarchetypes)
+library(crew)
 
 # Source all R files in R/ subdirectories
 tar_source()
@@ -48,7 +49,14 @@ tar_option_set(
   format = "rds",
   error = "continue",
   memory = "transient",
-  garbage_collection = TRUE
+  garbage_collection = TRUE,
+  # Parallel execution via crew: independent targets run concurrently.
+  # The pipeline has 15 sequential levels with up to 27 targets per level.
+  # 8 workers balances parallelism against memory (~2GB per worker).
+  controller = crew_controller_local(
+    workers = 8,
+    seconds_idle = 10
+  )
 )
 
 # =============================================================================
