@@ -1218,8 +1218,15 @@ calculate_projected_deaths <- function(year,
     all.x = TRUE
   )
 
-  # For ages without qx data, use qx = 0 (should not happen for ages 0-100)
-  deaths[is.na(qx), qx := 0]
+  # Abort if any populated ages are missing mortality data
+  missing_qx <- deaths[is.na(qx) & population > 0]
+  if (nrow(missing_qx) > 0) {
+    cli::cli_abort(c(
+      "Missing mortality qx for {nrow(missing_qx)} populated age/sex cells in year {target_year}",
+      "i" = "Ages affected: {paste(head(unique(missing_qx$age), 10), collapse=', ')}"
+    ))
+  }
+  deaths[is.na(qx), qx := 0]  # Only for unpopulated age/sex cells
 
   # Calculate deaths: D = q * P
   deaths[, deaths := qx * population]
@@ -1451,7 +1458,11 @@ project_population_year <- function(year,
     year_qx_shifted <- year_qx[, .(age = age + 1L, sex, qx)]
 
     pop_other <- merge(pop_other, year_qx_shifted, by = c("age", "sex"), all.x = TRUE)
-    pop_other[is.na(qx), qx := 0]
+    missing_qx_other <- pop_other[is.na(qx) & population > 0]
+    if (nrow(missing_qx_other) > 0) {
+      cli::cli_abort("Missing mortality qx for {nrow(missing_qx_other)} populated ages in non-LPR aging (year {target_year})")
+    }
+    pop_other[is.na(qx), qx := 0]  # Only for unpopulated age/sex cells
     pop_other[, deaths := qx * population]
     pop_other[, population := population - deaths]
     pop_other[, `:=`(qx = NULL, deaths = NULL)]
@@ -1479,7 +1490,11 @@ project_population_year <- function(year,
     year_qx_shifted <- year_qx[, .(age = age + 1L, sex, qx)]
     
     aged_pop <- merge(aged_pop, year_qx_shifted, by = c("age", "sex"), all.x = TRUE)
-    aged_pop[is.na(qx), qx := 0]
+    missing_qx_aged <- aged_pop[is.na(qx) & population > 0]
+    if (nrow(missing_qx_aged) > 0) {
+      cli::cli_abort("Missing mortality qx for {nrow(missing_qx_aged)} populated ages in SS area aging (year {target_year})")
+    }
+    aged_pop[is.na(qx), qx := 0]  # Only for unpopulated age/sex cells
     aged_pop[, deaths := qx * population]
     aged_pop[, population := population - deaths]
     aged_pop[, `:=`(qx = NULL, deaths = NULL)]
@@ -1689,7 +1704,10 @@ run_population_projection <- function(starting_population,
       raw_qx_100 <- year_qx_100_119[age == 100, .(sex, raw_qx = qx)]
 
       pop_99_prev <- merge(pop_99_prev, raw_qx_100, by = "sex", all.x = TRUE)
-      pop_99_prev[is.na(raw_qx), raw_qx := 0]
+      if (any(is.na(pop_99_prev$raw_qx) & pop_99_prev$pop99 > 0)) {
+        cli::cli_abort("Missing mortality qx at age 100 for year {yr}")
+      }
+      pop_99_prev[is.na(raw_qx), raw_qx := 0]  # Only for unpopulated sex
 
       # Survivors who reach age 100 (after facing raw qx_100)
       new_100_male <- pop_99_prev[sex == "male", pop99 * (1 - raw_qx)]
@@ -1861,8 +1879,16 @@ distribute_deaths_by_marital <- function(total_deaths,
     all.x = TRUE
   )
 
-  # Default factor to 1.0 for missing (married is baseline)
-  marital_agg[is.na(diff_factor), diff_factor := 1.0]
+  # Abort if mortality differentials are missing for populated marital status cells
+  missing_diff <- marital_agg[is.na(diff_factor) & population > 0]
+  if (nrow(missing_diff) > 0) {
+    cli::cli_abort(c(
+      "Missing mortality differential for {nrow(missing_diff)} populated marital status cells",
+      "i" = "Statuses affected: {paste(unique(missing_diff$marital_status), collapse=', ')}",
+      "i" = "Ages affected: {paste(head(unique(missing_diff$age), 10), collapse=', ')}"
+    ))
+  }
+  marital_agg[is.na(diff_factor), diff_factor := 1.0]  # Only for unpopulated cells
 
   # Calculate expected deaths weight: population * factor
   marital_agg[, death_weight := population * diff_factor]
@@ -1946,7 +1972,17 @@ distribute_immigrants_by_marital <- function(total_net_immigration, marital_dist
 
   marital_props[, total_pop := sum(population, na.rm = TRUE), by = .(age, sex)]
   marital_props[total_pop > 0, proportion := population / total_pop]
-  marital_props[total_pop == 0 | is.na(total_pop), proportion := 0.25]  # Equal split if no population
+  # Abort if any ages with immigrants have no marital population data
+  missing_marital <- marital_props[total_pop == 0 | is.na(total_pop)]
+  has_immigrants <- merge(missing_marital, imm_by_age_sex[total_imm != 0], by = c("age", "sex"))
+  if (nrow(has_immigrants) > 0) {
+    cli::cli_abort(c(
+      "Missing marital population data for {length(unique(has_immigrants$age))} ages with immigrants",
+      "i" = "Ages affected: {paste(head(unique(has_immigrants$age), 10), collapse=', ')}",
+      "i" = "Marital distribution cannot be computed for immigrant allocation"
+    ))
+  }
+  marital_props[total_pop == 0 | is.na(total_pop), proportion := 0]  # Zero proportion for ages with no population or immigrants
 
   # Merge with net immigration
   result <- merge(
@@ -2000,7 +2036,8 @@ calculate_midyear_unmarried <- function(marital_pop_boy, marital_pop_prior_boy =
                                     by = .(age, sex)]
 
   if (is.null(marital_pop_prior_boy)) {
-    # No prior year data - use BOY as midyear estimate
+    # First projection year: structurally no prior year exists
+    cli::cli_inform("First projection year: using BOY as midyear unmarried proxy")
     unmarried_boy[, midyear_unmarried := pop_boy]
     return(unmarried_boy[, .(age, sex, midyear_unmarried)])
   }
@@ -2131,7 +2168,8 @@ calculate_midyear_married_couples <- function(couples_grid_boy, couples_grid_pri
                                                ratio_cap = 2.0) {
 
   if (is.null(couples_grid_prior)) {
-    # No prior year - use BOY as estimate
+    # First projection year: structurally no prior year exists
+    cli::cli_inform("First projection year: using BOY for midyear couples")
     return(couples_grid_boy)
   }
 
@@ -3199,8 +3237,7 @@ initialize_children_by_parents <- function(population_start,
 
   couples_total <- sum(couples_grid, na.rm = TRUE)
   if (couples_total == 0) {
-    cli::cli_warn("Couples grid is empty, using uniform distribution")
-    couples_total <- 1
+    cli::cli_abort("Couples grid is empty — cannot initialize children by parent ages without married couples data")
   }
 
   # =========================================================================
@@ -3978,20 +4015,14 @@ project_children_fate <- function(phase8b_result,
   qx_male <- qx_start[sex == "male", qx]
   qx_female <- qx_start[sex == "female", qx]
 
-  # Handle missing qx by using nearest year
   if (length(qx_male) == 0) {
-    nearest_year <- mortality_qx[, min(year)]
-    qx_start <- mortality_qx[year == nearest_year]
-    data.table::setorder(qx_start, sex, age)
-    qx_male <- qx_start[sex == "male", qx]
-    qx_female <- qx_start[sex == "female", qx]
-    cli::cli_warn("Using qx from year {nearest_year} for initialization")
+    cli::cli_abort("Missing mortality qx data for starting year {start_year}")
   }
 
   # Get birth rates for starting year
   br_start <- birth_rates[year == start_year]
   if (nrow(br_start) == 0) {
-    br_start <- birth_rates[year == min(birth_rates$year)]
+    cli::cli_abort("Missing birth rates for starting year {start_year}")
   }
   br_by_age <- br_start[order(age), birth_rate]
 
@@ -4057,10 +4088,7 @@ project_children_fate <- function(phase8b_result,
     # Get qx for this year
     qx_yr <- mortality_qx[year == yr]
     if (nrow(qx_yr) == 0) {
-      # Use nearest available year
-      available_years <- unique(mortality_qx$year)
-      nearest <- available_years[which.min(abs(available_years - yr))]
-      qx_yr <- mortality_qx[year == nearest]
+      cli::cli_abort("Missing mortality qx data for year {yr} in children fate projection")
     }
     data.table::setorder(qx_yr, sex, age)
     qx_male <- qx_yr[sex == "male", qx]
@@ -4069,9 +4097,7 @@ project_children_fate <- function(phase8b_result,
     # Get birth rates for this year
     br_yr <- birth_rates[year == yr]
     if (nrow(br_yr) == 0) {
-      available_years <- unique(birth_rates$year)
-      nearest <- available_years[which.min(abs(available_years - yr))]
-      br_yr <- birth_rates[year == nearest]
+      cli::cli_abort("Missing birth rates for year {yr} in children fate projection")
     }
     br_by_age <- br_yr[order(age), birth_rate]
 
@@ -4455,7 +4481,11 @@ project_usaf_year <- function(usaf_prev,
 
   # Merge USAF with qx to get deaths
   usaf_calc <- merge(usaf_prev, deaths_merged[, .(age, sex, qx)], by = c("age", "sex"), all.x = TRUE)
-  usaf_calc[is.na(qx), qx := 0]
+  missing_usaf_qx <- usaf_calc[is.na(qx) & population > 0]
+  if (nrow(missing_usaf_qx) > 0) {
+    cli::cli_abort("Missing mortality qx for {nrow(missing_usaf_qx)} populated ages in USAF projection")
+  }
+  usaf_calc[is.na(qx), qx := 0]  # Only for unpopulated age/sex cells
   usaf_calc[, usaf_deaths := population * qx]
 
   # Prepare net immigration prorated to USAF

@@ -8,7 +8,7 @@ See implementation plan in the original prompt. This file tracks execution.
 - [x] Phase 2: Replace normal distribution couples grid with ACS PUMS data
 - [x] Phase 3: Fix USAF/residential population and CNI/civilian ratios
 - [x] Phase 4: Fix fabricated separated ratios and CNI marital fallback
-- [ ] Phase 5: Move all remaining hardcoded values to config
-- [ ] Phase 6: Remove all silent fallback defaults
+- [x] Phase 5: Move all remaining hardcoded values to config
+- [x] Phase 6: Remove all silent fallback defaults
 - [ ] Phase 7: Minor methodology fixes and documentation
 - [ ] Phase 8: Pipeline integration and end-to-end testing

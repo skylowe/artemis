@@ -270,7 +270,7 @@ create_projected_population_targets <- function() {
         project_children_fate(
           phase8b_result = population_projection,
           marital_result = marital_projection,
-          birth_rates = fertility_rates_for_projection,
+          birth_rates = fertility_rates_complete,
           mortality_qx = mortality_qx_for_projection,
           parent_age_groups = parent_age_groups,
           start_year = config_assumptions$projected_population$starting_year,
