@@ -144,19 +144,25 @@ calculate_historical_population <- function(start_year = 1940,
     cli::cli_h2("Loading SSPopDec for all years/ages (SSA mode)")
     all_pop <- load_tr_population_by_year(start_year:end_year, ages, config)
 
-    # Still compute component totals for analysis/validation
-    cli::cli_h2("Gathering components for analysis (not used for population)")
-    components <- gather_population_components(
-      years = start_year:end_year,
-      ages = ages,
-      cache_dir = cache_dir,
-      config = config,
-      lpr_assumptions = lpr_assumptions,
-      immigration_dist = immigration_dist,
-      emigration_dist = emigration_dist,
-      births_by_sex = births_by_sex
-    )
-    component_totals <- compute_component_totals(components, config)
+    # Compute component totals for analysis/validation (baseline only).
+    # Skip in scenario mode — components aren't used for SSA mode output,
+    # and data acquisition functions may fail on read-only filesystems.
+    if (use_cache) {
+      cli::cli_h2("Gathering components for analysis (not used for population)")
+      components <- gather_population_components(
+        years = start_year:end_year,
+        ages = ages,
+        cache_dir = cache_dir,
+        config = config,
+        lpr_assumptions = lpr_assumptions,
+        immigration_dist = immigration_dist,
+        emigration_dist = emigration_dist,
+        births_by_sex = births_by_sex
+      )
+      component_totals <- compute_component_totals(components, config)
+    } else {
+      cli::cli_alert_info("Skipping component gathering (scenario mode)")
+    }
 
   } else {
     # =========================================================================

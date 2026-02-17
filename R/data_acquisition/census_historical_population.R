@@ -253,9 +253,13 @@ fetch_resident_usaf_population <- function(years, ages, reference_date, cache_di
 
   data.table::setorder(result, year, sex, age)
 
-  # Cache result
-  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(result, cache_file)
+  # Cache result (skip gracefully on read-only filesystems)
+  tryCatch({
+    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+    saveRDS(result, cache_file)
+  }, error = function(e) {
+    cli::cli_alert_warning("Cache write skipped (read-only filesystem?): {basename(cache_file)}")
+  })
 
   cli::cli_alert_success("Retrieved resident + USAF population")
 
@@ -440,10 +444,14 @@ fetch_civilian_population <- function(years, ages, reference_date, cache_dir) {
 
   combined <- data.table::rbindlist(results, use.names = TRUE, fill = TRUE)
 
-  # Cache result
+  # Cache result (skip gracefully on read-only filesystems)
   if (nrow(combined) > 0) {
-    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-    saveRDS(combined, cache_file)
+    tryCatch({
+      dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+      saveRDS(combined, cache_file)
+    }, error = function(e) {
+      cli::cli_alert_warning("Cache write skipped (read-only filesystem?): {basename(cache_file)}")
+    })
   }
 
   data.table::setorder(combined, year, sex, age)
@@ -536,10 +544,14 @@ fetch_civilian_noninst_population <- function(years, ages, reference_date, cache
 
   combined <- data.table::rbindlist(results, use.names = TRUE, fill = TRUE)
 
-  # Cache result
+  # Cache result (skip gracefully on read-only filesystems)
   if (nrow(combined) > 0) {
-    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-    saveRDS(combined, cache_file)
+    tryCatch({
+      dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+      saveRDS(combined, cache_file)
+    }, error = function(e) {
+      cli::cli_alert_warning("Cache write skipped (read-only filesystem?): {basename(cache_file)}")
+    })
   }
 
   data.table::setorder(combined, year, sex, age)
@@ -701,9 +713,13 @@ fetch_territory_populations <- function(years,
 
   combined <- data.table::rbindlist(results, use.names = TRUE, fill = TRUE)
 
-  # Cache result
-  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(combined, cache_file)
+  # Cache result (skip gracefully on read-only filesystems)
+  tryCatch({
+    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+    saveRDS(combined, cache_file)
+  }, error = function(e) {
+    cli::cli_alert_warning("Cache write skipped (read-only filesystem?): {basename(cache_file)}")
+  })
 
   combined[year %in% years & territory %in% territories]
 }
@@ -1036,9 +1052,13 @@ fetch_territory_populations_by_age_sex <- function(years = 2000:2023,
 
   combined <- data.table::rbindlist(results, use.names = TRUE)
 
-  # Cache result
-  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(combined, cache_file)
+  # Cache result (skip gracefully on read-only filesystems, e.g., Docker)
+  tryCatch({
+    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+    saveRDS(combined, cache_file)
+  }, error = function(e) {
+    cli::cli_alert_warning("Cache write skipped (read-only filesystem?): {basename(cache_file)}")
+  })
 
   cli::cli_alert_success(
     "Retrieved territory age/sex data: {length(unique(combined$territory))} territories, {length(unique(combined$year))} years"
@@ -1163,9 +1183,13 @@ fetch_decennial_census_population <- function(census_years = seq(1970, 2020, 10)
 
   combined <- data.table::rbindlist(results, use.names = TRUE, fill = TRUE)
 
-  # Cache result
-  dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(combined, cache_file)
+  # Cache result (skip gracefully on read-only filesystems)
+  tryCatch({
+    dir.create(dirname(cache_file), showWarnings = FALSE, recursive = TRUE)
+    saveRDS(combined, cache_file)
+  }, error = function(e) {
+    cli::cli_alert_warning("Cache write skipped (read-only filesystem?): {basename(cache_file)}")
+  })
 
   cli::cli_alert_success("Retrieved decennial census data for {length(results)} years")
   combined[age %in% ages]
