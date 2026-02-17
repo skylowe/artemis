@@ -176,11 +176,15 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
       report_progress(18, "Using cached scenario store...")
     }
 
-    # No explicit invalidation needed — tar_make with shortcut = TRUE checks
-    # named targets for staleness. When config_assumptions rebuilds (because
-    # ARTEMIS_CONFIG points to the scenario YAML), targets detects changed
-    # upstream values and only rebuilds affected downstream targets.
-    report_progress(25, "Checking for outdated targets...")
+    # Invalidate only config_assumptions — targets can't detect the env var
+    # change (ARTEMIS_CONFIG pointing to the scenario YAML) automatically.
+    # Everything downstream cascades: targets detects the changed config
+    # values and only rebuilds affected downstream targets.
+    report_progress(25, "Applying configuration changes...")
+    tryCatch(
+      targets::tar_invalidate(names = "config_assumptions", store = store_path),
+      error = function(e) NULL
+    )
 
     list(success = TRUE, store = store_path)
   }, error = function(e) {
