@@ -28,10 +28,13 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
   )
 
   # Create temporary config file (must happen after runtime injection)
-  temp_config <- tempfile(fileext = ".yaml")
+  # Use RDS instead of YAML to avoid lossy round-trip (integer/double coercion,
+  # NULL handling, etc.) that causes all domain config hashes to differ from
+  # baseline, defeating early cutoff on the first scenario run.
+  temp_config <- tempfile(fileext = ".rds")
   on.exit(unlink(temp_config), add = TRUE)
 
-  yaml::write_yaml(config, temp_config)
+  saveRDS(config, temp_config)
 
   report_progress(10, "Writing temporary config...")
 
@@ -54,7 +57,7 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
   # files) are loaded from the cached baseline store automatically.
   # Computation targets listed here are rebuilt with the user's modified config.
   targets_to_make <- c(
-    # Config: re-reads from the temporary YAML with user's modified params
+    # Config: re-reads from the temporary RDS with user's modified params
     "config_file",
     "config_assumptions",
 
