@@ -173,19 +173,11 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
       report_progress(18, "Using cached scenario store...")
     }
 
-    # Invalidate ONLY the targets we intend to re-run (targets_to_make).
-    # IMPORTANT: Do NOT invalidate targets outside this list — tar_invalidate
-    # removes metadata, and shortcut = TRUE needs metadata intact to load
-    # upstream dependencies from cache.
-    report_progress(25, "Invalidating cached targets...")
-    tryCatch({
-      targets::tar_invalidate(
-        names = tidyselect::any_of(targets_to_make),
-        store = store_path
-      )
-    }, error = function(e) {
-      # Ignore errors if targets don't exist yet
-    })
+    # No explicit invalidation needed — tar_make with shortcut = TRUE checks
+    # named targets for staleness. When config_assumptions rebuilds (because
+    # ARTEMIS_CONFIG points to the scenario YAML), targets detects changed
+    # upstream values and only rebuilds affected downstream targets.
+    report_progress(25, "Checking for outdated targets...")
 
     list(success = TRUE, store = store_path)
   }, error = function(e) {
