@@ -146,22 +146,16 @@ docker build -t artemis:latest /home/skylowe/projects/artemis
 # 3. Remove the existing user container (JupyterHub will respawn with new image)
 docker rm -f jupyter-skylowe
 
-# 4. Visit the JupyterHub URL to trigger a new container spawn
-#    The new container will use the updated image
-```
-
-If the **pipeline code or baseline computation changed** (e.g., modified R/demography/ files, changed config defaults, updated data acquisition logic), you must also clear the cached `_targets` in the persist volume so the container copies the fresh baseline on next start:
-
-```bash
-# Clear cached _targets AND scenario store for each user so fresh baseline is copied on next start
+# 4. If pipeline code or baseline computation changed (R/demography/, config defaults,
+#    data acquisition), clear cached stores so fresh baseline is copied on next start.
+#    The persist volume root is /home/jupyterhub/users/{username}/ (no persist/ subdirectory).
+#    Skip this step if only Shiny UI/app code changed (no pipeline changes).
 rm -rf /home/jupyterhub/users/skylowe/_targets
 rm -rf /home/jupyterhub/users/skylowe/_targets_scenario
 
-# Then rebuild the image and remove the container (steps 2-3 above)
-# The new container will copy the updated _targets from the bind mount
+# 5. Visit the JupyterHub URL to trigger a new container spawn
+#    The new container will use the updated image
 ```
-
-If only Shiny UI/app code changed (no pipeline changes), clearing `_targets` is not needed — just rebuild the image and remove the container.
 
 If JupyterHub itself needs restarting:
 
@@ -175,7 +169,6 @@ sudo systemctl restart jupyterhub
 - After rebuilding the image, you must remove the old container for changes to take effect
 - The container name follows the pattern `jupyter-{username}` (e.g., `jupyter-skylowe`)
 - JupyterHub's idle culler removes containers after 1 hour of inactivity
-- **Clearing persist stores:** When pipeline code changes, delete both `/home/jupyterhub/users/{username}/_targets` and `/home/jupyterhub/users/{username}/_targets_scenario` so the container copies the updated baseline on next start. Without this, the container reuses stale cached results that may not match the new code. Note: the persist volume root is `/home/jupyterhub/users/{username}/` (no `persist/` subdirectory).
 
 ## Known Methodology Deviations from TR2025
 
