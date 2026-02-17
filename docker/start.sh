@@ -31,6 +31,8 @@ if [ -d "${BASELINE_TARGETS}/meta" ] && [ ! -d "${PERSIST_DIR}/_targets/meta" ];
     cp -r "${BASELINE_TARGETS}/." "${PERSIST_DIR}/_targets/" || echo "WARNING: _targets copy failed with exit code $?"
     echo "Baseline _targets copied ($(du -sh ${PERSIST_DIR}/_targets | cut -f1))"
     rm -f "${PERSIST_DIR}/app_data/baseline/baseline_data.rds"
+    # Clear stale scenario store so it gets re-copied from fresh baseline
+    rm -rf "${PERSIST_DIR}/_targets_scenario"
 else
     echo "Using existing _targets from persist volume ($(du -sh ${PERSIST_DIR}/_targets 2>/dev/null | cut -f1 || echo 'empty'))"
 fi

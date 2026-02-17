@@ -149,20 +149,29 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
 
     report_progress(15, "Loading pipeline...")
 
-    # Copy _targets store to a temp directory so scenario runs never corrupt
-    # the baseline store. The temp copy is cleaned up on exit.
+    # Use a persistent scenario store so subsequent runs reuse cached targets.
+    # The baseline store is never modified — scenario runs write to a separate
+    # persistent copy that survives across runs within a session.
     main_store <- file.path(artemis_root, "_targets")
     if (!dir.exists(main_store)) {
       stop("Targets store not found at: ", main_store)
     }
-    store_path <- file.path(tempdir(), paste0("artemis_scenario_", format(Sys.time(), "%Y%m%d%H%M%S")))
 
-    report_progress(18, "Copying targets store...")
-    copy_ok <- file.copy(main_store, dirname(store_path), recursive = TRUE)
-    if (!copy_ok) {
-      stop("Failed to copy _targets store to temp directory")
+    # Persistent scenario store in persist volume (survives container restarts)
+    persist_dir <- Sys.getenv("ARTEMIS_PERSIST_DIR", "/home/artemis/persist")
+    store_path <- file.path(persist_dir, "_targets_scenario")
+
+    if (!dir.exists(file.path(store_path, "meta"))) {
+      report_progress(18, "First run: copying baseline targets store...")
+      if (dir.exists(store_path)) unlink(store_path, recursive = TRUE)
+      copy_ok <- file.copy(main_store, dirname(store_path), recursive = TRUE)
+      if (!copy_ok) {
+        stop("Failed to copy _targets store to scenario directory")
+      }
+      file.rename(file.path(dirname(store_path), basename(main_store)), store_path)
+    } else {
+      report_progress(18, "Using cached scenario store...")
     }
-    file.rename(file.path(dirname(store_path), basename(main_store)), store_path)
 
     # Invalidate ONLY the targets we intend to re-run (targets_to_make).
     # IMPORTANT: Do NOT invalidate targets outside this list — tar_invalidate
@@ -183,12 +192,8 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     list(success = FALSE, error = e$message)
   })
 
-  # Extract store path from result — must be done outside tryCatch to stay
-  # in the function's local scope (<<- inside tryCatch body assigns to global).
+  # Extract store path from result
   store <- setup_result$store
-  if (!is.null(store)) {
-    on.exit(unlink(store, recursive = TRUE), add = TRUE)
-  }
 
   if (!setup_result$success) {
     return(list(success = FALSE, error = setup_result$error, data = NULL))
