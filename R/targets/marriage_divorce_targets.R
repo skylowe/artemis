@@ -83,7 +83,7 @@ create_marriage_divorce_targets <- function() {
     targets::tar_target(
       cps_unmarried_by_prior_status,
       extract_cps_unmarried_by_prior_status(
-        years = config_assumptions$marriage$prior_status$years
+        years = config_marriage$prior_status$years
       ),
       cue = targets::tar_cue(mode = "thorough")
     ),
@@ -100,7 +100,7 @@ create_marriage_divorce_targets <- function() {
         ss_result <- calculate_same_sex_fraction(
           same_sex_grids = acs_same_sex_grids,
           opposite_sex_grids = acs_marriage_grids,
-          years = config_assumptions$marriage$same_sex$reference_years
+          years = config_marriage$same_sex$reference_years
         )
         ss_result$overall_fraction
       }
@@ -123,7 +123,7 @@ create_marriage_divorce_targets <- function() {
         unmarried_pop_by_status = cps_unmarried_by_prior_status,
         same_sex_data = acs_same_sex_grids,
         same_sex_fraction = same_sex_fraction,
-        config = config_assumptions,
+        config = list(marriage = config_marriage, metadata = config_metadata),
         include_same_sex = TRUE,
         include_prior_status = TRUE
       )
@@ -155,7 +155,11 @@ create_marriage_divorce_targets <- function() {
       divorce_projection,
       run_divorce_projection(
         cache_dir = here::here("data/cache"),
-        config = config_assumptions
+        config = list(
+          divorce = config_divorce,
+          metadata = config_metadata,
+          historical_population = list(acs_excluded_years = config_historical_pop$acs_excluded_years)
+        )
       )
     ),
 

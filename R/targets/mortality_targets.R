@@ -27,9 +27,12 @@ create_mortality_targets <- function() {
     targets::tar_target(
       nchs_deaths_raw,
       {
-        tr_year <- config_assumptions$metadata$trustees_report_year
+        tr_year <- config_metadata$trustees_report_year
         last_death_year <- tr_year - 2L
-        fetch_nchs_deaths_multi(years = 1968:last_death_year, config = config_assumptions)
+        fetch_nchs_deaths_multi(
+          years = 1968:last_death_year,
+          config = list(mortality = config_mortality, metadata = config_metadata)
+        )
       },
       cue = targets::tar_cue(mode = "thorough")
     ),
@@ -39,9 +42,9 @@ create_mortality_targets <- function() {
     targets::tar_target(
       census_population_both,
       {
-        tr_year <- config_assumptions$metadata$trustees_report_year
+        tr_year <- config_metadata$trustees_report_year
         last_death_year <- tr_year - 2L
-        vintage <- set_census_vintage_option(config_assumptions)
+        vintage <- set_census_vintage_option(list(data_sources = config_data_sources))
         cache_file <- sprintf("data/cache/census/population_by_age_sex_1980_%d_v%d_bysex.rds", last_death_year, vintage)
         load_or_fetch(
           cache_file = cache_file,
@@ -61,7 +64,7 @@ create_mortality_targets <- function() {
     targets::tar_target(
       nchs_births_total,
       {
-        tr_year <- config_assumptions$metadata$trustees_report_year
+        tr_year <- config_metadata$trustees_report_year
         last_birth_year <- tr_year - 1L
         load_total_births_for_q0(years = 1968:last_birth_year)
       },
@@ -76,7 +79,7 @@ create_mortality_targets <- function() {
     targets::tar_target(
       nchs_births_by_sex,
       {
-        tr_year <- config_assumptions$metadata$trustees_report_year
+        tr_year <- config_metadata$trustees_report_year
         last_birth_year <- tr_year - 1L
 
         # Post-1968: NBER microdata (existing cache)
@@ -100,7 +103,7 @@ create_mortality_targets <- function() {
     targets::tar_target(
       nchs_infant_deaths_detailed,
       {
-        tr_year <- config_assumptions$metadata$trustees_report_year
+        tr_year <- config_metadata$trustees_report_year
         last_death_year <- tr_year - 2L
         load_infant_deaths(years = 1968:last_death_year)
       },
@@ -112,7 +115,7 @@ create_mortality_targets <- function() {
     targets::tar_target(
       nchs_births_monthly,
       {
-        tr_year <- config_assumptions$metadata$trustees_report_year
+        tr_year <- config_metadata$trustees_report_year
         last_birth_year <- tr_year - 1L
         load_monthly_births(years = 1967:last_birth_year)
       },
@@ -144,8 +147,8 @@ create_mortality_targets <- function() {
       mortality_aax_historical,
       calculate_annual_reduction_rates(
         mx = mortality_mx_historical,
-        start_year = config_assumptions$mortality$regression_start_year,
-        end_year = config_assumptions$mortality$regression_end_year,
+        start_year = config_mortality$regression_start_year,
+        end_year = config_mortality$regression_end_year,
         by_cause = TRUE
       )
     ),
@@ -155,7 +158,7 @@ create_mortality_targets <- function() {
       mortality_mx_starting,
       calculate_starting_mx(
         aax_results = mortality_aax_historical,
-        base_year = config_assumptions$mortality$base_year
+        base_year = config_mortality$base_year
       )
     ),
 
@@ -167,11 +170,11 @@ create_mortality_targets <- function() {
       run_mortality_projection(
         deaths = nchs_deaths_raw,
         population = census_population_both,
-        base_year = config_assumptions$mortality$base_year,
-        projection_end = config_assumptions$metadata$projection_period$end_year,
-        by_cause = if (is.null(config_assumptions$mortality$by_cause)) FALSE else config_assumptions$mortality$by_cause,
-        starting_aax_method = if (is.null(config_assumptions$mortality$starting_aax_method)) "regression" else config_assumptions$mortality$starting_aax_method,
-        mortality_config = config_assumptions$mortality
+        base_year = config_mortality$base_year,
+        projection_end = config_metadata$projection_period$end_year,
+        by_cause = if (is.null(config_mortality$by_cause)) FALSE else config_mortality$by_cause,
+        starting_aax_method = if (is.null(config_mortality$starting_aax_method)) "regression" else config_mortality$starting_aax_method,
+        mortality_config = config_mortality
       )
     ),
 
@@ -206,7 +209,7 @@ create_mortality_targets <- function() {
     targets::tar_target(
       mortality_qx_historical,
       {
-        hmd_cfg <- config_assumptions$mortality$hmd_calibration
+        hmd_cfg <- config_mortality$hmd_calibration
         use_hmd <- hmd_cfg$enabled %||% TRUE
         if (use_hmd) {
           adjust_qx_with_hmd(
@@ -258,16 +261,13 @@ create_mortality_targets <- function() {
       mortality_qx_projected,
       {
         qx_proj <- mortality_mx_projected$projected_qx
-        method <- get_config_with_default(
-          config_assumptions, "mortality", "starting_aax_method",
-          default = "regression"
-        )
+        method <- config_mortality$starting_aax_method %||% "regression"
         if (method == "tr_qx") {
           cli::cli_alert_info("Skipping HMD calibration and ALB conversion for tr_qx method")
           qx_proj <- qx_proj[age <= 100]
           return(qx_proj)
         }
-        hmd_cfg <- config_assumptions$mortality$hmd_calibration
+        hmd_cfg <- config_mortality$hmd_calibration
         use_hmd <- hmd_cfg$enabled %||% TRUE
         if (use_hmd) {
           qx_adjusted <- adjust_qx_with_hmd(
@@ -382,7 +382,7 @@ create_mortality_targets <- function() {
     targets::tar_target(
       nchs_deaths_by_marital,
       fetch_nchs_deaths_by_marital_status(
-        years = config_assumptions$mortality$marital_reference_years
+        years = config_mortality$marital_reference_years
       ),
       cue = targets::tar_cue(mode = "thorough")
     ),
@@ -391,7 +391,7 @@ create_mortality_targets <- function() {
     targets::tar_target(
       acs_pop_by_marital,
       fetch_acs_pums_marital_status(
-        years = config_assumptions$mortality$marital_reference_years,
+        years = config_mortality$marital_reference_years,
         ages = 0:99
       ),
       cue = targets::tar_cue(mode = "thorough")
@@ -403,8 +403,8 @@ create_mortality_targets <- function() {
       calculate_marital_mortality_factors(
         nchs_deaths = nchs_deaths_by_marital,
         acs_population = acs_pop_by_marital,
-        reference_years = config_assumptions$mortality$marital_reference_years,
-        smoothing_parameter = config_assumptions$mortality$marital_smoothing_parameter
+        reference_years = config_mortality$marital_reference_years,
+        smoothing_parameter = config_mortality$marital_smoothing_parameter
       )
     )
   )

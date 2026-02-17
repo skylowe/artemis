@@ -55,7 +55,21 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
   # Computation targets listed here are rebuilt with the user's modified config.
   targets_to_make <- c(
     # Config: re-reads from the temporary YAML with user's modified params
+    "config_file",
     "config_assumptions",
+
+    # Domain config gates (early cutoff skips unchanged domains)
+    "config_fertility",
+    "config_mortality",
+    "config_lpr_immigration",
+    "config_o_immigration",
+    "config_historical_pop",
+    "config_marriage",
+    "config_divorce",
+    "config_projected_pop",
+    "config_metadata",
+    "config_data_sources",
+    "config_runtime",
 
     # Fertility chain (pure computation — no file I/O)
     "fertility_ultimate_years",
@@ -176,15 +190,11 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
       report_progress(18, "Using cached scenario store...")
     }
 
-    # Invalidate only config_assumptions — targets can't detect the env var
-    # change (ARTEMIS_CONFIG pointing to the scenario YAML) automatically.
-    # Everything downstream cascades: targets detects the changed config
-    # values and only rebuilds affected downstream targets.
-    report_progress(25, "Applying configuration changes...")
-    tryCatch(
-      targets::tar_invalidate(names = "config_assumptions", store = store_path),
-      error = function(e) NULL
-    )
+    # No manual invalidation needed — config_file target has
+    # cue = tar_cue(mode = "always") and format = "file", so it
+    # automatically detects when the YAML content changes. Domain
+    # config gates provide early cutoff for unchanged subprocesses.
+    report_progress(25, "Configuration ready...")
 
     list(success = TRUE, store = store_path)
   }, error = function(e) {

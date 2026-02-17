@@ -25,12 +25,17 @@ create_historical_population_targets <- function() {
     targets::tar_target(
       historical_population,
       {
-        scenario_mode <- isTRUE(config_assumptions$runtime$scenario_mode)
+        scenario_mode <- isTRUE(config_runtime$scenario_mode)
         calculate_historical_population(
-          start_year = config_assumptions$historical_population$start_year,
-          end_year = config_assumptions$historical_population$end_year,
-          ages = 0:config_assumptions$historical_population$max_age,
-          config = config_assumptions,
+          start_year = config_historical_pop$start_year,
+          end_year = config_historical_pop$end_year,
+          ages = 0:config_historical_pop$max_age,
+          config = list(
+            data_sources = config_data_sources,
+            historical_population = config_historical_pop,
+            metadata = config_metadata,
+            mortality = list(starting_tr_qx = config_mortality$starting_tr_qx)
+          ),
           lpr_assumptions = lpr_assumptions,
           immigration_dist = lpr_distribution,
           emigration_dist = emigration_distribution,
@@ -44,13 +49,16 @@ create_historical_population_targets <- function() {
     targets::tar_target(
       historical_population_marital,
       {
-        scenario_mode <- isTRUE(config_assumptions$runtime$scenario_mode)
+        scenario_mode <- isTRUE(config_runtime$scenario_mode)
         calculate_historical_population_marital(
           total_pop = historical_population,
-          start_year = config_assumptions$historical_population$start_year,
-          end_year = config_assumptions$historical_population$end_year,
-          ages = 14:config_assumptions$historical_population$max_age,
-          config = config_assumptions,
+          start_year = config_historical_pop$start_year,
+          end_year = config_historical_pop$end_year,
+          ages = 14:config_historical_pop$max_age,
+          config = list(
+            historical_population = config_historical_pop,
+            projected_population = list(population_status = config_projected_pop$population_status)
+          ),
           use_cache = !scenario_mode,
           include_same_sex = TRUE
         )
@@ -61,12 +69,12 @@ create_historical_population_targets <- function() {
     targets::tar_target(
       historical_temp_unlawful,
       {
-        scenario_mode <- isTRUE(config_assumptions$runtime$scenario_mode)
+        scenario_mode <- isTRUE(config_runtime$scenario_mode)
         calculate_historical_temp_unlawful(
-          start_year = config_assumptions$historical_population$start_year,
-          end_year = config_assumptions$historical_population$end_year,
-          ages = 0:config_assumptions$historical_population$max_age,
-          config = config_assumptions,
+          start_year = config_historical_pop$start_year,
+          end_year = config_historical_pop$end_year,
+          ages = 0:config_historical_pop$max_age,
+          config = list(historical_population = config_historical_pop),
           total_pop = historical_population,
           lpr_assumptions = lpr_assumptions,
           immigration_dist = lpr_distribution,
@@ -81,10 +89,13 @@ create_historical_population_targets <- function() {
     targets::tar_target(
       historical_civilian_noninst,
       calculate_historical_civilian_noninst(
-        start_year = config_assumptions$historical_population$cni_start_year,
-        end_year = config_assumptions$historical_population$end_year,
-        ages = 0:config_assumptions$historical_population$max_age,
-        config = config_assumptions,
+        start_year = config_historical_pop$cni_start_year,
+        end_year = config_historical_pop$end_year,
+        ages = 0:config_historical_pop$max_age,
+        config = list(
+          historical_population = config_historical_pop,
+          projected_population = list(population_status = config_projected_pop$population_status)
+        ),
         include_orientation = TRUE,
         use_cache = TRUE
       )
@@ -99,7 +110,7 @@ create_historical_population_targets <- function() {
       historical_age_sex_validation,
       validate_age_sex_vs_tr(
         population = historical_population,
-        config = config_assumptions,
+        config = list(metadata = config_metadata, historical_population = config_historical_pop),
         tolerance = 0.02
       )
     ),
@@ -109,7 +120,7 @@ create_historical_population_targets <- function() {
       historical_85plus_validation,
       validate_85plus_vs_tr(
         population = historical_population,
-        config = config_assumptions
+        config = list(metadata = config_metadata, historical_population = config_historical_pop)
       )
     ),
 
@@ -118,7 +129,7 @@ create_historical_population_targets <- function() {
       historical_marital_validation,
       validate_marital_proportions_vs_tr(
         marital_pop = historical_population_marital,
-        config = config_assumptions
+        config = list(metadata = config_metadata, historical_population = config_historical_pop)
       )
     ),
 
@@ -127,7 +138,7 @@ create_historical_population_targets <- function() {
       historical_component_validation,
       validate_population_components(
         population = historical_population,
-        config = config_assumptions
+        config = list(metadata = config_metadata, historical_population = config_historical_pop)
       )
     ),
 
@@ -144,7 +155,7 @@ create_historical_population_targets <- function() {
       historical_o_pop_validation,
       validate_o_age_distribution(
         o_pop = historical_temp_unlawful,
-        config = config_assumptions
+        config = list(metadata = config_metadata, historical_population = config_historical_pop)
       )
     ),
 

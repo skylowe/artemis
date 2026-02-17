@@ -54,9 +54,9 @@ create_projected_population_targets <- function() {
           divorce_rates = divorce_projection,
           historical_population = historical_population,
           historical_marital = historical_population_marital,
-          projection_years = config_assumptions$metadata$projection_period$start_year:
-                             config_assumptions$metadata$projection_period$end_year,
-          starting_year = config_assumptions$projected_population$starting_year
+          projection_years = config_metadata$projection_period$start_year:
+                             config_metadata$projection_period$end_year,
+          starting_year = config_projected_pop$starting_year
         )
       }
     ),
@@ -65,14 +65,12 @@ create_projected_population_targets <- function() {
     targets::tar_target(
       starting_population,
       {
-        use_tr <- config_assumptions$projected_population$use_tr_historical_population
-        starting_year <- config_assumptions$projected_population$starting_year
+        use_tr <- config_projected_pop$use_tr_historical_population
+        starting_year <- config_projected_pop$starting_year
         if (isTRUE(use_tr)) {
           cli::cli_alert_info("Using TR2025 historical population for starting population")
-          tr_file <- get_config_with_default(
-            config_assumptions, "projected_population", "tr_historical_population_file",
-            default = "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv"
-          )
+          tr_file <- config_projected_pop$tr_historical_population_file %||%
+            "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv"
           tr_start_status <- load_tr_starting_population(
             tr_file = tr_file,
             starting_year = starting_year
@@ -115,7 +113,7 @@ create_projected_population_targets <- function() {
         mortality_qx_projected = mortality_qx_projected,
         mortality_qx_historical = mortality_qx_historical,
         qx_age_last_birthday = qx_age_last_birthday,
-        config = config_assumptions
+        config = list(mortality = config_mortality)
       )
     ),
 
@@ -123,27 +121,16 @@ create_projected_population_targets <- function() {
     targets::tar_target(
       qx_100_119,
       {
-        male_proj_file <- get_config_with_default(
-          config_assumptions, "mortality", "starting_tr_qx", "male_qx_proj_file",
-          default = "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
-        )
-        female_proj_file <- get_config_with_default(
-          config_assumptions, "mortality", "starting_tr_qx", "female_qx_proj_file",
-          default = "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
-        )
-        proj_start <- get_config_with_default(
-          config_assumptions, "metadata", "projection_period", "start_year",
-          default = 2023
-        )
-        proj_end <- get_config_with_default(
-          config_assumptions, "metadata", "projection_period", "end_year",
-          default = 2099
-        )
+        male_proj_file <- config_mortality$starting_tr_qx$male_qx_proj_file %||%
+          "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
+        female_proj_file <- config_mortality$starting_tr_qx$female_qx_proj_file %||%
+          "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
+        proj_start <- config_metadata$projection_period$start_year %||% 2023
+        proj_end <- config_metadata$projection_period$end_year %||% 2099
         load_tr_qx_all_years(
           male_qx_file = male_proj_file,
           female_qx_file = female_proj_file,
-          start_year = proj_start, end_year = proj_end + 1, ages = 100:119,
-          config = config_assumptions
+          start_year = proj_start, end_year = proj_end + 1, ages = 100:119
         )
       }
     ),
@@ -154,7 +141,7 @@ create_projected_population_targets <- function() {
     targets::tar_target(
       population_projection,
       {
-        net_o_source <- config_assumptions$projected_population$net_o_source %||% "va2"
+        net_o_source <- config_projected_pop$net_o_source %||% "va2"
         net_o <- if (net_o_source == "artemis") net_o_immigration else net_o_for_projection
         if (net_o_source == "artemis") {
           cli::cli_alert_info("Using ARTEMIS-computed net O immigration (Section 1.5 pipeline)")
@@ -165,11 +152,11 @@ create_projected_population_targets <- function() {
           mortality_qx = mortality_qx_for_projection,
           net_lpr = net_lpr_immigration,
           net_o = net_o,
-          start_year = config_assumptions$projected_population$starting_year,
-          end_year = config_assumptions$projected_population$projection_end,
-          config = list(sex_ratio_at_birth = config_assumptions$projected_population$sex_ratio_at_birth,
-                        population_status = config_assumptions$projected_population$population_status,
-                        ages = config_assumptions$projected_population$ages),
+          start_year = config_projected_pop$starting_year,
+          end_year = config_projected_pop$projection_end,
+          config = list(sex_ratio_at_birth = config_projected_pop$sex_ratio_at_birth,
+                        population_status = config_projected_pop$population_status,
+                        ages = config_projected_pop$ages),
           qx_100_119 = qx_100_119,
           verbose = TRUE
         )
@@ -188,8 +175,10 @@ create_projected_population_targets <- function() {
 
     targets::tar_target(
       starting_marital_pop,
-      extract_starting_marital_population(historical_population_marital = historical_population_marital,
-                                           config = config_assumptions)
+      extract_starting_marital_population(
+        historical_population_marital = historical_population_marital,
+        config = list(projected_population = config_projected_pop)
+      )
     ),
 
     # Historical married couples grid (husband age × wife age) from ACS PUMS
@@ -197,9 +186,9 @@ create_projected_population_targets <- function() {
     targets::tar_target(
       historical_couples_grid,
       fetch_married_couples_grid(
-        years = config_assumptions$projected_population$couples_grid$reference_years,
-        min_age = config_assumptions$projected_population$ages$marriage_min,
-        max_age = config_assumptions$projected_population$ages$max_age_group,
+        years = config_projected_pop$couples_grid$reference_years,
+        min_age = config_projected_pop$ages$marriage_min,
+        max_age = config_projected_pop$ages$max_age_group,
         cache_dir = here::here("data/cache/acs_pums")
       )
     ),
@@ -214,12 +203,12 @@ create_projected_population_targets <- function() {
         divorce_rates = divorce_projection,
         mortality_qx = mortality_qx_for_projection,
         historical_couples_grid = historical_couples_grid,
-        ipf_config = config_assumptions$projected_population$couples_grid,
-        start_year = config_assumptions$projected_population$starting_year,
-        end_year = config_assumptions$projected_population$projection_end,
-        min_age = config_assumptions$projected_population$ages$marriage_min,
-        max_age = config_assumptions$projected_population$ages$max_age_group,
-        midyear_ratio_cap = config_assumptions$projected_population$marital$midyear_ratio_cap,
+        ipf_config = config_projected_pop$couples_grid,
+        start_year = config_projected_pop$starting_year,
+        end_year = config_projected_pop$projection_end,
+        min_age = config_projected_pop$ages$marriage_min,
+        max_age = config_projected_pop$ages$max_age_group,
+        midyear_ratio_cap = config_projected_pop$marital$midyear_ratio_cap,
         verbose = TRUE
       )
     ),
@@ -233,13 +222,13 @@ create_projected_population_targets <- function() {
         cli::cli_h2("Phase 8C Validation: Marital Status Totals")
         marital_pop <- marital_projection$marital_population
         phase8b_pop <- population_projection$population
-        start_year <- config_assumptions$projected_population$starting_year
+        start_year <- config_projected_pop$starting_year
         first_proj_year <- start_year + 1
         marital_totals <- marital_pop[year >= first_proj_year,
                                        .(marital_total = sum(population, na.rm = TRUE)),
                                        by = .(year, age, sex)]
-        min_age <- config_assumptions$projected_population$ages$marriage_min
-        max_age <- config_assumptions$projected_population$ages$max_age_group
+        min_age <- config_projected_pop$ages$marriage_min
+        max_age <- config_projected_pop$ages$max_age_group
         phase8b_totals <- phase8b_pop[year >= first_proj_year & age >= min_age & age <= max_age,
                                        .(phase8b_total = sum(population, na.rm = TRUE)),
                                        by = .(year, age, sex)]
@@ -249,7 +238,7 @@ create_projected_population_targets <- function() {
         comparison[, diff := abs(marital_total - phase8b_total)]
         comparison[phase8b_total > 0, pct_diff := diff / phase8b_total * 100]
         max_pct_diff <- comparison[, max(pct_diff, na.rm = TRUE)]
-        tolerance <- config_assumptions$projected_population$validation$marital_tolerance
+        tolerance <- config_projected_pop$validation$marital_tolerance
         valid <- max_pct_diff < tolerance
         if (valid) cli::cli_alert_success("PASS: Marital totals match Phase 8B")
         else cli::cli_alert_warning("WARNING: Some differences > {tolerance}%")
@@ -265,7 +254,7 @@ create_projected_population_targets <- function() {
       children_fate_projection,
       {
         # Build parent age groups from config (each entry is [min, max])
-        pag_config <- config_assumptions$projected_population$children$parent_age_groups
+        pag_config <- config_projected_pop$children$parent_age_groups
         parent_age_groups <- lapply(pag_config, function(x) x[[1]]:x[[2]])
         project_children_fate(
           phase8b_result = population_projection,
@@ -273,11 +262,11 @@ create_projected_population_targets <- function() {
           birth_rates = fertility_rates_complete,
           mortality_qx = mortality_qx_for_projection,
           parent_age_groups = parent_age_groups,
-          start_year = config_assumptions$projected_population$starting_year,
-          end_year = config_assumptions$projected_population$projection_end,
-          max_child_age = config_assumptions$projected_population$ages$children_max,
-          min_parent_age = config_assumptions$projected_population$ages$marriage_min,
-          max_parent_age = config_assumptions$projected_population$ages$max_age,
+          start_year = config_projected_pop$starting_year,
+          end_year = config_projected_pop$projection_end,
+          max_child_age = config_projected_pop$ages$children_max,
+          min_parent_age = config_projected_pop$ages$marriage_min,
+          max_parent_age = config_projected_pop$ages$max_age,
           verbose = TRUE
         )
       }
@@ -289,9 +278,9 @@ create_projected_population_targets <- function() {
       children_fate_validation,
       validate_children_fate(children_fate_result = children_fate_projection,
                               phase8b_result = population_projection,
-                              max_child_age = config_assumptions$projected_population$ages$children_max,
-                              tolerance = config_assumptions$projected_population$validation$children_fate_tolerance,
-                              orphan_rate_upper_bound = config_assumptions$projected_population$validation$orphan_rate_upper_bound)
+                              max_child_age = config_projected_pop$ages$children_max,
+                              tolerance = config_projected_pop$validation$children_fate_tolerance,
+                              orphan_rate_upper_bound = config_projected_pop$validation$orphan_rate_upper_bound)
     ),
 
     # ==========================================================================
@@ -303,9 +292,9 @@ create_projected_population_targets <- function() {
     targets::tar_target(
       armed_forces_for_projection,
       fetch_total_armed_forces(
-        years = config_assumptions$projected_population$starting_year,
-        ages = config_assumptions$projected_population$armed_forces$military_age_range[1]:
-               config_assumptions$projected_population$armed_forces$military_age_range[2],
+        years = config_projected_pop$starting_year,
+        ages = config_projected_pop$armed_forces$military_age_range[1]:
+               config_projected_pop$armed_forces$military_age_range[2],
         cache_dir = here::here("data/raw/dmdc")
       )
     ),
@@ -317,9 +306,9 @@ create_projected_population_targets <- function() {
         marital_result = marital_projection,
         historical_cni = historical_civilian_noninst,
         armed_forces_data = armed_forces_for_projection,
-        cni_config = config_assumptions$projected_population$cni,
-        start_year = config_assumptions$projected_population$starting_year,
-        end_year = config_assumptions$projected_population$projection_end,
+        cni_config = config_projected_pop$cni,
+        start_year = config_projected_pop$starting_year,
+        end_year = config_projected_pop$projection_end,
         verbose = TRUE
       )
     ),
@@ -329,7 +318,7 @@ create_projected_population_targets <- function() {
     targets::tar_target(
       cni_validation,
       validate_cni_projection(cni_result = cni_projection, phase8b_result = population_projection,
-                             tolerance = config_assumptions$projected_population$validation$cni_tolerance)
+                             tolerance = config_projected_pop$validation$cni_tolerance)
     ),
 
     # ==========================================================================
@@ -349,7 +338,7 @@ create_projected_population_targets <- function() {
           cni_population = cni_projection$cni_population
         )
         tr2025_pop <- tryCatch({
-          tr_pop_file <- here::here(config_assumptions$projected_population$tr_historical_population_file)
+          tr_pop_file <- here::here(config_projected_pop$tr_historical_population_file)
           if (file.exists(tr_pop_file)) {
             tr_pop <- data.table::fread(tr_pop_file)
             data.table::setnames(tr_pop, tolower(names(tr_pop)))
@@ -359,7 +348,7 @@ create_projected_population_targets <- function() {
         }, error = function(e) NULL)
         validate_projected_population_comprehensive(projection_results = projection_results,
                                                       tr2025_pop = tr2025_pop,
-                                                      tolerance = config_assumptions$projected_population$validation$comprehensive_tolerance)
+                                                      tolerance = config_projected_pop$validation$comprehensive_tolerance)
       }
     ),
 
@@ -371,8 +360,8 @@ create_projected_population_targets <- function() {
         deaths = population_projection$deaths,
         net_immigration = population_projection$net_immigration,
         cni_summary = cni_projection$summary,
-        start_year = config_assumptions$projected_population$starting_year,
-        end_year = config_assumptions$projected_population$projection_end
+        start_year = config_projected_pop$starting_year,
+        end_year = config_projected_pop$projection_end
       )
     )
   )

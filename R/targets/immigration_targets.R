@@ -59,7 +59,7 @@ create_immigration_targets <- function() {
       calculate_tr_derived_distribution(
         tr_population = tr2025_population_long,
         tr_qx = tr2025_qx_long,
-        years = config_assumptions$immigration$lpr$tr_derived_years
+        years = config_lpr_immigration$lpr$tr_derived_years
       )
     ),
 
@@ -74,7 +74,11 @@ create_immigration_targets <- function() {
     targets::tar_target(
       lpr_distribution,
       get_lpr_distribution_for_projection(
-        config = config_assumptions,
+        config = list(immigration = list(
+          lpr = config_lpr_immigration$lpr,
+          ultimate_net_lpr_immigration = config_lpr_immigration$ultimate_net_lpr_immigration,
+          o_immigration = list(ultimate_gross_o = config_o_immigration$ultimate_gross_o)
+        )),
         tr_derived_dist = tr_derived_immigration_dist
       )
     ),
@@ -84,19 +88,19 @@ create_immigration_targets <- function() {
     targets::tar_target(
       emigration_distribution,
       {
-        source <- config_assumptions$immigration$emigration$distribution_source
+        source <- config_lpr_immigration$emigration$distribution_source
         if (source == "cbo") {
           cbo_data <- load_cbo_migration(
-            file_path = here::here(config_assumptions$immigration$cbo_file)
+            file_path = here::here(config_lpr_immigration$cbo_file)
           )
           calculate_cbo_emigration_distribution(
             cbo_data,
-            config_assumptions$immigration$emigration$cbo_reference_years
+            config_lpr_immigration$emigration$cbo_reference_years
           )
         } else {
           calculate_emigration_distribution_dhs(
             dhs_data = load_dhs_lpr_data(),
-            reference_years = config_assumptions$immigration$emigration$distribution_years
+            reference_years = config_lpr_immigration$emigration$distribution_years
           )
         }
       }
@@ -107,7 +111,7 @@ create_immigration_targets <- function() {
       new_aos_ratio,
       calculate_new_aos_ratio(
         dhs_data = load_dhs_lpr_data(),
-        reference_years = config_assumptions$immigration$lpr$new_aos_ratio_years
+        reference_years = config_lpr_immigration$lpr$new_aos_ratio_years
       )
     ),
 
@@ -117,16 +121,16 @@ create_immigration_targets <- function() {
     targets::tar_target(
       lpr_assumptions,
       {
-        source <- config_assumptions$immigration$lpr$assumptions_source
-        hist_start <- config_assumptions$historical_population$start_year
-        proj_end <- config_assumptions$metadata$projection_period$end_year
+        source <- config_lpr_immigration$lpr$assumptions_source
+        hist_start <- config_historical_pop$start_year
+        proj_end <- config_metadata$projection_period$end_year
         all_years <- hist_start:proj_end
 
         if (source == "cbo") {
           # CBO only has projected years; historical comes from V.A2
-          proj_start <- config_assumptions$metadata$projection_period$start_year
+          proj_start <- config_metadata$projection_period$start_year
           proj_years <- proj_start:proj_end
-          cbo_file <- here::here(config_assumptions$immigration$cbo_file)
+          cbo_file <- here::here(config_lpr_immigration$cbo_file)
           cbo_result <- get_cbo_lpr_assumptions(
             years = proj_years,
             cbo_file = cbo_file,
@@ -134,9 +138,9 @@ create_immigration_targets <- function() {
           )
 
           # Get historical from V.A2
-          emig_ratio <- config_assumptions$immigration$emigration$ratio
-          alternative <- config_assumptions$immigration$va2_alternative
-          va2_file <- config_assumptions$immigration$va2_file
+          emig_ratio <- config_lpr_immigration$emigration$ratio
+          alternative <- config_lpr_immigration$va2_alternative
+          va2_file <- config_lpr_immigration$va2_file
           data_dir <- if (is.null(va2_file) || va2_file == "") {
             "data/raw/SSA_TR2025"
           } else {
@@ -153,9 +157,9 @@ create_immigration_targets <- function() {
           )
           data.table::rbindlist(list(va2_hist, cbo_result), fill = TRUE)
         } else {
-          emig_ratio <- config_assumptions$immigration$emigration$ratio
-          alternative <- config_assumptions$immigration$va2_alternative
-          va2_file <- config_assumptions$immigration$va2_file
+          emig_ratio <- config_lpr_immigration$emigration$ratio
+          alternative <- config_lpr_immigration$va2_alternative
+          va2_file <- config_lpr_immigration$va2_file
           data_dir <- if (is.null(va2_file) || va2_file == "") {
             "data/raw/SSA_TR2025"
           } else {
@@ -178,8 +182,8 @@ create_immigration_targets <- function() {
     targets::tar_target(
       lpr_projection_result,
       {
-        dist_method <- config_assumptions$immigration$lpr$distribution_method
-        dhs_mode <- config_assumptions$immigration$lpr$dhs_distribution_mode
+        dist_method <- config_lpr_immigration$lpr$distribution_method
+        dhs_mode <- config_lpr_immigration$lpr$dhs_distribution_mode
 
         use_separate <- (dist_method == "dhs" && dhs_mode == "separate" &&
                           is.list(lpr_distribution) && "new_distribution" %in% names(lpr_distribution))
@@ -207,7 +211,7 @@ create_immigration_targets <- function() {
           )
 
           # Split into NEW/AOS using assumptions or ratio
-          split_method <- config_assumptions$immigration$lpr$new_aos_split_method
+          split_method <- config_lpr_immigration$lpr$new_aos_split_method
           if (split_method == "assumption") {
             split_result <- split_lpr_new_aos(
               lpr_immigration = lpr_imm,
@@ -303,7 +307,7 @@ create_immigration_targets <- function() {
     targets::tar_target(
       acs_foreign_born_flows,
       load_cached_multi_year(
-        years = config_assumptions$data_sources$acs_foreign_born_years,
+        years = config_data_sources$acs_foreign_born_years,
         cache_pattern = "data/cache/acs_pums/foreign_born_flows_%d.rds",
         on_missing = "skip"
       ),
@@ -323,7 +327,7 @@ create_immigration_targets <- function() {
     targets::tar_target(
       acs_undercount_factors,
       calculate_acs_undercount_factors(
-        years = config_assumptions$data_sources$acs_undercount_years,
+        years = config_data_sources$acs_undercount_years,
         use_fallback = TRUE
       )
     ),
@@ -370,13 +374,13 @@ create_immigration_targets <- function() {
     targets::tar_target(
       va2_net_immigration,
       {
-        va2_file <- config_assumptions$immigration$va2_file
+        va2_file <- config_lpr_immigration$va2_file
         data_dir <- dirname(va2_file)
         if (data_dir == ".") data_dir <- "data/raw/SSA_TR2025"
         get_tr_va2_net_immigration(
-          years = config_assumptions$metadata$projection_period$start_year:
-                  config_assumptions$metadata$projection_period$end_year,
-          alternative = config_assumptions$immigration$va2_alternative,
+          years = config_metadata$projection_period$start_year:
+                  config_metadata$projection_period$end_year,
+          alternative = config_lpr_immigration$va2_alternative,
           data_dir = data_dir,
           convert_to_persons = TRUE
         )
@@ -403,9 +407,9 @@ create_immigration_targets <- function() {
         lpr_aos = aos_projected,
         mortality_qx = mortality_qx_historical,
         undercount_factors = acs_undercount_factors,
-        projection_years = config_assumptions$metadata$projection_period$start_year:
-                           config_assumptions$metadata$projection_period$end_year,
-        config = config_assumptions,
+        projection_years = config_metadata$projection_period$start_year:
+                           config_metadata$projection_period$end_year,
+        config = list(immigration = list(o_immigration = config_o_immigration)),
         dhs_ni_stock = dhs_nonimmigrant_stock
       )
     ),
@@ -423,9 +427,9 @@ create_immigration_targets <- function() {
         acs_2012_data = NULL,
         dhs_stock = dhs_daca_data$stock,
         dhs_grants = dhs_daca_data$grants,
-        projection_years = config_assumptions$metadata$projection_period$start_year:
-                           config_assumptions$metadata$projection_period$end_year,
-        config = config_assumptions
+        projection_years = config_metadata$projection_period$start_year:
+                           config_metadata$projection_period$end_year,
+        config = list(immigration = list(o_immigration = config_o_immigration))
       )
     ),
 

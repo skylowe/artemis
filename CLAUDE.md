@@ -82,13 +82,10 @@ All assumptions live in `config/assumptions/tr2025.yaml`. Key configurable param
 
 ## Running the Pipeline
 
-**Important:** The `config_assumptions` target is cached by `{targets}`. After editing `config/assumptions/tr2025.yaml`, you must invalidate it before running the pipeline or the old config values will be used:
+Config changes are detected automatically — no manual invalidation needed. The `config_file` target tracks the YAML file content, and domain-specific config gates (`config_fertility`, `config_mortality`, etc.) provide early cutoff so only affected subprocesses rebuild.
 
 ```bash
-# After editing config YAML, invalidate the config target first
-Rscript -e "targets::tar_invalidate(matches('config_assumptions'))"
-
-# Full pipeline
+# Full pipeline (automatically detects config changes)
 Rscript -e "targets::tar_make()"
 
 # Check what's outdated

@@ -25,7 +25,7 @@ create_fertility_targets <- function() {
     targets::tar_target(
       nchs_births_raw,
       fetch_nchs_births_by_age_multi(
-        years = config_assumptions$data_sources$historical_birth_data$start_year:2024
+        years = config_data_sources$historical_birth_data$start_year:2024
       ),
       cue = targets::tar_cue(mode = "thorough")
     ),
@@ -34,10 +34,10 @@ create_fertility_targets <- function() {
     targets::tar_target(
       census_female_pop,
       {
-        set_census_vintage_option(config_assumptions)
+        set_census_vintage_option(list(data_sources = config_data_sources))
         fetch_census_population_all(
-          years = config_assumptions$data_sources$population_estimates$start_year:
-                  config_assumptions$data_sources$population_estimates$end_year,
+          years = config_data_sources$population_estimates$start_year:
+                  config_data_sources$population_estimates$end_year,
           ages = 10:54,
           sex = "female"
         )
@@ -49,15 +49,15 @@ create_fertility_targets <- function() {
     targets::tar_target(
       tr2025_female_pop,
       {
-        tr_file <- config_assumptions$projected_population$tr_historical_population_file
+        tr_file <- config_projected_pop$tr_historical_population_file
         if (is.null(tr_file) || !file.exists(tr_file)) {
           cli::cli_alert_warning("TR2025 population file not found, returning empty data")
           return(data.table::data.table(year = integer(), age = integer(), population = numeric()))
         }
 
         tr_pop <- data.table::fread(tr_file)
-        years <- config_assumptions$data_sources$population_estimates$start_year:
-                 config_assumptions$data_sources$population_estimates$end_year
+        years <- config_data_sources$population_estimates$start_year:
+                 config_data_sources$population_estimates$end_year
         result <- tr_pop[Year %in% years & Age >= 10 & Age <= 54,
                          .(year = Year, age = Age, population = `F Tot`)]
         data.table::setorder(result, year, age)
@@ -72,7 +72,7 @@ create_fertility_targets <- function() {
       select_population_source(
         tr_pop = tr2025_female_pop,
         census_pop = census_female_pop,
-        use_tr = config_assumptions$projected_population$use_tr_historical_population
+        use_tr = config_projected_pop$use_tr_historical_population
       )
     ),
 
@@ -86,8 +86,8 @@ create_fertility_targets <- function() {
       calculate_historical_birth_rates(
         births = nchs_births_raw,
         population = female_pop_for_fertility,
-        min_age = config_assumptions$fertility$min_fertility_age,
-        max_age = config_assumptions$fertility$max_fertility_age
+        min_age = config_fertility$min_fertility_age,
+        max_age = config_fertility$max_fertility_age
       )
     ),
 
@@ -96,7 +96,7 @@ create_fertility_targets <- function() {
       fertility_rates_for_projection,
       apply_custom_recent_tfr(
         birth_rates = fertility_rates_historical,
-        custom_recent_tfr = config_assumptions$fertility$custom_recent_tfr
+        custom_recent_tfr = config_fertility$custom_recent_tfr
       )
     ),
 
@@ -111,7 +111,7 @@ create_fertility_targets <- function() {
       fertility_trend_factors,
       calculate_trend_factors(
         ratios = fertility_age30_ratios,
-        exclude_years = config_assumptions$fertility$exclude_years
+        exclude_years = config_fertility$exclude_years
       )
     ),
 
@@ -119,10 +119,10 @@ create_fertility_targets <- function() {
     targets::tar_target(
       fertility_ultimate_years,
       calculate_ultimate_years(
-        min_age = config_assumptions$fertility$min_fertility_age,
-        max_age = config_assumptions$fertility$max_fertility_age,
-        base_year = config_assumptions$fertility$projection_start_year,
-        end_year = config_assumptions$fertility$ultimate_year
+        min_age = config_fertility$min_fertility_age,
+        max_age = config_fertility$max_fertility_age,
+        base_year = config_fertility$projection_start_year,
+        end_year = config_fertility$ultimate_year
       )
     ),
 
@@ -131,11 +131,11 @@ create_fertility_targets <- function() {
     targets::tar_target(
       fertility_weights,
       calculate_interpolation_weights(
-        years = config_assumptions$metadata$projection_period$start_year:
-                config_assumptions$metadata$projection_period$end_year,
-        base_year = config_assumptions$fertility$rate_base_year,
-        ultimate_year = fertility_ultimate_years[age == config_assumptions$fertility$reference_age, ultimate_year],
-        exponent = config_assumptions$fertility$weight_exponent
+        years = config_metadata$projection_period$start_year:
+                config_metadata$projection_period$end_year,
+        base_year = config_fertility$rate_base_year,
+        ultimate_year = fertility_ultimate_years[age == config_fertility$reference_age, ultimate_year],
+        exponent = config_fertility$weight_exponent
       )
     ),
 
@@ -144,14 +144,14 @@ create_fertility_targets <- function() {
     targets::tar_target(
       fertility_ultimate_age30,
       solve_ultimate_age30_rate(
-        target_tfr = config_assumptions$fertility$ultimate_ctfr,
-        base_age30_rate = fertility_rates_for_projection[year == config_assumptions$fertility$rate_base_year & age == 30, birth_rate],
-        base_ratios = fertility_age30_ratios[year == config_assumptions$fertility$rate_base_year],
+        target_tfr = config_fertility$ultimate_ctfr,
+        base_age30_rate = fertility_rates_for_projection[year == config_fertility$rate_base_year & age == 30, birth_rate],
+        base_ratios = fertility_age30_ratios[year == config_fertility$rate_base_year],
         trend_factors = fertility_trend_factors,
         ultimate_years = fertility_ultimate_years,
-        base_year = config_assumptions$fertility$rate_base_year,
-        age30_ultimate_year = fertility_ultimate_years[age == config_assumptions$fertility$reference_age, ultimate_year],
-        weight_exponent = config_assumptions$fertility$weight_exponent
+        base_year = config_fertility$rate_base_year,
+        age30_ultimate_year = fertility_ultimate_years[age == config_fertility$reference_age, ultimate_year],
+        weight_exponent = config_fertility$weight_exponent
       )
     ),
 
@@ -159,9 +159,9 @@ create_fertility_targets <- function() {
     targets::tar_target(
       fertility_age30_projected,
       project_age30_rates(
-        years = config_assumptions$metadata$projection_period$start_year:
-                config_assumptions$metadata$projection_period$end_year,
-        base_rate = fertility_rates_for_projection[year == config_assumptions$fertility$rate_base_year & age == 30, birth_rate],
+        years = config_metadata$projection_period$start_year:
+                config_metadata$projection_period$end_year,
+        base_rate = fertility_rates_for_projection[year == config_fertility$rate_base_year & age == 30, birth_rate],
         ultimate_rate = fertility_ultimate_age30,
         weights = fertility_weights
       )
@@ -171,13 +171,13 @@ create_fertility_targets <- function() {
     targets::tar_target(
       fertility_rates_projected,
       project_birth_rates(
-        years = config_assumptions$metadata$projection_period$start_year:
-                config_assumptions$metadata$projection_period$end_year,
+        years = config_metadata$projection_period$start_year:
+                config_metadata$projection_period$end_year,
         age30_rates = fertility_age30_projected,
-        base_ratios = fertility_age30_ratios[year == config_assumptions$fertility$rate_base_year],
+        base_ratios = fertility_age30_ratios[year == config_fertility$rate_base_year],
         trend_factors = fertility_trend_factors,
         ultimate_years = fertility_ultimate_years,
-        base_year = config_assumptions$fertility$rate_base_year
+        base_year = config_fertility$rate_base_year
       )
     ),
 
@@ -186,7 +186,7 @@ create_fertility_targets <- function() {
       fertility_rates_complete,
       rbind(
         fertility_rates_for_projection[, .(year, age, birth_rate)],
-        fertility_rates_projected[year > config_assumptions$fertility$rate_base_year]
+        fertility_rates_projected[year > config_fertility$rate_base_year]
       )
     ),
 
