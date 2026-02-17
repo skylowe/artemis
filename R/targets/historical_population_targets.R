@@ -74,7 +74,11 @@ create_historical_population_targets <- function() {
           start_year = config_historical_pop$start_year,
           end_year = config_historical_pop$end_year,
           ages = 0:config_historical_pop$max_age,
-          config = list(historical_population = config_historical_pop),
+          config = list(
+            historical_population = config_historical_pop,
+            metadata = config_metadata,
+            mortality = list(starting_tr_qx = config_mortality$starting_tr_qx)
+          ),
           total_pop = historical_population,
           lpr_assumptions = lpr_assumptions,
           immigration_dist = lpr_distribution,
