@@ -2,9 +2,6 @@
 # =============================================================================
 # Loads packages, baseline data, and ARTEMIS integration
 
-# NULL coalescing operator (define early as it's used throughout)
-`%||%` <- function(x, y) if (is.null(x)) y else x
-
 # Check for required packages
 required_packages <- c(
   "shiny", "bslib", "shinyWidgets", "shinyjs",

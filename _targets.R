@@ -21,6 +21,13 @@ library(targets)
 library(tarchetypes)
 library(crew)
 
+# Isolated environment for pipeline functions.
+# Ensures import graph is identical whether tar_make runs via callr::r
+# (host, clean globalenv) or callr_function=NULL (Docker, globalenv
+# contains Shiny app objects). Only R/ functions appear as imports.
+pipeline_env <- new.env(parent = globalenv())
+tar_option_set(envir = pipeline_env)
+
 # Source all R files in R/ subdirectories
 tar_source()
 tar_source("R/utils")
@@ -63,7 +70,7 @@ tar_option_set(
 # PIPELINE DEFINITION
 # =============================================================================
 
-c(
+evalq(c(
   # Configuration
   create_config_targets(),
 
@@ -79,4 +86,4 @@ c(
 
   # Cross-cutting validation
   create_validation_targets()
-)
+), envir = pipeline_env)
