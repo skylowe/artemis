@@ -314,6 +314,7 @@ create_projected_population_targets <- function() {
         marital_result = marital_projection,
         historical_cni = historical_civilian_noninst,
         armed_forces_data = armed_forces_for_projection,
+        cni_config = config_assumptions$projected_population$cni,
         start_year = config_assumptions$projected_population$starting_year,
         end_year = config_assumptions$projected_population$projection_end,
         verbose = TRUE

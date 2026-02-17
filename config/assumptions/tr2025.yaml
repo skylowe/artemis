@@ -717,6 +717,13 @@ projected_population:
     ipf_tolerance: 1.0e-6
     ipf_zero_replacement: 1.0e-10
 
+  # CNI/civilian ratio computation (Phase 8E)
+  # Source: historical_civilian_noninst target (Census ACS CNI data)
+  cni:
+    # Years to average CNI/civilian ratios over (more years = smoother ratios)
+    # Excludes 2020 (no ACS 1-year due to COVID)
+    ratio_years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2021, 2022]
+
   # Armed forces data for CNI projection (Phase 8E)
   # Source: DoD DMDC via troopdata package + ACS PUMS (MIL=1)
   # Data years available: 2005-2023 (ACS PUMS), 1950-2024 (troopdata)

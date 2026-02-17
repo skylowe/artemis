@@ -4438,7 +4438,10 @@ project_usaf_year <- function(usaf_prev,
   # Calculate USAF/SS ratio at beginning of year
   usaf_total <- usaf_prev[, sum(population, na.rm = TRUE)]
   ss_total <- ss_pop_prev[, sum(population, na.rm = TRUE)]
-  usaf_ss_ratio <- if (ss_total > 0) usaf_total / ss_total else 0.95
+  if (ss_total == 0) {
+    cli::cli_abort("Cannot compute USAF/SS ratio: SS area total population is 0")
+  }
+  usaf_ss_ratio <- usaf_total / ss_total
 
   # Calculate qx from SS deaths / SS population
   deaths_merged <- merge(deaths_ss, ss_pop_prev, by = c("age", "sex"), all.x = TRUE)
@@ -4811,13 +4814,17 @@ disaggregate_cni_marital <- function(cni_pop,
 #' - USAF (US resident + armed forces overseas) population by age/sex
 #' - Armed forces overseas by age/sex (held constant)
 #' - Total armed forces by age/sex (held constant)
-#' - CNI/civilian ratios by age/sex (held constant from starting year)
+#' - CNI/civilian ratios by age/sex (averaged from historical series, held constant)
 #' - Separated/married ratios by age/sex
 #'
 #' @param historical_cni data.table: Historical CNI population from Phase 4
+#'   (multiple years with columns: year, age, sex, marital_status, population)
 #' @param phase8b_pop data.table: Phase 8B population (SS area) by year/age/sex/pop_status
 #' @param armed_forces_data data.table: Armed forces data from fetch_total_armed_forces()
 #'   with columns: year, age, sex, total_af, overseas_af. Required — no fabricated defaults.
+#' @param cni_config list: CNI configuration from config YAML with:
+#'   - ratio_years: integer vector of years to average CNI/civilian ratios over
+#'   - disaggregate_by_marital: logical, whether to compute ratios by marital status
 #' @param start_year Integer: Starting year (default: 2022)
 #' @param max_age Integer: Maximum age (default: 100)
 #'
@@ -4825,7 +4832,7 @@ disaggregate_cni_marital <- function(cni_pop,
 #'   - usaf_pop: USAF population by age/sex for starting year
 #'   - armed_forces_overseas: Armed forces overseas by age/sex (constant)
 #'   - total_armed_forces: Total armed forces by age/sex (constant)
-#'   - cni_civilian_ratios: CNI/civilian ratios by age/sex
+#'   - cni_civilian_ratios: CNI/civilian ratios by age/sex (averaged over ratio_years)
 #'   - cni_pop: CNI population by age/sex for starting year
 #'   - separated_ratios: Separated/married ratios by age/sex
 #'
@@ -4833,6 +4840,7 @@ disaggregate_cni_marital <- function(cni_pop,
 prepare_cni_starting_data <- function(historical_cni,
                                        phase8b_pop,
                                        armed_forces_data,
+                                       cni_config = NULL,
                                        start_year = 2022,
                                        max_age = 100) {
 
@@ -4858,7 +4866,16 @@ prepare_cni_starting_data <- function(historical_cni,
     ))
   }
 
-  # Filter historical CNI to starting year
+  # Extract CNI config
+  ratio_years <- cni_config$ratio_years
+  if (is.null(ratio_years)) {
+    cli::cli_abort(c(
+      "CNI ratio years not configured",
+      "i" = "Set {.field projected_population.cni.ratio_years} in config YAML"
+    ))
+  }
+
+  # Filter historical CNI to starting year for population totals
   if ("year" %in% names(historical_cni)) {
     cni_start <- historical_cni[year == start_year]
   } else {
@@ -4916,29 +4933,81 @@ prepare_cni_starting_data <- function(historical_cni,
   civilian_pop[is.na(population_af), population_af := 0]
   civilian_pop[, civilian := pmax(0, population - population_af)]
 
-  # Calculate CNI/civilian ratios
-  # CNI = civilian - institutionalized population
-  # Institutionalized includes: prisons, nursing homes, mental facilities, etc.
-  cni_civilian <- merge(cni_by_age_sex, civilian_pop[, .(age, sex, civilian)],
-                        by = c("age", "sex"), all = TRUE)
-  cni_civilian[is.na(population), population := 0]
-  cni_civilian[is.na(civilian), civilian := 0]
+  # =========================================================================
+  # CNI/Civilian Ratios — averaged over full historical series
+  # =========================================================================
+  # TR2025: "Apply ratios of CNI population to civilian population by year,
+  # sex, and single year of age in the starting year to the civilian population."
+  # We improve on single-year by averaging across ratio_years for stability.
 
-  # Calculate CNI/civilian ratio — abort if civilian is 0 for populated ages
-  zero_civilian <- cni_civilian[civilian == 0 & population > 0]
-  if (nrow(zero_civilian) > 0) {
+  available_cni_years <- if ("year" %in% names(historical_cni)) {
+    sort(unique(historical_cni$year))
+  } else {
+    start_year
+  }
+
+  actual_ratio_years <- intersect(ratio_years, available_cni_years)
+  if (length(actual_ratio_years) == 0) {
     cli::cli_abort(c(
-      "Cannot compute CNI/civilian ratio: civilian population is 0 for {nrow(zero_civilian)} age/sex cells with nonzero CNI",
-      "i" = "Ages affected: {paste(unique(zero_civilian$age), collapse=', ')}",
-      "i" = "This may indicate armed forces data exceeds total population for some ages"
+      "No CNI data available for any of the configured ratio years",
+      "i" = "Configured: {paste(ratio_years, collapse=', ')}",
+      "i" = "Available: {paste(available_cni_years, collapse=', ')}"
     ))
   }
-  cni_civilian[, ratio := fifelse(civilian > 0, population / civilian, 0)]
 
-  # CNI <= civilian is a mathematical constraint (not a fallback): cap at 1.0
-  cni_civilian[ratio > 1.0, ratio := 1.0]
+  cli::cli_alert_info("Computing CNI/civilian ratios averaged over {length(actual_ratio_years)} years: {paste(range(actual_ratio_years), collapse='-')}")
 
-  cni_civilian_ratios <- cni_civilian[, .(age, sex, ratio)]
+  # Compute ratios for each historical year, then average
+  # For each year: CNI_total / (SS_area - AF) = CNI / civilian
+  ratio_list <- list()
+  for (yr in actual_ratio_years) {
+    cni_yr <- historical_cni[year == yr, .(cni = sum(population, na.rm = TRUE)),
+                              by = .(age, sex)]
+
+    # SS area for this year (from Phase 8B historical data, or use starting year if not available)
+    ss_yr <- phase8b_pop[year == yr, .(ss = sum(population, na.rm = TRUE)), by = .(age, sex)]
+    if (nrow(ss_yr) == 0) {
+      # Phase 8B may not have this historical year — use starting year SS as proxy
+      ss_yr <- ss_by_age_sex[, .(age, sex, ss = population)]
+    }
+
+    # AF for this year (or use starting year AF — held constant per TR2025)
+    af_yr <- af_grid[, .(age, sex, af = total_af)]
+
+    yr_data <- merge(cni_yr, ss_yr, by = c("age", "sex"), all = TRUE)
+    yr_data <- merge(yr_data, af_yr, by = c("age", "sex"), all = TRUE)
+    yr_data[is.na(cni), cni := 0]
+    yr_data[is.na(ss), ss := 0]
+    yr_data[is.na(af), af := 0]
+    yr_data[, civilian := pmax(0, ss - af)]
+    yr_data[, ratio := fifelse(civilian > 0, cni / civilian, NA_real_)]
+    yr_data[, year := yr]
+
+    ratio_list[[as.character(yr)]] <- yr_data[, .(year, age, sex, ratio)]
+  }
+
+  all_ratios <- data.table::rbindlist(ratio_list, use.names = TRUE)
+
+  # Average ratios across years for each age/sex cell
+  cni_civilian_ratios <- all_ratios[, .(ratio = mean(ratio, na.rm = TRUE)), by = .(age, sex)]
+
+  # Abort if any age/sex cell has no computable ratio across all years
+  na_ratios <- cni_civilian_ratios[is.na(ratio) | is.nan(ratio)]
+  if (nrow(na_ratios) > 0) {
+    populated_na <- na_ratios[age %in% cni_by_age_sex[population > 0, age]]
+    if (nrow(populated_na) > 0) {
+      cli::cli_abort(c(
+        "Cannot compute CNI/civilian ratio for {nrow(populated_na)} populated age/sex cells",
+        "i" = "Ages affected: {paste(head(unique(populated_na$age), 10), collapse=', ')}",
+        "i" = "This may indicate armed forces data exceeds total population for some ages"
+      ))
+    }
+    # For unpopulated ages (e.g., very young children with 0 CNI and 0 civilian), set ratio to 0
+    cni_civilian_ratios[is.na(ratio) | is.nan(ratio), ratio := 0]
+  }
+
+  # CNI <= civilian is a mathematical constraint: cap at 1.0
+  cni_civilian_ratios[ratio > 1.0, ratio := 1.0]
 
   cli::cli_alert_info("CNI/civilian ratio range: {round(min(cni_civilian_ratios$ratio), 3)} - {round(max(cni_civilian_ratios$ratio), 3)}")
 
@@ -5034,6 +5103,7 @@ project_cni_population <- function(phase8b_result,
                                     marital_result,
                                     historical_cni,
                                     armed_forces_data,
+                                    cni_config = NULL,
                                     start_year = 2022,
                                     end_year = 2099,
                                     verbose = TRUE) {
@@ -5060,6 +5130,7 @@ project_cni_population <- function(phase8b_result,
     historical_cni = historical_cni,
     phase8b_pop = phase8b_pop,
     armed_forces_data = armed_forces_data,
+    cni_config = cni_config,
     start_year = start_year
   )
 
