@@ -2271,17 +2271,23 @@ calculate_widowings <- function(couples_grid_boy,
 #' @return Matrix (87×87) of married couples by husband age × wife age
 #'
 #' @export
-build_married_couples_grid <- function(marital_pop, min_age = 14, max_age = 100) {
+build_married_couples_grid <- function(marital_pop,
+                                       min_age = 14,
+                                       max_age = 100,
+                                       historical_couples_grid = NULL,
+                                       ipf_config = NULL) {
 
   n_ages <- max_age - min_age + 1  # 87
 
+  # IPF parameters from config or defaults
+  ipf_max_iter <- ipf_config$ipf_max_iter %||% 50L
+  ipf_tol <- ipf_config$ipf_tolerance %||% 1e-6
+  ipf_zero <- ipf_config$ipf_zero_replacement %||% 1e-10
+
   # Standardize marital status
   marital_pop <- data.table::as.data.table(marital_pop)
-  if ("single" %in% marital_pop$marital_status) {
-    marital_pop[marital_status == "single", marital_status := "single"]
-  }
 
-  # Get married population by age and sex
+  # Get married population by age and sex (marginals)
   married_male <- marital_pop[marital_status == "married" & sex == "male",
                                .(married = sum(population, na.rm = TRUE)), by = age]
   married_female <- marital_pop[marital_status == "married" & sex == "female",
@@ -2307,23 +2313,57 @@ build_married_couples_grid <- function(marital_pop, min_age = 14, max_age = 100)
     }
   }
 
-  # Build couples grid using age-gap distribution
-  # Typical husband-wife age difference pattern: husbands slightly older
-  # Use a normal distribution centered at age_diff = 2 with sd = 5
-  couples_grid <- matrix(0, nrow = n_ages, ncol = n_ages)
+  # Build base distribution for the couples grid
+  if (!is.null(historical_couples_grid) && is.matrix(historical_couples_grid) &&
+      nrow(historical_couples_grid) > 0) {
+    # Use empirical ACS PUMS husband-wife age distribution as the base
+    # Resize if dimensions don't match (historical grid may have different age range)
+    hist_rows <- nrow(historical_couples_grid)
+    hist_cols <- ncol(historical_couples_grid)
 
-  for (h in 1:n_ages) {
-    for (w in 1:n_ages) {
-      age_diff <- h - w  # Husband age - wife age
-      # Weight based on typical age difference pattern
-      weight <- dnorm(age_diff, mean = 2, sd = 5)
-      couples_grid[h, w] <- weight
+    if (hist_rows == n_ages && hist_cols == n_ages) {
+      couples_grid <- historical_couples_grid
+    } else {
+      # Map historical grid onto target dimensions
+      hist_ages <- as.integer(rownames(historical_couples_grid))
+      target_ages <- min_age:max_age
+      couples_grid <- matrix(0, nrow = n_ages, ncol = n_ages)
+
+      for (h in seq_len(hist_rows)) {
+        for (w in seq_len(hist_cols)) {
+          h_age <- hist_ages[h]
+          w_age <- hist_ages[w]
+          h_idx <- h_age - min_age + 1
+          w_idx <- w_age - min_age + 1
+          if (h_idx >= 1 && h_idx <= n_ages && w_idx >= 1 && w_idx <= n_ages) {
+            couples_grid[h_idx, w_idx] <- historical_couples_grid[h, w]
+          }
+        }
+      }
     }
+
+    # Replace zeros with tiny values only where both marginals are nonzero (IPF stability)
+    # This prevents division-by-zero in IPF while preserving the zero structure
+    # for ages with no married population
+    for (h in seq_len(n_ages)) {
+      for (w in seq_len(n_ages)) {
+        if (couples_grid[h, w] == 0 && males[h] > 0 && females[w] > 0) {
+          couples_grid[h, w] <- ipf_zero
+        }
+      }
+    }
+  } else {
+    cli::cli_abort(c(
+      "Historical married couples grid is required for building the couples grid",
+      "x" = "historical_couples_grid is NULL, not a matrix, or empty",
+      "i" = "This data comes from {.fn fetch_married_couples_grid} (ACS PUMS)",
+      "i" = "Ensure the {.field historical_couples_grid} target is in the pipeline"
+    ))
   }
 
-  # Normalize each row and column to match marginal totals
-  # Use iterative proportional fitting (IPF) to match both margins
-  couples_grid <- ipf_normalize(couples_grid, males, females, max_iter = 50)
+  # Apply IPF to match current-year marginals (married males/females by age)
+  couples_grid <- ipf_normalize(couples_grid, males, females,
+                                 max_iter = ipf_max_iter, tol = ipf_tol)
 
   # Set row and column names
   ages <- min_age:max_age
@@ -2812,6 +2852,8 @@ run_marital_projection <- function(phase8b_result,
                                     marriage_rates,
                                     divorce_rates,
                                     mortality_qx,
+                                    historical_couples_grid = NULL,
+                                    ipf_config = NULL,
                                     start_year = 2022,
                                     end_year = 2099,
                                     min_age = 14,
@@ -2864,7 +2906,12 @@ run_marital_projection <- function(phase8b_result,
   }
 
   # Build initial couples grid from starting marital population
-  current_couples_grid <- build_married_couples_grid(current_marital, min_age, max_age)
+  # Uses empirical ACS PUMS distribution as base, IPF to match current marginals
+  current_couples_grid <- build_married_couples_grid(
+    current_marital, min_age, max_age,
+    historical_couples_grid = historical_couples_grid,
+    ipf_config = ipf_config
+  )
 
   # Storage for results
   all_marital_pop <- list()
@@ -3910,13 +3957,14 @@ project_children_fate <- function(phase8b_result,
   # Get starting year population for initialization
   start_pop <- phase8b_pop[year == start_year]
 
-  # Get starting couples grid
-  start_couples <- if (!is.null(couples_grids[[as.character(start_year)]])) {
-    couples_grids[[as.character(start_year)]]
-  } else {
-    # Build from marital population if grid not available
-    marital_pop <- marital_result$marital_population[year == start_year]
-    build_married_couples_grid(marital_pop, min_parent_age, max_parent_age)
+  # Get starting couples grid — must come from Phase 8C marital projection
+  start_couples <- couples_grids[[as.character(start_year)]]
+  if (is.null(start_couples)) {
+    cli::cli_abort(c(
+      "Starting couples grid not found for year {start_year}",
+      "i" = "Couples grids must be provided from Phase 8C marital projection",
+      "i" = "Ensure {.fn run_marital_projection} completed successfully"
+    ))
   }
 
   # Get qx for starting year

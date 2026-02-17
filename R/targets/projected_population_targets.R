@@ -192,6 +192,18 @@ create_projected_population_targets <- function() {
                                            config = config_assumptions)
     ),
 
+    # Historical married couples grid (husband age × wife age) from ACS PUMS
+    # TR2025 Input #10: Used as base distribution for IPF (replaces normal distribution)
+    targets::tar_target(
+      historical_couples_grid,
+      fetch_married_couples_grid(
+        years = config_assumptions$projected_population$couples_grid$reference_years,
+        min_age = config_assumptions$projected_population$ages$marriage_min,
+        max_age = config_assumptions$projected_population$ages$max_age_group,
+        cache_dir = here::here("data/cache/acs_pums")
+      )
+    ),
+
     targets::tar_target(
       marital_projection,
       run_marital_projection(
@@ -201,6 +213,8 @@ create_projected_population_targets <- function() {
         marriage_rates = marriage_projection,
         divorce_rates = divorce_projection,
         mortality_qx = mortality_qx_for_projection,
+        historical_couples_grid = historical_couples_grid,
+        ipf_config = config_assumptions$projected_population$couples_grid,
         start_year = config_assumptions$projected_population$starting_year,
         end_year = config_assumptions$projected_population$projection_end,
         min_age = config_assumptions$projected_population$ages$marriage_min,

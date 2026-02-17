@@ -707,6 +707,16 @@ projected_population:
   # "artemis" = ARTEMIS-computed O-immigration from full Section 1.5 pipeline
   net_o_source: "va2"
 
+  # Married couples grid (Phase 8C)
+  # Source: ACS PUMS married-couple households (husband age × wife age)
+  # TR2025 Input #10: empirical distribution used as base for IPF normalization
+  couples_grid:
+    reference_years: [2018, 2019, 2021, 2022]  # Exclude 2020 (COVID/no ACS 1-year)
+    # IPF normalization parameters (applied to historical grid to match current marginals)
+    ipf_max_iter: 50
+    ipf_tolerance: 1.0e-6
+    ipf_zero_replacement: 1.0e-10
+
   # Armed forces data for CNI projection (Phase 8E)
   # Source: DoD DMDC via troopdata package + ACS PUMS (MIL=1)
   # Data years available: 2005-2023 (ACS PUMS), 1950-2024 (troopdata)

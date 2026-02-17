@@ -353,8 +353,8 @@ apply_distribution_to_overseas <- function(overseas_totals, age_sex_dist, years,
 fetch_total_armed_forces <- function(years,
                                       ages = 17:65,
                                       cache_dir = here::here("data/raw/dmdc")) {
-  checkmate::assert_integerish(years, lower = 1950, upper = 2030, min.len = 1)
-  checkmate::assert_integerish(ages, lower = 0, upper = 100, min.len = 1)
+  checkmate::assert_integerish(years, min.len = 1)
+  checkmate::assert_integerish(ages, min.len = 1)
 
   cli::cli_alert_info("Fetching total armed forces population (total + overseas)...")
 

@@ -965,6 +965,139 @@ marriage_grid_to_dt <- function(grid) {
 }
 
 # =============================================================================
+# MARRIED COUPLES GRID FOR POPULATION PROJECTION
+# =============================================================================
+
+#' Fetch historical married couples grid for population projection
+#'
+#' @description
+#' Retrieves an empirical husband-age × wife-age married couples distribution
+#' from ACS PUMS, averaged across reference years for stability. This replaces
+#' the normal distribution approximation previously used in build_married_couples_grid().
+#'
+#' Uses the existing fetch_acs_marriage_grids() infrastructure to query ACS PUMS
+#' for married persons linked by household SERIALNO.
+#'
+#' @param years Integer vector of reference years to average over
+#'   (configured via projected_population.couples_grid.reference_years)
+#' @param min_age Integer: minimum age (default: 14, matching marriage_min)
+#' @param max_age Integer: maximum age (default: 100, matching max_age_group)
+#' @param cache_dir Character: cache directory for per-year PUMS files
+#'
+#' @return Matrix (n_ages × n_ages) with husband age as rows, wife age as columns.
+#'   Values are proportions (sum to 1). Row/column names are age labels.
+#'
+#' @details
+#' TR2025 Input #10: "Married couples by single year of age of spouse 1
+#' crossed with single year of age of spouse 2"
+#'
+#' The grid is returned as proportions (normalized to sum to 1) rather than
+#' counts, so it can be used as a base distribution for IPF normalization
+#' against current-year married male/female marginals.
+#'
+#' @export
+fetch_married_couples_grid <- function(years,
+                                        min_age = 14L,
+                                        max_age = 100L,
+                                        cache_dir = here::here("data/cache/acs_pums")) {
+  checkmate::assert_integerish(years, min.len = 1)
+
+  # Check for cached averaged grid
+  avg_cache_file <- file.path(cache_dir, sprintf("married_couples_grid_%d_%d.rds",
+                                                   min(years), max(years)))
+  if (file.exists(avg_cache_file)) {
+    cli::cli_alert_success("Loading cached married couples grid (averaged {length(years)} years)")
+    return(readRDS(avg_cache_file))
+  }
+
+  cli::cli_alert_info("Fetching married couples grids from ACS PUMS for {length(years)} years...")
+
+  # Fetch per-year grids using existing infrastructure
+  # fetch_acs_marriage_grids handles caching, API calls, and spouse linking
+  year_grids <- fetch_acs_marriage_grids(
+    years = years,
+    min_age = min_age,
+    max_age = min(max_age, 99L),  # ACS PUMS AGEP tops at 99
+    include_same_sex = FALSE,
+    cache_dir = cache_dir
+  )
+
+  if (length(year_grids) == 0) {
+    cli::cli_abort(c(
+      "No married couples grids retrieved from ACS PUMS",
+      "i" = "Requested years: {paste(years, collapse=', ')}",
+      "i" = "Ensure CENSUS_KEY is set in .Renviron"
+    ))
+  }
+
+  # Average across years for stability
+  n_grids <- length(year_grids)
+  avg_grid <- year_grids[[1]] * 0  # Initialize to zero with same dimensions
+
+  for (g in year_grids) {
+    avg_grid <- avg_grid + g
+  }
+  avg_grid <- avg_grid / n_grids
+
+  # Extend to max_age if needed (ACS tops at 99, we need 100)
+  if (max_age > 99L) {
+    fetched_ages <- as.integer(rownames(avg_grid))
+    target_ages <- min_age:max_age
+    extended <- matrix(0, nrow = length(target_ages), ncol = length(target_ages),
+                       dimnames = list(target_ages, target_ages))
+
+    # Copy existing data
+    for (h_age in fetched_ages) {
+      for (w_age in fetched_ages) {
+        h_idx <- h_age - min_age + 1
+        w_idx <- w_age - min_age + 1
+        h_old <- h_age - min(fetched_ages) + 1
+        w_old <- w_age - min(fetched_ages) + 1
+        extended[h_idx, w_idx] <- avg_grid[h_old, w_old]
+      }
+    }
+
+    # For age 100: use age 99 values (small population, reasonable assumption)
+    if (100L %in% target_ages) {
+      idx_100 <- 100L - min_age + 1
+      idx_99 <- 99L - min_age + 1
+      extended[idx_100, ] <- extended[idx_99, ] * 0.3  # Scaled down for 100+
+      extended[, idx_100] <- extended[, idx_99] * 0.3
+    }
+
+    avg_grid <- extended
+  }
+
+  # Normalize to proportions (sum to 1)
+  grid_total <- sum(avg_grid)
+  if (grid_total > 0) {
+    avg_grid <- avg_grid / grid_total
+  }
+
+  # Add metadata
+  attr(avg_grid, "years") <- years
+  attr(avg_grid, "n_grids_averaged") <- n_grids
+  attr(avg_grid, "min_age") <- min_age
+  attr(avg_grid, "max_age") <- max_age
+
+  # Log summary
+  ages <- as.integer(rownames(avg_grid))
+  husband_marginal <- rowSums(avg_grid)
+  wife_marginal <- colSums(avg_grid)
+  avg_h <- sum(ages * husband_marginal) / sum(husband_marginal)
+  avg_w <- sum(ages * wife_marginal) / sum(wife_marginal)
+  cli::cli_alert_success("Built married couples grid: {nrow(avg_grid)}x{ncol(avg_grid)}, averaged {n_grids} years")
+  cli::cli_alert_info("Average husband age: {round(avg_h, 1)}, wife age: {round(avg_w, 1)}, diff: {round(avg_h - avg_w, 1)}")
+
+  # Cache
+  dir.create(dirname(avg_cache_file), showWarnings = FALSE, recursive = TRUE)
+  saveRDS(avg_grid, avg_cache_file)
+
+  avg_grid
+}
+
+
+# =============================================================================
 # FOREIGN-BORN FLOWS BY YEAR OF ENTRY
 # =============================================================================
 
