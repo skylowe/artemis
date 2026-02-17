@@ -369,64 +369,91 @@ mod_config_editor_server <- function(id, rv) {
       sync_inputs_to_config(rv$config)
     })
 
+    # Helper: update a nested config value only if it actually changed.
+    # Coerces Shiny input types (double from numericInput/sliderInput) to match
+    # the original yaml::read_yaml types (integer), preserving identical hashes
+    # for unchanged domain config sections (enables targets early cutoff).
+    set_config <- function(config, path, new_val) {
+      # Get original value by traversing path
+      orig <- config
+      for (key in path) {
+        if (is.null(orig)) { orig <- NULL; break }
+        orig <- orig[[key]]
+      }
+
+      # Coerce type to match original
+      if (!is.null(orig) && !is.null(new_val)) {
+        if (is.integer(orig) && is.numeric(new_val)) {
+          new_val <- as.integer(new_val)
+        }
+      }
+
+      # Skip if unchanged
+      if (identical(new_val, orig)) return(config)
+
+      # Ensure parent lists exist for 3-level paths
+      if (length(path) == 3 && is.null(config[[path[1]]][[path[2]]])) {
+        config[[path[1]]][[path[2]]] <- list()
+      }
+
+      # Set value
+      if (length(path) == 2) {
+        config[[path[1]]][[path[2]]] <- new_val
+      } else if (length(path) == 3) {
+        config[[path[1]]][[path[2]]][[path[3]]] <- new_val
+      }
+
+      config
+    }
+
     # Build modified config when Apply is clicked
     observeEvent(input$apply_config, {
       req(rv$config)
 
-      # Start with baseline config
+      # Start with baseline config — only fields that actually changed
+      # get written back, preserving original types for unchanged sections
       config <- rv$config
 
-      # Apply modifications
-      config$fertility$ultimate_ctfr <- input$ultimate_tfr
-      config$fertility$ultimate_year <- input$fertility_ultimate_year
-      config$fertility$weight_exponent <- input$weight_exponent
+      # Fertility
+      config <- set_config(config, c("fertility", "ultimate_ctfr"), input$ultimate_tfr)
+      config <- set_config(config, c("fertility", "ultimate_year"), input$fertility_ultimate_year)
+      config <- set_config(config, c("fertility", "weight_exponent"), input$weight_exponent)
 
+      # Custom recent TFR (special case: list or NULL)
       if (input$custom_recent_tfr) {
         tr_year <- config$metadata$trustees_report_year %||% 2025
-        config$fertility$custom_recent_tfr <- stats::setNames(
+        new_custom_tfr <- stats::setNames(
           as.list(c(input$custom_tfr_year1, input$custom_tfr_year2)),
           as.character(c(tr_year - 2, tr_year - 1))
         )
-      } else {
+        if (!identical(new_custom_tfr, config$fertility$custom_recent_tfr)) {
+          config$fertility$custom_recent_tfr <- new_custom_tfr
+        }
+      } else if (!is.null(config$fertility$custom_recent_tfr)) {
         config$fertility$custom_recent_tfr <- NULL
       }
 
-      config$mortality$ultimate_year <- input$mortality_ultimate_year
-      config$mortality$starting_aax_method <- input$starting_aax_method
-      config$mortality$apply_covid_adjustments <- input$apply_covid_adjustments
-      config$mortality$use_wonder_provisional <- input$use_wonder_provisional
+      # Mortality
+      config <- set_config(config, c("mortality", "ultimate_year"), input$mortality_ultimate_year)
+      config <- set_config(config, c("mortality", "starting_aax_method"), input$starting_aax_method)
+      config <- set_config(config, c("mortality", "apply_covid_adjustments"), input$apply_covid_adjustments)
+      config <- set_config(config, c("mortality", "use_wonder_provisional"), input$use_wonder_provisional)
+      config <- set_config(config, c("mortality", "hmd_calibration", "enabled"), input$hmd_calibration_enabled)
+      config <- set_config(config, c("mortality", "elderly_aax_cap", "enabled"), input$elderly_aax_cap_enabled)
+      config <- set_config(config, c("mortality", "elderly_aax_cap", "max_aax"), input$elderly_aax_cap_value)
 
-      if (is.null(config$mortality$hmd_calibration)) {
-        config$mortality$hmd_calibration <- list()
-      }
-      config$mortality$hmd_calibration$enabled <- input$hmd_calibration_enabled
+      # Immigration
+      config <- set_config(config, c("immigration", "va2_alternative"), input$immigration_scenario)
+      config <- set_config(config, c("immigration", "lpr", "assumptions_source"), input$lpr_assumptions_source)
+      config <- set_config(config, c("immigration", "lpr", "distribution_method"), input$distribution_method)
+      config <- set_config(config, c("immigration", "emigration", "ratio"), input$emigration_ratio)
 
-      if (is.null(config$mortality$elderly_aax_cap)) {
-        config$mortality$elderly_aax_cap <- list()
-      }
-      config$mortality$elderly_aax_cap$enabled <- input$elderly_aax_cap_enabled
-      config$mortality$elderly_aax_cap$max_aax <- input$elderly_aax_cap_value
-
-      config$immigration$va2_alternative <- input$immigration_scenario
-      config$immigration$lpr$assumptions_source <- input$lpr_assumptions_source
-      config$immigration$lpr$distribution_method <- input$distribution_method
-      config$immigration$emigration$ratio <- input$emigration_ratio
-
-      config$historical_population$population_source <- input$historical_pop_source
-      # "ssa" mode bypasses historical calculation, so also set use_tr flag
-      config$projected_population$use_tr_historical_population <- (input$historical_pop_source == "ssa")
-
-      # O-population method
-      if (is.null(config$historical_population$o_population)) {
-        config$historical_population$o_population <- list()
-      }
-      config$historical_population$o_population$method <- input$o_population_method
-
-      # Net O immigration source
-      if (is.null(config$projected_population)) {
-        config$projected_population <- list()
-      }
-      config$projected_population$net_o_source <- input$net_o_source
+      # Historical Population
+      config <- set_config(config, c("historical_population", "population_source"), input$historical_pop_source)
+      config <- set_config(config, c("projected_population", "use_tr_historical_population"),
+                           input$historical_pop_source == "ssa")
+      config <- set_config(config, c("historical_population", "o_population", "method"), input$o_population_method)
+      config <- set_config(config, c("projected_population", "net_o_source"), input$net_o_source)
 
       # Store modified config
       modified_config(config)
