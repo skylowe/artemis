@@ -17,18 +17,22 @@ mkdir -p "${PERSIST_DIR}/scenarios"
 mkdir -p "${PERSIST_DIR}/app_data/baseline"
 mkdir -p "${PERSIST_DIR}/app_data/scenarios"
 
-# Always restore baseline _targets from image on container start
-# This ensures scenario runs never corrupt the baseline across restarts
-if [ -d "${BASELINE_TARGETS}/meta" ]; then
-    echo "Restoring baseline _targets from image..."
+# Copy baseline _targets only on first start (when no _targets exists in persist).
+# Subsequent container restarts reuse the cached _targets from prior runs,
+# so config changes only rebuild affected targets (~1-2 min) instead of
+# a full from-scratch build (~6-7 min).
+#
+# To force a fresh baseline copy (e.g., after updating host pipeline code),
+# delete the persist _targets: rm -rf /home/jupyterhub/users/<user>/persist/_targets
+if [ -d "${BASELINE_TARGETS}/meta" ] && [ ! -d "${PERSIST_DIR}/_targets/meta" ]; then
+    echo "First start: copying baseline _targets from image..."
     rm -rf "${PERSIST_DIR}/_targets"
     mkdir -p "${PERSIST_DIR}/_targets"
     cp -r "${BASELINE_TARGETS}/." "${PERSIST_DIR}/_targets/" || echo "WARNING: _targets copy failed with exit code $?"
-    echo "Baseline _targets restored ($(du -sh ${PERSIST_DIR}/_targets | cut -f1))"
-    # Clear stale baseline snapshot so it regenerates from fresh _targets
+    echo "Baseline _targets copied ($(du -sh ${PERSIST_DIR}/_targets | cut -f1))"
     rm -f "${PERSIST_DIR}/app_data/baseline/baseline_data.rds"
 else
-    echo "No baseline _targets in image; using existing persist data"
+    echo "Using existing _targets from persist volume ($(du -sh ${PERSIST_DIR}/_targets 2>/dev/null | cut -f1 || echo 'empty'))"
 fi
 
 # Symlink writable _targets into project directory

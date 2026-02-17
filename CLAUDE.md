@@ -131,7 +131,7 @@ Baseline files are saved to `data/baseline/tr2025/` (gitignored, ~90MB of .rds f
 | `projects/artemis/_targets` | `/home/artemis/baseline_targets` | ro |
 | `~/.Renviron` | `/home/artemis/.Renviron` | ro |
 
-The container startup script (`docker/start.sh`) copies baseline `_targets` from the read-only mount into the user's writable persist volume on each start, ensuring a clean baseline.
+The container startup script (`docker/start.sh`) copies baseline `_targets` from the read-only mount into the user's writable persist volume on **first start only**. Subsequent container restarts reuse the cached `_targets`, so config changes on the dashboard only rebuild affected targets (~1-2 min) instead of a full from-scratch build (~6-7 min).
 
 ### Updating the Dashboard After Code Changes
 
@@ -148,15 +148,20 @@ docker rm -f jupyter-skylowe
 #    The new container will use the updated image
 ```
 
-If the `_targets` cache also needs updating (e.g., after changing config defaults):
+If the **pipeline code or baseline computation changed** (e.g., modified R/demography/ files, changed config defaults, updated data acquisition logic), you must also clear the cached `_targets` in the persist volume so the container copies the fresh baseline on next start:
 
 ```bash
-# Run the pipeline on the host first
+# Run the pipeline on the host first to build updated baseline
 Rscript -e "targets::tar_make()"
 
+# Clear cached _targets for each user so fresh baseline is copied on next start
+rm -rf /home/jupyterhub/users/skylowe/persist/_targets
+
 # Then rebuild the image and remove the container (steps 1-2 above)
-# The new container will pick up the updated _targets via the bind mount
+# The new container will copy the updated _targets from the bind mount
 ```
+
+If only Shiny UI/app code changed (no pipeline changes), clearing `_targets` is not needed — just rebuild the image and remove the container.
 
 If JupyterHub itself needs restarting:
 
@@ -170,6 +175,7 @@ sudo systemctl restart jupyterhub
 - After rebuilding the image, you must remove the old container for changes to take effect
 - The container name follows the pattern `jupyter-{username}` (e.g., `jupyter-skylowe`)
 - JupyterHub's idle culler removes containers after 1 hour of inactivity
+- **Clearing persist `_targets`:** When pipeline code changes, delete `/home/jupyterhub/users/{username}/persist/_targets` so the container copies the updated baseline on next start. Without this, the container reuses stale cached results that may not match the new code.
 
 ## Known Methodology Deviations from TR2025
 
