@@ -4557,8 +4557,15 @@ calculate_cni_from_civilian <- function(civilian_pop, cni_civilian_ratios) {
     all.x = TRUE
   )
 
-  # Default ratio of 1.0 if not available (most people are CNI)
-  result[is.na(cni_ratio), cni_ratio := 0.98]
+  # Abort if CNI/civilian ratios are missing — no fabricated defaults
+  missing_ratios <- result[is.na(cni_ratio)]
+  if (nrow(missing_ratios) > 0) {
+    cli::cli_abort(c(
+      "Missing CNI/civilian ratios for {nrow(missing_ratios)} age/sex cells",
+      "i" = "Ages affected: {paste(head(unique(missing_ratios$age), 10), collapse=', ')}",
+      "i" = "Ensure CNI/civilian ratios cover all ages 0-{max(result$age)}"
+    ))
+  }
   result[, cni := population * cni_ratio]
   result[, .(age, sex, population = cni)]
 }
@@ -4749,7 +4756,8 @@ disaggregate_cni_marital <- function(cni_pop,
 #'
 #' @description
 #' Prepares starting year data required for CNI projection from
-#' historical population outputs and Phase 8B SS area population.
+#' historical population outputs, Phase 8B SS area population, and
+#' real armed forces data from DoD DMDC.
 #'
 #' Per TR2025 Equation 1.8.7, the CNI projection requires:
 #' - USAF (US resident + armed forces overseas) population by age/sex
@@ -4760,6 +4768,8 @@ disaggregate_cni_marital <- function(cni_pop,
 #'
 #' @param historical_cni data.table: Historical CNI population from Phase 4
 #' @param phase8b_pop data.table: Phase 8B population (SS area) by year/age/sex/pop_status
+#' @param armed_forces_data data.table: Armed forces data from fetch_total_armed_forces()
+#'   with columns: year, age, sex, total_af, overseas_af. Required — no fabricated defaults.
 #' @param start_year Integer: Starting year (default: 2022)
 #' @param max_age Integer: Maximum age (default: 100)
 #'
@@ -4774,10 +4784,31 @@ disaggregate_cni_marital <- function(cni_pop,
 #' @keywords internal
 prepare_cni_starting_data <- function(historical_cni,
                                        phase8b_pop,
+                                       armed_forces_data,
                                        start_year = 2022,
                                        max_age = 100) {
 
   cli::cli_h3("Preparing CNI Starting Data for {start_year}")
+
+  # Validate armed forces data — no fabricated defaults allowed
+  if (is.null(armed_forces_data) || !data.table::is.data.table(armed_forces_data) ||
+      nrow(armed_forces_data) == 0) {
+    cli::cli_abort(c(
+      "Armed forces data is required for CNI projection (Phase 8E)",
+      "x" = "armed_forces_data is NULL, not a data.table, or empty",
+      "i" = "This data comes from {.fn fetch_total_armed_forces} (DoD DMDC via troopdata + ACS PUMS)",
+      "i" = "Ensure the {.field armed_forces_for_projection} target is in the pipeline"
+    ))
+  }
+
+  required_af_cols <- c("year", "age", "sex", "total_af", "overseas_af")
+  missing_af_cols <- setdiff(required_af_cols, names(armed_forces_data))
+  if (length(missing_af_cols) > 0) {
+    cli::cli_abort(c(
+      "Armed forces data missing required columns: {.field {missing_af_cols}}",
+      "i" = "Expected columns: {.field {required_af_cols}}"
+    ))
+  }
 
   # Filter historical CNI to starting year
   if ("year" %in% names(historical_cni)) {
@@ -4796,52 +4827,40 @@ prepare_cni_starting_data <- function(historical_cni,
   data.table::setorder(cni_by_age_sex, sex, age)
 
   # Get SS area population for start year (aggregate across pop_status)
-  # Per TR2025: USAF ≈ SS area population for our purposes
-  # (SS area = US resident + some foreign territories, USAF = US resident + overseas military)
   ss_by_age_sex <- phase8b_pop[year == start_year,
                                 .(population = sum(population, na.rm = TRUE)),
                                 by = .(age, sex)]
   data.table::setorder(ss_by_age_sex, sex, age)
 
-  # Use SS area population as proxy for USAF
-  # The difference is small (armed forces overseas ~150K vs foreign territories ~4M)
-  # but for TR2025 methodology we use SS area as the base
+  # Per TR2025 Input #17: USAF = US resident population + armed forces overseas
+  # Use SS area population as the base (closest available proxy for US resident + AF overseas)
   usaf_pop <- data.table::copy(ss_by_age_sex)
 
-  # Estimate armed forces by age/sex
-  # Per TR2025: Armed forces are held constant at starting year values
-  # Military ages are primarily 17-65, with peak at 20-30
-  # Total US military ~1.3M active duty, ~150K overseas
-  total_af_count <- 1300000  # Approximate total active duty
-  overseas_af_count <- 150000  # Approximate overseas
+  # Extract armed forces for starting year from real DMDC data
+  af_start <- armed_forces_data[year == start_year]
 
-  # Create armed forces age/sex distribution (military-typical profile)
-  af_ages <- 17:65
+  if (nrow(af_start) == 0) {
+    # Use nearest available year if exact starting year not available
+    available_years <- sort(unique(armed_forces_data$year))
+    nearest_year <- available_years[which.min(abs(available_years - start_year))]
+    af_start <- armed_forces_data[year == nearest_year]
+    cli::cli_alert_info("Using armed forces data from nearest year {nearest_year} (requested: {start_year})")
+  }
+
+  # Build full age grid (0:max_age) with AF data (AF only present for military ages ~17-65)
   af_grid <- data.table::CJ(age = 0:max_age, sex = c("male", "female"))
-
-  # Age distribution peaks at 20-25, declines after
-  af_grid[, af_weight := 0]
-  af_grid[age >= 17 & age <= 20, af_weight := 0.08]
-  af_grid[age >= 21 & age <= 25, af_weight := 0.12]
-  af_grid[age >= 26 & age <= 30, af_weight := 0.10]
-  af_grid[age >= 31 & age <= 35, af_weight := 0.07]
-  af_grid[age >= 36 & age <= 40, af_weight := 0.05]
-  af_grid[age >= 41 & age <= 50, af_weight := 0.03]
-  af_grid[age >= 51 & age <= 65, af_weight := 0.01]
-
-  # Sex distribution: ~83% male, ~17% female
-  af_grid[sex == "male", af_weight := af_weight * 0.83]
-  af_grid[sex == "female", af_weight := af_weight * 0.17]
-
-  # Normalize weights
-  af_grid[, af_weight := af_weight / sum(af_weight)]
-
-  # Calculate armed forces populations
-  af_grid[, total_af := af_weight * total_af_count]
-  af_grid[, overseas_af := af_weight * overseas_af_count]
+  af_grid <- merge(af_grid, af_start[, .(age, sex, total_af, overseas_af)],
+                   by = c("age", "sex"), all.x = TRUE)
+  af_grid[is.na(total_af), total_af := 0]
+  af_grid[is.na(overseas_af), overseas_af := 0]
 
   total_armed_forces <- af_grid[, .(age, sex, population = total_af)]
   armed_forces_overseas <- af_grid[, .(age, sex, population = overseas_af)]
+
+  # Log real AF totals for validation
+  total_af_sum <- sum(af_grid$total_af, na.rm = TRUE)
+  overseas_af_sum <- sum(af_grid$overseas_af, na.rm = TRUE)
+  cli::cli_alert_info("Armed forces (DMDC data): Total = {format(round(total_af_sum), big.mark=',')} | Overseas = {format(round(overseas_af_sum), big.mark=',')}")
 
   # Calculate civilian population = USAF - total armed forces
   civilian_pop <- merge(usaf_pop, total_armed_forces,
@@ -4857,15 +4876,19 @@ prepare_cni_starting_data <- function(historical_cni,
   cni_civilian[is.na(population), population := 0]
   cni_civilian[is.na(civilian), civilian := 0]
 
-  # Calculate CNI/civilian ratio
-  cni_civilian[, ratio := fifelse(civilian > 0, population / civilian, 0.98)]
+  # Calculate CNI/civilian ratio — abort if civilian is 0 for populated ages
+  zero_civilian <- cni_civilian[civilian == 0 & population > 0]
+  if (nrow(zero_civilian) > 0) {
+    cli::cli_abort(c(
+      "Cannot compute CNI/civilian ratio: civilian population is 0 for {nrow(zero_civilian)} age/sex cells with nonzero CNI",
+      "i" = "Ages affected: {paste(unique(zero_civilian$age), collapse=', ')}",
+      "i" = "This may indicate armed forces data exceeds total population for some ages"
+    ))
+  }
+  cni_civilian[, ratio := fifelse(civilian > 0, population / civilian, 0)]
 
-  # CNI should be less than civilian - cap at 1.0
+  # CNI <= civilian is a mathematical constraint (not a fallback): cap at 1.0
   cni_civilian[ratio > 1.0, ratio := 1.0]
-
-  # For ages with no civilian (shouldn't happen but handle edge cases)
-  cni_civilian[ratio < 0.5 & age < 65, ratio := 0.98]  # Most young people are CNI
-  cni_civilian[ratio < 0.5 & age >= 65, ratio := 0.93]  # More elderly in institutions
 
   cni_civilian_ratios <- cni_civilian[, .(age, sex, ratio)]
 
@@ -4946,6 +4969,8 @@ calculate_separated_ratios <- function(cni_marital, max_age = 100) {
 #' @param phase8b_result list: Output from run_population_projection (Phase 8B)
 #' @param marital_result list: Output from run_marital_projection (Phase 8C)
 #' @param historical_cni data.table: Historical CNI population from Phase 4
+#' @param armed_forces_data data.table: Armed forces data from fetch_total_armed_forces()
+#'   with columns: year, age, sex, total_af, overseas_af. Required.
 #' @param start_year Integer: Starting year (default: 2022)
 #' @param end_year Integer: End year (default: 2099)
 #' @param verbose Logical: Print progress (default: TRUE)
@@ -4960,6 +4985,7 @@ calculate_separated_ratios <- function(cni_marital, max_age = 100) {
 project_cni_population <- function(phase8b_result,
                                     marital_result,
                                     historical_cni,
+                                    armed_forces_data,
                                     start_year = 2022,
                                     end_year = 2099,
                                     verbose = TRUE) {
@@ -4985,6 +5011,7 @@ project_cni_population <- function(phase8b_result,
   starting_data <- prepare_cni_starting_data(
     historical_cni = historical_cni,
     phase8b_pop = phase8b_pop,
+    armed_forces_data = armed_forces_data,
     start_year = start_year
   )
 

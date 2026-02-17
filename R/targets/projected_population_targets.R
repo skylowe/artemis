@@ -281,12 +281,25 @@ create_projected_population_targets <- function() {
     # PHASE 8E: CNI POPULATION
     # ==========================================================================
 
+    # Armed forces data from DoD DMDC (troopdata + ACS PUMS)
+    # Provides total and overseas AF by age/sex for CNI projection
+    targets::tar_target(
+      armed_forces_for_projection,
+      fetch_total_armed_forces(
+        years = config_assumptions$projected_population$starting_year,
+        ages = config_assumptions$projected_population$armed_forces$military_age_range[1]:
+               config_assumptions$projected_population$armed_forces$military_age_range[2],
+        cache_dir = here::here("data/raw/dmdc")
+      )
+    ),
+
     targets::tar_target(
       cni_projection,
       project_cni_population(
         phase8b_result = population_projection,
         marital_result = marital_projection,
         historical_cni = historical_civilian_noninst,
+        armed_forces_data = armed_forces_for_projection,
         start_year = config_assumptions$projected_population$starting_year,
         end_year = config_assumptions$projected_population$projection_end,
         verbose = TRUE

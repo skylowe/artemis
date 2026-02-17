@@ -707,6 +707,14 @@ projected_population:
   # "artemis" = ARTEMIS-computed O-immigration from full Section 1.5 pipeline
   net_o_source: "va2"
 
+  # Armed forces data for CNI projection (Phase 8E)
+  # Source: DoD DMDC via troopdata package + ACS PUMS (MIL=1)
+  # Data years available: 2005-2023 (ACS PUMS), 1950-2024 (troopdata)
+  armed_forces:
+    military_age_range: [17, 65]  # Ages with active duty personnel
+    # If true, hold AF constant at starting year through projection (TR2025 approach)
+    hold_constant: true
+
   # Age ranges
   ages:
     min_age: 0

@@ -318,6 +318,192 @@ apply_distribution_to_overseas <- function(overseas_totals, age_sex_dist, years,
 }
 
 # =============================================================================
+# TOTAL ARMED FORCES (FOR CNI PROJECTION)
+# =============================================================================
+
+#' Fetch total armed forces population by age and sex
+#'
+#' @description
+#' Retrieves estimates of total U.S. active duty armed forces by single year of
+#' age and sex, combining total counts from troopdata with age/sex distribution
+#' from ACS PUMS. Also returns overseas armed forces from troopdata.
+#'
+#' Used by Phase 8E (CNI projection) to replace fabricated armed forces constants
+#' with real DoD DMDC data.
+#'
+#' @param years Integer vector of years to query
+#' @param ages Integer vector of ages (default: 17:65, military relevant ages)
+#' @param cache_dir Character: directory for caching downloaded files
+#'
+#' @return data.table with columns: year, age, sex, total_af, overseas_af
+#'
+#' @details
+#' Data sources:
+#' - troopdata package: Total active duty personnel including US-stationed (all countries)
+#' - troopdata package: Overseas troops (excluding US-stationed)
+#' - ACS PUMS (MIL=1): Age/sex distribution of active duty military
+#'
+#' Methodology:
+#' 1. Get total active duty from troopdata (sum of all countries including US)
+#' 2. Get overseas troops from troopdata (excluding US-stationed)
+#' 3. Get age/sex distribution from ACS PUMS
+#' 4. Apply distribution to both totals
+#'
+#' @export
+fetch_total_armed_forces <- function(years,
+                                      ages = 17:65,
+                                      cache_dir = here::here("data/raw/dmdc")) {
+  checkmate::assert_integerish(years, lower = 1950, upper = 2030, min.len = 1)
+  checkmate::assert_integerish(ages, lower = 0, upper = 100, min.len = 1)
+
+  cli::cli_alert_info("Fetching total armed forces population (total + overseas)...")
+
+  # Check cache
+  cache_file <- file.path(cache_dir, sprintf("total_armed_forces_%d_%d.rds",
+                                              min(years), max(years)))
+
+  if (file.exists(cache_file)) {
+    cli::cli_alert_success("Loading cached total armed forces data")
+    cached <- readRDS(cache_file)
+    return(cached[year %in% years & age %in% ages])
+  }
+
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+
+  # Step 1: Get total troops (all countries including US-stationed) from troopdata
+  cli::cli_alert("Fetching total active duty from troopdata...")
+  total_troops <- get_total_active_duty(years)
+
+  if (is.null(total_troops) || nrow(total_troops) == 0) {
+    cli::cli_abort("Could not retrieve total active duty troop counts from troopdata")
+  }
+
+  # Step 2: Get overseas troops from troopdata
+  cli::cli_alert("Fetching overseas troop totals...")
+  overseas_totals <- get_overseas_totals(years)
+
+  if (is.null(overseas_totals) || nrow(overseas_totals) == 0) {
+    cli::cli_abort("Could not retrieve overseas troop totals from troopdata")
+  }
+
+  # Step 3: Get age/sex distribution from ACS PUMS
+  cli::cli_alert("Fetching military age/sex distribution from ACS PUMS...")
+  age_sex_dist <- get_military_age_sex_distribution(years, ages, cache_dir)
+
+  if (is.null(age_sex_dist) || nrow(age_sex_dist) == 0) {
+    cli::cli_abort("Could not retrieve military age/sex distribution from ACS PUMS")
+  }
+
+  # Step 4: Apply distribution to both totals
+  cli::cli_alert("Calculating armed forces by age/sex...")
+  result <- apply_distribution_to_totals(total_troops, overseas_totals, age_sex_dist, years, ages)
+
+  # Cache result
+  if (!is.null(result) && nrow(result) > 0) {
+    saveRDS(result, cache_file)
+    cli::cli_alert_success("Cached total armed forces data ({nrow(result)} rows)")
+  }
+
+  # Log summary
+  for (yr in intersect(years, result$year)) {
+    yr_data <- result[year == yr]
+    total <- sum(yr_data$total_af, na.rm = TRUE)
+    overseas <- sum(yr_data$overseas_af, na.rm = TRUE)
+    cli::cli_alert_info("  {yr}: Total AF = {format(round(total), big.mark=',')} | Overseas = {format(round(overseas), big.mark=',')}")
+  }
+
+  result
+}
+
+
+#' Get total active duty troops by year from troopdata
+#'
+#' @param years Integer vector of years
+#' @return data.table with columns: year, total_troops
+#' @keywords internal
+get_total_active_duty <- function(years) {
+  if (!requireNamespace("troopdata", quietly = TRUE)) {
+    cli::cli_alert_info("Installing troopdata package...")
+    utils::install.packages("troopdata", repos = "https://cloud.r-project.org")
+  }
+
+  troops <- tryCatch({
+    data.table::as.data.table(troopdata::get_troopdata())
+  }, error = function(e) {
+    cli::cli_alert_warning("Could not load troopdata: {conditionMessage(e)}")
+    return(NULL)
+  })
+
+  if (is.null(troops)) return(NULL)
+
+  # Total active duty = sum across ALL countries (including "United States")
+  totals <- troops[, .(total_troops = sum(troops_ad, na.rm = TRUE)), by = year]
+  totals <- totals[year %in% years]
+  data.table::setorder(totals, year)
+
+  cli::cli_alert_success("Retrieved total active duty for {nrow(totals)} years")
+  totals
+}
+
+
+#' Apply age/sex distribution to both total and overseas AF counts
+#'
+#' @keywords internal
+apply_distribution_to_totals <- function(total_troops, overseas_totals, age_sex_dist, years, ages) {
+  # Determine available ACS years from the data itself (no hardcoded year bounds)
+  available_acs_years <- sort(unique(age_sex_dist$acs_year))
+
+  results <- list()
+
+  for (yr in years) {
+    # Get total and overseas counts for this year
+    total <- total_troops[year == yr, total_troops]
+    overseas <- overseas_totals[year == yr, overseas_troops]
+
+    if (length(total) == 0 || is.na(total)) {
+      nearest_yr <- total_troops[which.min(abs(year - yr)), year]
+      total <- total_troops[year == nearest_yr, total_troops]
+      cli::cli_alert_info("Using nearest year ({nearest_yr}) total AF for {yr}")
+    }
+
+    if (length(overseas) == 0 || is.na(overseas)) {
+      nearest_yr <- overseas_totals[which.min(abs(year - yr)), year]
+      overseas <- overseas_totals[year == nearest_yr, overseas_troops]
+      cli::cli_alert_info("Using nearest year ({nearest_yr}) overseas AF for {yr}")
+    }
+
+    # Find closest available ACS year for age/sex distribution
+    closest_acs_yr <- available_acs_years[which.min(abs(available_acs_years - yr))]
+    dist <- age_sex_dist[acs_year == closest_acs_yr]
+
+    if (nrow(dist) == 0) {
+      cli::cli_abort("No ACS age/sex distribution available for year {yr}")
+    }
+
+    # Filter to requested ages and normalize
+    dist <- dist[age %in% ages]
+    dist[, proportion := proportion / sum(proportion)]
+
+    # Apply distribution to both totals
+    yr_result <- data.table::copy(dist)
+    yr_result[, year := yr]
+    yr_result[, total_af := round(proportion * total)]
+    yr_result[, overseas_af := round(proportion * overseas)]
+    yr_result[, acs_year := NULL]
+    yr_result[, proportion := NULL]
+
+    results[[as.character(yr)]] <- yr_result[, .(year, age, sex, total_af, overseas_af)]
+  }
+
+  if (length(results) == 0) return(NULL)
+
+  combined <- data.table::rbindlist(results, use.names = TRUE)
+  data.table::setorder(combined, year, sex, age)
+  combined
+}
+
+
+# =============================================================================
 # SUMMARY FUNCTIONS
 # =============================================================================
 
