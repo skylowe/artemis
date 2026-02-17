@@ -737,6 +737,29 @@ projected_population:
     # If true, hold AF constant at starting year through projection (TR2025 approach)
     hold_constant: true
 
+  # Marital status projection parameters (Phase 8C)
+  marital:
+    midyear_ratio_cap: 2.0     # Cap for BOY-to-BOY ratio in midyear calculations
+
+  # Children by parent fate parameters (Phase 8D)
+  children:
+    parent_age_groups:
+      "14-24": [14, 24]
+      "25-34": [25, 34]
+      "35-44": [35, 44]
+      "45-54": [45, 54]
+      "55-64": [55, 64]
+      "65-100": [65, 100]
+    children_per_parent_bounds: [0.5, 5.0]  # Min/max children per parent in projection
+
+  # Validation tolerances
+  validation:
+    marital_tolerance: 0.01        # Phase 8C marital totals vs Phase 8B (percent)
+    children_fate_tolerance: 0.01  # Phase 8D children fate sum-to-total
+    cni_tolerance: 0.02            # Phase 8E CNI validation
+    comprehensive_tolerance: 0.02  # Phase 8F comprehensive validation
+    orphan_rate_upper_bound: 0.15  # Maximum acceptable orphan rate
+
   # Age ranges
   ages:
     min_age: 0

@@ -219,6 +219,7 @@ create_projected_population_targets <- function() {
         end_year = config_assumptions$projected_population$projection_end,
         min_age = config_assumptions$projected_population$ages$marriage_min,
         max_age = config_assumptions$projected_population$ages$max_age_group,
+        midyear_ratio_cap = config_assumptions$projected_population$marital$midyear_ratio_cap,
         verbose = TRUE
       )
     ),
@@ -248,7 +249,7 @@ create_projected_population_targets <- function() {
         comparison[, diff := abs(marital_total - phase8b_total)]
         comparison[phase8b_total > 0, pct_diff := diff / phase8b_total * 100]
         max_pct_diff <- comparison[, max(pct_diff, na.rm = TRUE)]
-        tolerance <- 0.01
+        tolerance <- config_assumptions$projected_population$validation$marital_tolerance
         valid <- max_pct_diff < tolerance
         if (valid) cli::cli_alert_success("PASS: Marital totals match Phase 8B")
         else cli::cli_alert_warning("WARNING: Some differences > {tolerance}%")
@@ -263,8 +264,9 @@ create_projected_population_targets <- function() {
     targets::tar_target(
       children_fate_projection,
       {
-        parent_age_groups <- list("14-24" = 14:24, "25-34" = 25:34, "35-44" = 35:44,
-                                   "45-54" = 45:54, "55-64" = 55:64, "65-100" = 65:100)
+        # Build parent age groups from config (each entry is [min, max])
+        pag_config <- config_assumptions$projected_population$children$parent_age_groups
+        parent_age_groups <- lapply(pag_config, function(x) x[[1]]:x[[2]])
         project_children_fate(
           phase8b_result = population_projection,
           marital_result = marital_projection,
@@ -288,7 +290,8 @@ create_projected_population_targets <- function() {
       validate_children_fate(children_fate_result = children_fate_projection,
                               phase8b_result = population_projection,
                               max_child_age = config_assumptions$projected_population$ages$children_max,
-                              tolerance = 0.01)
+                              tolerance = config_assumptions$projected_population$validation$children_fate_tolerance,
+                              orphan_rate_upper_bound = config_assumptions$projected_population$validation$orphan_rate_upper_bound)
     ),
 
     # ==========================================================================
@@ -325,7 +328,8 @@ create_projected_population_targets <- function() {
     targets::tar_target(cni_summary, cni_projection$summary),
     targets::tar_target(
       cni_validation,
-      validate_cni_projection(cni_result = cni_projection, phase8b_result = population_projection, tolerance = 0.02)
+      validate_cni_projection(cni_result = cni_projection, phase8b_result = population_projection,
+                             tolerance = config_assumptions$projected_population$validation$cni_tolerance)
     ),
 
     # ==========================================================================
@@ -354,7 +358,8 @@ create_projected_population_targets <- function() {
           } else NULL
         }, error = function(e) NULL)
         validate_projected_population_comprehensive(projection_results = projection_results,
-                                                      tr2025_pop = tr2025_pop, tolerance = 0.02)
+                                                      tr2025_pop = tr2025_pop,
+                                                      tolerance = config_assumptions$projected_population$validation$comprehensive_tolerance)
       }
     ),
 

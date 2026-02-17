@@ -65,7 +65,7 @@ verify_fertility_inputs <- function(fertility_rates, projection_years = NULL, co
       years <- get_projection_years(config, "population")
       projection_years <- years$projection_start:years$projection_end
     } else {
-      projection_years <- 2023:2099  # Fallback default
+      cli::cli_abort("projection_years must be provided (either directly or via config)")
     }
   }
   cli::cli_h3("Verifying Fertility Inputs (Phase 1)")
@@ -159,7 +159,7 @@ verify_mortality_inputs <- function(mortality_qx, projection_years = NULL, confi
       years <- get_projection_years(config, "population")
       projection_years <- years$projection_start:years$projection_end
     } else {
-      projection_years <- 2023:2099  # Fallback default
+      cli::cli_abort("projection_years must be provided (either directly or via config)")
     }
   }
   cli::cli_h3("Verifying Mortality Inputs (Phase 2)")
@@ -326,7 +326,7 @@ verify_lpr_immigration_inputs <- function(net_lpr, projection_years = NULL, conf
       years <- get_projection_years(config, "population")
       projection_years <- years$projection_start:years$projection_end
     } else {
-      projection_years <- 2023:2099  # Fallback default
+      cli::cli_abort("projection_years must be provided (either directly or via config)")
     }
   }
   cli::cli_h3("Verifying LPR Immigration Inputs (Phase 3)")
@@ -404,7 +404,7 @@ verify_o_immigration_inputs <- function(net_o, projection_years = NULL, config =
       years <- get_projection_years(config, "population")
       projection_years <- years$projection_start:years$projection_end
     } else {
-      projection_years <- 2023:2099  # Fallback default
+      cli::cli_abort("projection_years must be provided (either directly or via config)")
     }
   }
   cli::cli_h3("Verifying O Immigration Inputs (Phase 5)")
@@ -486,7 +486,7 @@ verify_marriage_inputs <- function(marriage_rates, projection_years = NULL, conf
       years <- get_projection_years(config, "population")
       projection_years <- years$projection_start:years$projection_end
     } else {
-      projection_years <- 2023:2099  # Fallback default
+      cli::cli_abort("projection_years must be provided (either directly or via config)")
     }
   }
   cli::cli_h3("Verifying Marriage Inputs (Phase 6)")
@@ -581,7 +581,7 @@ verify_divorce_inputs <- function(divorce_rates, projection_years = NULL, config
       years <- get_projection_years(config, "population")
       projection_years <- years$projection_start:years$projection_end
     } else {
-      projection_years <- 2023:2099  # Fallback default
+      cli::cli_abort("projection_years must be provided (either directly or via config)")
     }
   }
   cli::cli_h3("Verifying Divorce Inputs (Phase 7)")
@@ -685,7 +685,7 @@ extract_starting_population <- function(historical_population,
       years <- get_projection_years(config, "population")
       starting_year <- years$starting_year
     } else {
-      starting_year <- 2022  # Fallback default
+      cli::cli_abort("starting_year must be provided (either directly or via config)")
     }
   }
   cli::cli_h3("Extracting Starting Population (Dec 31, {starting_year})")
@@ -709,20 +709,20 @@ extract_starting_population <- function(historical_population,
   }
 
   # Add population status if not present
-  # TR2025: 2.5% of males are gay, 4.5% of females are lesbian
   if (!"pop_status" %in% names(start_pop)) {
     cli::cli_alert_info("Adding population status disaggregation")
+    gay_pct <- if (!is.null(config$population_status$gay_percent)) config$population_status$gay_percent else 0.025
+    lesbian_pct <- if (!is.null(config$population_status$lesbian_percent)) config$population_status$lesbian_percent else 0.045
 
     start_pop_status <- data.table::rbindlist(list(
-      # Heterosexual
       start_pop[sex == "male", .(year, age, sex, pop_status = "heterosexual",
-                                  population = population * 0.975)],
+                                  population = population * (1 - gay_pct))],
       start_pop[sex == "male", .(year, age, sex, pop_status = "gay",
-                                  population = population * 0.025)],
+                                  population = population * gay_pct)],
       start_pop[sex == "female", .(year, age, sex, pop_status = "heterosexual",
-                                    population = population * 0.955)],
+                                    population = population * (1 - lesbian_pct))],
       start_pop[sex == "female", .(year, age, sex, pop_status = "lesbian",
-                                    population = population * 0.045)]
+                                    population = population * lesbian_pct)]
     ))
     start_pop <- start_pop_status
   }
@@ -808,8 +808,8 @@ verify_all_projection_inputs <- function(fertility_rates,
       if (is.null(projection_years)) projection_years <- years$projection_start:years$projection_end
       if (is.null(starting_year)) starting_year <- years$starting_year
     } else {
-      if (is.null(projection_years)) projection_years <- 2023:2099  # Fallback default
-      if (is.null(starting_year)) starting_year <- 2022
+      if (is.null(projection_years)) cli::cli_abort("projection_years must be provided (either directly or via config)")
+      if (is.null(starting_year)) cli::cli_abort("starting_year must be provided (either directly or via config)")
     }
   }
   cli::cli_h1("Phase 8A: Input Data Verification")
@@ -1981,7 +1981,8 @@ distribute_immigrants_by_marital <- function(total_net_immigration, marital_dist
 #' @return data.table with midyear unmarried population by age and sex
 #'
 #' @export
-calculate_midyear_unmarried <- function(marital_pop_boy, marital_pop_prior_boy = NULL) {
+calculate_midyear_unmarried <- function(marital_pop_boy, marital_pop_prior_boy = NULL,
+                                        ratio_cap = 2.0) {
 
   marital_pop_boy <- data.table::as.data.table(marital_pop_boy)
 
@@ -2025,7 +2026,7 @@ calculate_midyear_unmarried <- function(marital_pop_boy, marital_pop_prior_boy =
   merged[pop_prior == 0, ratio := 1]
 
   # Midyear = BOY * sqrt(ratio) centers between years
-  merged[, midyear_unmarried := pop_boy * sqrt(pmin(ratio, 2))]  # Cap ratio to avoid extreme values
+  merged[, midyear_unmarried := pop_boy * sqrt(pmin(ratio, ratio_cap))]
 
   merged[, .(age, sex, midyear_unmarried)]
 }
@@ -2126,7 +2127,8 @@ calculate_new_marriages <- function(marriage_rate_grid,
 #' @return Matrix of midyear married couples
 #'
 #' @export
-calculate_midyear_married_couples <- function(couples_grid_boy, couples_grid_prior = NULL) {
+calculate_midyear_married_couples <- function(couples_grid_boy, couples_grid_prior = NULL,
+                                               ratio_cap = 2.0) {
 
   if (is.null(couples_grid_prior)) {
     # No prior year - use BOY as estimate
@@ -2138,7 +2140,7 @@ calculate_midyear_married_couples <- function(couples_grid_boy, couples_grid_pri
   ratio[!is.finite(ratio)] <- 1
 
   # Midyear = BOY * sqrt(ratio)
-  midyear <- couples_grid_boy * sqrt(pmin(ratio, 2))  # Cap ratio
+  midyear <- couples_grid_boy * sqrt(pmin(ratio, ratio_cap))
   midyear[!is.finite(midyear)] <- 0
 
   midyear
@@ -2553,7 +2555,8 @@ project_marital_year <- function(marital_pop_boy,
                                   couples_grid_prior = NULL,
                                   year,
                                   min_age = 14,
-                                  max_age = 100) {
+                                  max_age = 100,
+                                  midyear_ratio_cap = 2.0) {
 
   n_ages <- max_age - min_age + 1
 
@@ -2575,7 +2578,7 @@ project_marital_year <- function(marital_pop_boy,
 
   # Step 3: Calculate midyear unmarried for marriages
   midyear_unmarried <- calculate_midyear_unmarried(
-    marital_pop_boy, marital_pop_prior_boy
+    marital_pop_boy, marital_pop_prior_boy, ratio_cap = midyear_ratio_cap
   )
 
   # Step 4: Calculate new marriages
@@ -2585,7 +2588,7 @@ project_marital_year <- function(marital_pop_boy,
 
   # Step 5: Calculate midyear couples for divorces
   midyear_couples <- calculate_midyear_married_couples(
-    couples_grid_boy, couples_grid_prior
+    couples_grid_boy, couples_grid_prior, ratio_cap = midyear_ratio_cap
   )
 
   # Step 6: Calculate divorces
@@ -2858,6 +2861,7 @@ run_marital_projection <- function(phase8b_result,
                                     end_year = 2099,
                                     min_age = 14,
                                     max_age = 100,
+                                    midyear_ratio_cap = 2.0,
                                     verbose = TRUE) {
 
   if (verbose) {
@@ -2983,7 +2987,8 @@ run_marital_projection <- function(phase8b_result,
       couples_grid_prior = prior_couples_grid,
       year = yr,
       min_age = min_age,
-      max_age = max_age
+      max_age = max_age,
+      midyear_ratio_cap = midyear_ratio_cap
     )
 
     # Store results
@@ -4213,6 +4218,7 @@ project_mean_children_per_couple <- function(cps_children,
                                               start_year = 2023,
                                               end_year = 2099,
                                               trend_years = 20,
+                                              children_per_parent_bounds = c(0.5, 5.0),
                                               verbose = TRUE) {
 
   if (verbose) {
@@ -4259,8 +4265,8 @@ project_mean_children_per_couple <- function(cps_children,
       new_data <- data.frame(year = projection_years)
       proj_values <- predict(model, newdata = new_data)
 
-      # Constrain to reasonable bounds (0.5 to 5 children)
-      proj_values <- pmax(0.5, pmin(5, proj_values))
+      # Constrain to reasonable bounds
+      proj_values <- pmax(children_per_parent_bounds[1], pmin(children_per_parent_bounds[2], proj_values))
     }
 
     result_list[[length(result_list) + 1]] <- data.table::data.table(
@@ -4306,7 +4312,8 @@ project_mean_children_per_couple <- function(cps_children,
 validate_children_fate <- function(children_fate_result,
                                     phase8b_result,
                                     max_child_age = 18,
-                                    tolerance = 0.01) {
+                                    tolerance = 0.01,
+                                    orphan_rate_upper_bound = 0.15) {
 
   cli::cli_h2("Phase 8D Validation: Children by Parent Fate")
 
@@ -4370,8 +4377,7 @@ validate_children_fate <- function(children_fate_result,
 
   cli::cli_alert_info("Orphan rate range: {round(100*min_orphan, 2)}% - {round(100*max_orphan, 2)}%")
 
-  # Expect orphan rate between 0.1% and 10%
-  if (min_orphan >= 0 && max_orphan <= 0.15) {
+  if (min_orphan >= 0 && max_orphan <= orphan_rate_upper_bound) {
     cli::cli_alert_success("Orphan rates within expected range")
     validation_results$orphan_rate_valid <- TRUE
   } else {
