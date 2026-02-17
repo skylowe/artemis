@@ -253,7 +253,7 @@ mod_config_editor_ui <- function(id) {
             "ARTEMIS Hybrid (Census 0-84, SSA 85+)" = "hybrid",
             "SSA TR2025 (all ages)" = "ssa"
           ),
-          selected = "hybrid"
+          selected = "census"
         )
       )
     ),
@@ -346,7 +346,7 @@ mod_config_editor_server <- function(id, rv) {
         value = config$immigration$emigration$ratio %||% 0.25)
 
       updateSelectInput(session, "historical_pop_source",
-        selected = config$historical_population$population_source %||% "hybrid")
+        selected = config$historical_population$population_source %||% "census")
 
       updateSelectInput(session, "o_population_method",
         selected = config$historical_population$o_population$method %||% "residual")

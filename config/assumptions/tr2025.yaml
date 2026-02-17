@@ -849,7 +849,7 @@ historical_population:
   # "census": Census PEP + Eq 1.4.1 adjustments for all ages 0-100
   # "hybrid": Census PEP for ages 0-84, SSPopDec for ages 85+ (TR2025 default)
   # "ssa": SSPopDec for all ages 0-100 (uses SSA's published population directly)
-  population_source: "hybrid"
+  population_source: "census"
 
   # Civilian noninstitutionalized population start year
   # ACS PUMS data is available from 2005+, but TR2025 uses 2010+ for CNI
