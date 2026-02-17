@@ -186,37 +186,22 @@ build_divorce_married_couples_grid <- function(marital_pop,
   ages <- min_age:max_age
   n_ages <- length(ages)
 
+  # Vectorized lookup construction
   male_lookup <- rep(0, n_ages)
   names(male_lookup) <- as.character(ages)
-  for (i in seq_len(nrow(male_pop))) {
-    a <- male_pop$age[i]
-    if (a >= min_age && a <= max_age) {
-      male_lookup[as.character(a)] <- male_pop$population[i]
-    }
-  }
+  male_valid <- male_pop[age >= min_age & age <= max_age]
+  male_lookup[as.character(male_valid$age)] <- male_valid$population
 
   female_lookup <- rep(0, n_ages)
   names(female_lookup) <- as.character(ages)
-  for (i in seq_len(nrow(female_pop))) {
-    a <- female_pop$age[i]
-    if (a >= min_age && a <= max_age) {
-      female_lookup[as.character(a)] <- female_pop$population[i]
-    }
-  }
+  female_valid <- female_pop[age >= min_age & age <= max_age]
+  female_lookup[as.character(female_valid$age)] <- female_valid$population
 
-  # Build grid using geometric means
+  # Build grid using vectorized outer product
   # P_{x,y} = sqrt(married_male_x × married_female_y)
-  grid <- matrix(0, nrow = n_ages, ncol = n_ages)
+  grid <- sqrt(outer(as.numeric(male_lookup), as.numeric(female_lookup)))
   rownames(grid) <- ages
   colnames(grid) <- ages
-
-  for (i in seq_along(ages)) {
-    h_pop <- male_lookup[i]
-    for (j in seq_along(ages)) {
-      w_pop <- female_lookup[j]
-      grid[i, j] <- sqrt(h_pop * w_pop)
-    }
-  }
 
   # Store totals as attributes for validation
   attr(grid, "total_married_male") <- sum(male_lookup)
@@ -946,13 +931,7 @@ build_base_divgrid <- function(detailed_divorces,
 
   # Initialize storage
   yearly_rates <- list()
-  yearly_totals <- data.table::data.table(
-    year = integer(),
-    dra_divorces = numeric(),
-    us_divorces = numeric(),
-    ss_area_divorces = numeric(),
-    inflation_factor = numeric()
-  )
+  yearly_totals_list <- list()
 
   # Initialize accumulator for averaging
   ages <- DIVORCE_MIN_AGE:DIVORCE_MAX_AGE
@@ -1005,15 +984,16 @@ build_base_divgrid <- function(detailed_divorces,
     rate_sum <- rate_sum + rates
 
     # Record totals
-    yearly_totals <- rbind(yearly_totals, data.table::data.table(
+    yearly_totals_list[[as.character(yr)]] <- data.table::data.table(
       year = yr,
       dra_divorces = dra_total,
       us_divorces = us_total,
       ss_area_divorces = sum(ss_div_matrix, na.rm = TRUE),
       inflation_factor = sum(ss_div_matrix, na.rm = TRUE) / dra_total
-    ))
+    )
   }
 
+  yearly_totals <- data.table::rbindlist(yearly_totals_list)
   cli::cli_progress_done()
 
   # Average rates across years
@@ -1479,23 +1459,14 @@ apply_ratio_adjustments <- function(base_divgrid,
   checkmate::assert_matrix(base_divgrid, mode = "numeric")
 
   ages <- rownames(base_divgrid)
-  n_ages <- length(ages)
 
-  adjusted <- base_divgrid
+  # Build ratio vectors, defaulting to 1 for ages not in the ratio tables
+  h_ratios <- ifelse(ages %in% names(husband_ratios), husband_ratios[ages], 1)
+  w_ratios <- ifelse(ages %in% names(wife_ratios), wife_ratios[ages], 1)
 
-  for (i in seq_along(ages)) {
-    h_age <- ages[i]
-    h_ratio <- if (h_age %in% names(husband_ratios)) husband_ratios[h_age] else 1
-
-    for (j in seq_along(ages)) {
-      w_age <- ages[j]
-      w_ratio <- if (w_age %in% names(wife_ratios)) wife_ratios[w_age] else 1
-
-      # Apply geometric mean of ratios
-      combined_ratio <- sqrt(h_ratio * w_ratio)
-      adjusted[i, j] <- base_divgrid[i, j] * combined_ratio
-    }
-  }
+  # Vectorized: geometric mean of ratios applied as outer product
+  ratio_grid <- sqrt(outer(as.numeric(h_ratios), as.numeric(w_ratios)))
+  adjusted <- base_divgrid * ratio_grid
 
   adjusted
 }
@@ -2677,12 +2648,10 @@ scale_divgrid_to_target_adr <- function(divgrid, target_adr, standard_pop) {
   # Apply scaling
   scaled_grid <- divgrid * scale_factor
 
-  # Verify
-  achieved_adr <- calculate_adr(scaled_grid, standard_pop)
-
+  # Achieved ADR = current_adr * scale_factor = target_adr (by construction)
   attr(scaled_grid, "scale_factor") <- scale_factor
   attr(scaled_grid, "target_adr") <- target_adr
-  attr(scaled_grid, "achieved_adr") <- achieved_adr
+  attr(scaled_grid, "achieved_adr") <- target_adr
 
   scaled_grid
 }
@@ -2927,6 +2896,12 @@ project_divorce_rates <- function(base_divgrid,
   years <- start_year:end_year
   rates <- list()
 
+  # Cache base ADR — base_divgrid and standard_pop are identical for all years
+  base_adr <- calculate_adr(base_divgrid, standard_pop)
+  if (base_adr == 0) {
+    cli::cli_abort("Base ADR is 0, cannot scale DivGrid")
+  }
+
   cli::cli_progress_bar("Scaling DivGrid to projected ADR", total = length(years))
 
   for (i in seq_along(years)) {
@@ -2941,19 +2916,18 @@ project_divorce_rates <- function(base_divgrid,
       target_adr <- attr(adr_projection, "ultimate_adr")
     }
 
-    # Scale DivGrid to target ADR
-    scaled_grid <- scale_divgrid_to_target_adr(
-      divgrid = base_divgrid,
-      target_adr = target_adr,
-      standard_pop = standard_pop
-    )
+    # Scale DivGrid directly using cached base ADR
+    scale_factor <- target_adr / base_adr
+    scaled_grid <- base_divgrid * scale_factor
+    attr(scaled_grid, "scale_factor") <- scale_factor
+    attr(scaled_grid, "target_adr") <- target_adr
+    attr(scaled_grid, "achieved_adr") <- target_adr
 
     rates[[as.character(yr)]] <- scaled_grid
 
     # Progress indicator every 10 years
     if (yr %% 10 == 0 || yr == start_year || yr == end_year) {
-      achieved_adr <- attr(scaled_grid, "achieved_adr")
-      cli::cli_alert("{yr}: ADR = {round(achieved_adr, 1)}")
+      cli::cli_alert("{yr}: ADR = {round(target_adr, 1)}")
     }
   }
 

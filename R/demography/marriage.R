@@ -952,22 +952,26 @@ whittaker_henderson_1d <- function(y, lambda = 1, d = 2) {
     return(y)
   }
 
-  # Create difference matrix D
-  D <- diff(diag(n), differences = d)
-
-  # Weights (1 for valid observations, 0 for NA)
-  W <- diag(as.numeric(valid))
-
-  # Solve: (W + λ * D'D) * z = W * y
-  # Simplified: assume all weights = 1 for non-NA
-  A <- diag(n) + lambda * crossprod(D)
+  # Cache the Cholesky decomposition of A for repeated calls with same n/lambda/d.
+  # The 2D smoother calls this O(iterations × rows + cols) times with identical n.
+  cache_key <- paste(n, lambda, d, sep = "_")
+  if (!exists(".wh_chol_cache", envir = .wh_cache_env) ||
+      is.null(.wh_cache_env$.wh_chol_cache[[cache_key]])) {
+    D <- diff(diag(n), differences = d)
+    A <- diag(n) + lambda * crossprod(D)
+    if (!exists(".wh_chol_cache", envir = .wh_cache_env)) {
+      .wh_cache_env$.wh_chol_cache <- list()
+    }
+    .wh_cache_env$.wh_chol_cache[[cache_key]] <- chol(A)
+  }
+  R_chol <- .wh_cache_env$.wh_chol_cache[[cache_key]]
 
   # Replace NA with 0 for computation
   y_filled <- y
   y_filled[is.na(y_filled)] <- 0
 
-  # Solve
-  z <- solve(A, y_filled)
+  # Solve via cached Cholesky: A z = y  =>  R' R z = y
+  z <- backsolve(R_chol, forwardsolve(t(R_chol), y_filled))
 
   # Restore NA where original was NA
   z[!valid] <- NA
@@ -977,6 +981,9 @@ whittaker_henderson_1d <- function(y, lambda = 1, d = 2) {
 
   z
 }
+
+# Environment for caching Whittaker-Henderson Cholesky decompositions
+.wh_cache_env <- new.env(parent = emptyenv())
 
 # =============================================================================
 # AGE-ADJUSTED MARRIAGE RATE (AMR) - Equation 1.6.2
@@ -1200,38 +1207,31 @@ build_standard_population_grid <- function(unmarried_pop,
     NA_character_
   }
 
-  # Create grid of geometric means
+  # Create grid of geometric means using vectorized outer product
   ages <- min_age:max_age
   n_ages <- length(ages)
 
-  grid <- matrix(0, nrow = n_ages, ncol = n_ages)
+  # Pre-compute single-year population vectors for each sex
+  male_single <- vapply(ages, function(age) {
+    grp <- map_to_group(age)
+    if (is.na(grp)) return(0)
+    pop_total <- male_lookup[grp]
+    if (is.na(pop_total)) return(0)
+    pop_total / MARGRID_AGE_GROUPS[[grp]]$width
+  }, numeric(1))
+
+  female_single <- vapply(ages, function(age) {
+    grp <- map_to_group(age)
+    if (is.na(grp)) return(0)
+    pop_total <- female_lookup[grp]
+    if (is.na(pop_total)) return(0)
+    pop_total / MARGRID_AGE_GROUPS[[grp]]$width
+  }, numeric(1))
+
+  # Vectorized grid: sqrt(outer(male, female))
+  grid <- sqrt(outer(male_single, female_single))
   rownames(grid) <- ages
   colnames(grid) <- ages
-
-  for (i in seq_along(ages)) {
-    h_age <- ages[i]
-    h_group <- map_to_group(h_age)
-    if (is.na(h_group)) next
-
-    h_pop_total <- male_lookup[h_group]
-    if (is.na(h_pop_total)) h_pop_total <- 0
-    h_width <- MARGRID_AGE_GROUPS[[h_group]]$width
-    h_pop_single <- h_pop_total / h_width
-
-    for (j in seq_along(ages)) {
-      w_age <- ages[j]
-      w_group <- map_to_group(w_age)
-      if (is.na(w_group)) next
-
-      w_pop_total <- female_lookup[w_group]
-      if (is.na(w_pop_total)) w_pop_total <- 0
-      w_width <- MARGRID_AGE_GROUPS[[w_group]]$width
-      w_pop_single <- w_pop_total / w_width
-
-      # Geometric mean of single-year populations
-      grid[i, j] <- sqrt(h_pop_single * w_pop_single)
-    }
-  }
 
   # Calculate total unmarried population by sex for AMR calculation
   # Sum across all age groups
@@ -2215,16 +2215,19 @@ project_marriage_rates <- function(base_margrid,
   rates <- list()
   years <- start_year:end_year
 
+  # Cache base AMR — base_margrid and standard_pop_grid are identical for all years
+  base_amr <- calculate_amr_from_matrix(base_margrid, standard_pop_grid)
+  if (base_amr == 0) {
+    cli::cli_abort("Base AMR is 0, cannot scale MarGrid")
+  }
+
   for (i in seq_along(years)) {
     yr <- years[i]
     target_amr <- amr_projection[year == yr, projected_amr]
 
-    # Scale base grid to target AMR
-    scaled_grid <- scale_margrid_to_target_amr(
-      base_margrid,
-      target_amr,
-      standard_pop_grid
-    )
+    # Scale base grid directly using cached base AMR
+    scale_factor <- target_amr / base_amr
+    scaled_grid <- base_margrid * scale_factor
 
     rates[[as.character(yr)]] <- scaled_grid
 
