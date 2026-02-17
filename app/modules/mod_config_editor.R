@@ -8,14 +8,6 @@ mod_config_editor_ui <- function(id) {
   ns <- NS(id)
 
   tagList(
-    # Info panel about scenario projection behavior
-    tags$div(
-      class = "alert alert-info py-1 px-2 small mb-2",
-      tags$strong("Scenario mode:"),
-      " All parameters below are fully functional. Upstream data (Census, DHS,",
-      " ACS) is loaded from the cached baseline."
-    ),
-
     # CRITICAL Parameters - Always Visible
     h5("Critical Parameters", class = "text-primary"),
 

@@ -50,12 +50,9 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
   setwd(artemis_root)
   on.exit(setwd(old_wd), add = TRUE)
 
-  # Targets to build via tar_make(shortcut = TRUE).
-  # shortcut = TRUE tells targets to skip upstream dependency checking, so
-  # cached data targets are loaded as-is without attempting to re-validate
-  # or re-run them. Pure data-loading targets (NCHS, Census, ACS, DHS, TR
-  # files) are loaded from the cached baseline store automatically.
-  # Computation targets listed here are rebuilt with the user's modified config.
+  # Targets to build via tar_make. Early cutoff via domain-specific config
+  # gates (config_fertility, config_mortality, etc.) ensures only changed
+  # domains rebuild. Unchanged domains skip automatically.
   targets_to_make <- c(
     # Config: re-reads from the temporary RDS with user's modified params
     "config_file",
@@ -219,7 +216,7 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
   tryCatch({
     targets::tar_make(
       names = tidyselect::any_of(targets_to_make),
-      shortcut = TRUE,
+
       store = store,
       callr_function = NULL  # Run in current session
     )
