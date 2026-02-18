@@ -659,12 +659,14 @@ mod_config_editor_server <- function(id, rv) {
       sync_inputs_to_config(rv$config)
     })
 
-    # Auto-enable elderly override when tr_derived is selected
+    # Auto-enable elderly override when user manually selects tr_derived
+    # ignoreInit prevents this from firing on startup (which would override
+    # the actual config value loaded by sync_inputs_to_config)
     observeEvent(input$distribution_method, {
       if (isTRUE(input$distribution_method == "tr_derived")) {
         updateCheckboxInput(session, "elderly_override_enabled", value = TRUE)
       }
-    })
+    }, ignoreInit = TRUE)
 
     # Helper: update a nested config value only if it actually changed.
     # Coerces Shiny input types (double from numericInput/sliderInput) to match

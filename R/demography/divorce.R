@@ -353,8 +353,12 @@ get_population_totals_for_divorce <- function(years,
 
   pop_data <- readRDS(cache_file)
 
-  if (!"components" %in% names(pop_data)) {
-    cli::cli_abort("Historical population cache missing components")
+  if (!"components" %in% names(pop_data) || is.null(pop_data$components)) {
+    cli::cli_abort(c(
+      "Historical population cache missing {.field components}",
+      "i" = "This happens when population_source = 'ssa' (components not computed)",
+      "i" = "Set population_source to 'census' or 'hybrid' and rebuild: {.code targets::tar_invalidate(matches('historical_population'))}"
+    ))
   }
 
   components <- data.table::as.data.table(pop_data$components)
