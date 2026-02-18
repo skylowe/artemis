@@ -135,6 +135,86 @@ validate_config <- function(config) {
     }
   }
 
+  # Validate O-immigration
+  if (!is.null(config$immigration$o_immigration)) {
+    o_imm <- config$immigration$o_immigration
+    if (!is.null(o_imm$ultimate_gross_o) && (o_imm$ultimate_gross_o < 0 || o_imm$ultimate_gross_o > 5000000)) {
+      errors <- c(errors, "Ultimate Gross O must be between 0 and 5,000,000")
+    }
+    if (!is.null(o_imm$transition_gross_o) && (o_imm$transition_gross_o < 0 || o_imm$transition_gross_o > 5000000)) {
+      errors <- c(errors, "Transition Gross O must be between 0 and 5,000,000")
+    }
+    dr <- o_imm$departure_rates
+    if (!is.null(dr)) {
+      dr_fields <- c("n_pre_2015_multiplier", "n_post_2015_multiplier", "n_recent_arrival_multiplier",
+                      "ni_initial_multiplier", "v_pre_2015_multiplier", "v_post_2015_multiplier")
+      for (f in dr_fields) {
+        val <- dr[[f]]
+        if (!is.null(val) && (val < 0 || val > 5.0)) {
+          errors <- c(errors, paste("Departure rate", f, "must be between 0 and 5.0"))
+        }
+      }
+      if (!is.null(dr$daca_rate_reduction) && (dr$daca_rate_reduction < 0 || dr$daca_rate_reduction > 1)) {
+        errors <- c(errors, "DACA rate reduction must be between 0 and 1")
+      }
+    }
+  }
+
+  # Validate COVID factors
+  covid <- config$mortality$covid_adjustments
+  if (!is.null(covid)) {
+    for (yr in c("2024", "2025")) {
+      if (!is.null(covid[[yr]])) {
+        for (ag in names(covid[[yr]])) {
+          val <- covid[[yr]][[ag]]
+          if (!is.null(val) && (val < 0.5 || val > 2.0)) {
+            errors <- c(errors, paste0("COVID factor ", yr, " ", ag, " must be between 0.5 and 2.0"))
+          }
+        }
+      }
+    }
+  }
+
+  # Validate projected population
+  if (!is.null(config$projected_population)) {
+    srb <- config$projected_population$sex_ratio_at_birth
+    if (!is.null(srb) && (srb < 1000 || srb > 1100)) {
+      errors <- c(errors, "Sex ratio at birth must be between 1000 and 1100")
+    }
+    ps <- config$projected_population$population_status
+    if (!is.null(ps)) {
+      if (!is.null(ps$gay_percent) && (ps$gay_percent < 0 || ps$gay_percent > 0.20)) {
+        errors <- c(errors, "Gay population percent must be between 0 and 0.20 (20%)")
+      }
+      if (!is.null(ps$lesbian_percent) && (ps$lesbian_percent < 0 || ps$lesbian_percent > 0.20)) {
+        errors <- c(errors, "Lesbian population percent must be between 0 and 0.20 (20%)")
+      }
+    }
+  }
+
+  # Validate same-sex marriage fraction
+  ss_frac <- config$marriage$same_sex$default_fraction
+  if (!is.null(ss_frac) && (ss_frac < 0 || ss_frac > 0.30)) {
+    errors <- c(errors, "Same-sex marriage fraction must be between 0 and 0.30 (30%)")
+  }
+
+  # Validate elderly override
+  eld <- config$immigration$lpr$elderly_override_tr_derived
+  if (!is.null(eld)) {
+    for (grp in c("ages_65_84", "ages_85_99", "age_100_plus")) {
+      if (!is.null(eld[[grp]])) {
+        at <- eld[[grp]]$annual_total
+        if (!is.null(at) && at < 0) {
+          errors <- c(errors, paste("Elderly override", grp, "annual_total must be >= 0"))
+        }
+        fs <- eld[[grp]]$female_share
+        if (!is.null(fs) && (fs < 0 || fs > 1)) {
+          errors <- c(errors, paste("Elderly override", grp, "female_share must be between 0 and 1"))
+        }
+      }
+    }
+  }
+
   list(
     valid = length(errors) == 0,
     errors = errors
@@ -208,7 +288,9 @@ summarize_config <- function(config) {
     list("Ultimate AMR", config$marriage$ultimate_amr),
     list("Ultimate ADR", config$divorce$ultimate_adr),
     list("Population Source", config$historical_population$population_source %||% "hybrid"),
-    list("O-Pop Method", config$historical_population$o_population$method %||% "residual")
+    list("O-Pop Method", config$historical_population$o_population$method %||% "residual"),
+    list("Ultimate Gross O", format(config$immigration$o_immigration$ultimate_gross_o %||% 1350000, big.mark = ",")),
+    list("Sex Ratio at Birth", config$projected_population$sex_ratio_at_birth %||% 1048)
   )
 
   data.frame(
