@@ -24,6 +24,11 @@ load_assumptions <- function(config_path) {
   } else {
     config <- yaml::read_yaml(config_path)
   }
+
+  # Fill in defaults derived from trustees_report_year and end_year
+
+  config <- derive_config_defaults(config)
+
   validate_assumptions(config)
 
   cli::cli_alert_success("Loaded assumptions from {.file {basename(config_path)}}")
@@ -132,7 +137,180 @@ validate_assumptions <- function(config) {
     }
   }
 
+  # Warn about inconsistent derived values (non-fatal)
+  warn_config_inconsistencies(config)
+
   invisible(TRUE)
+}
+
+#' Derive config defaults from trustees_report_year
+#'
+#' @description
+#' Fills in NULL/missing config values using derivation rules based on
+#' `metadata$trustees_report_year` and `metadata$projection_period$end_year`.
+#' Explicit values in the config are never overwritten (null-coalescing logic).
+#'
+#' Called automatically by `load_assumptions()` before validation.
+#'
+#' @param config List: parsed configuration (from YAML or RDS)
+#'
+#' @return Config list with derived defaults filled in
+#'
+#' @keywords internal
+derive_config_defaults <- function(config) {
+  tr_year <- config$metadata$trustees_report_year
+  if (is.null(tr_year)) return(config)
+
+  alt_num <- config$metadata$alternative_number %||% 2L
+  tr_data_dir <- paste0("data/raw/SSA_TR", tr_year)
+
+  # Master projection period
+  proj_start <- config$metadata$projection_period$start_year %||% (tr_year - 2L)
+  proj_end <- config$metadata$projection_period$end_year %||% (tr_year + 74L)
+  config$metadata$projection_period$start_year <- proj_start
+  config$metadata$projection_period$end_year <- proj_end
+
+  # Fertility
+  fert <- config$fertility
+  if (!is.null(fert)) {
+    config$fertility$projection_start_year <- fert$projection_start_year %||% tr_year
+    config$fertility$ultimate_year <- fert$ultimate_year %||% (tr_year + 25L)
+    config$fertility$rate_base_year <- fert$rate_base_year %||% (tr_year - 1L)
+  }
+
+  # Mortality starting qx
+  if (!is.null(config$mortality$starting_tr_qx)) {
+    config$mortality$starting_tr_qx$base_year <-
+      config$mortality$starting_tr_qx$base_year %||% proj_start
+  }
+
+  # Marriage
+  if (!is.null(config$marriage)) {
+    config$marriage$ultimate_year <- config$marriage$ultimate_year %||% (tr_year + 24L)
+    config$marriage$acs_end <- config$marriage$acs_end %||% (tr_year - 3L)
+  }
+
+  # Divorce
+  if (!is.null(config$divorce)) {
+    config$divorce$ultimate_year <- config$divorce$ultimate_year %||% (tr_year + 24L)
+    config$divorce$historical_end_year <- config$divorce$historical_end_year %||% (tr_year - 3L)
+  }
+
+  # Historical population
+  if (!is.null(config$historical_population)) {
+    config$historical_population$end_year <-
+      config$historical_population$end_year %||% (tr_year - 3L)
+    hist_end <- config$historical_population$end_year
+    if (is.null(config$historical_population$tab_years$final)) {
+      config$historical_population$tab_years$final <- list(hist_end)
+    }
+  }
+
+  # Projected population
+  pp <- config$projected_population
+  if (!is.null(pp)) {
+    config$projected_population$starting_year <- pp$starting_year %||% (proj_start - 1L)
+    config$projected_population$projection_start <- pp$projection_start %||% proj_start
+    config$projected_population$projection_end <- pp$projection_end %||% proj_end
+    # Note: extended_end is not auto-derived — set explicitly in config if needed
+  }
+
+  # Data sources
+  ds <- config$data_sources
+  if (!is.null(ds)) {
+    config$data_sources$historical_birth_data$end_year <-
+      ds$historical_birth_data$end_year %||% (tr_year - 1L)
+    config$data_sources$population_estimates$end_year <-
+      ds$population_estimates$end_year %||% (tr_year - 1L)
+  }
+
+  # TR file paths
+  if (!is.null(config$projected_population)) {
+    config$projected_population$tr_historical_population_file <-
+      config$projected_population$tr_historical_population_file %||%
+      file.path(tr_data_dir, sprintf("SSPopDec_Alt%d_TR%d.csv", alt_num, tr_year))
+  }
+  if (!is.null(config$immigration)) {
+    config$immigration$va2_file <-
+      config$immigration$va2_file %||%
+      file.path(tr_data_dir, sprintf("SingleYearTRTables_TR%d.xlsx", tr_year))
+  }
+
+  # Mortality TR qx file paths
+  if (!is.null(config$mortality$starting_tr_qx)) {
+    stqx <- config$mortality$starting_tr_qx
+    config$mortality$starting_tr_qx$male_qx_file <-
+      stqx$male_qx_file %||%
+      file.path(tr_data_dir, sprintf("DeathProbsE_M_Alt%d_TR%d.csv", alt_num, tr_year))
+    config$mortality$starting_tr_qx$female_qx_file <-
+      stqx$female_qx_file %||%
+      file.path(tr_data_dir, sprintf("DeathProbsE_F_Alt%d_TR%d.csv", alt_num, tr_year))
+    config$mortality$starting_tr_qx$male_qx_hist_file <-
+      stqx$male_qx_hist_file %||%
+      file.path(tr_data_dir, sprintf("DeathProbsE_M_Hist_TR%d.csv", tr_year))
+    config$mortality$starting_tr_qx$female_qx_hist_file <-
+      stqx$female_qx_hist_file %||%
+      file.path(tr_data_dir, sprintf("DeathProbsE_F_Hist_TR%d.csv", tr_year))
+  }
+
+  config
+}
+
+#' Warn about inconsistent derived config values
+#'
+#' @description
+#' Issues warnings (not errors) when derived values seem inconsistent
+#' with the trustees_report_year derivation rules.
+#'
+#' @param config List: configuration after derive_config_defaults()
+#'
+#' @keywords internal
+warn_config_inconsistencies <- function(config) {
+  tr_year <- config$metadata$trustees_report_year
+  if (is.null(tr_year)) return(invisible())
+
+  proj_start <- config$metadata$projection_period$start_year
+
+  # Fertility projection_start_year should equal TR_YEAR
+  if (!is.null(config$fertility$projection_start_year) &&
+      config$fertility$projection_start_year != tr_year) {
+    cli::cli_warn(c(
+      "fertility.projection_start_year ({config$fertility$projection_start_year}) != trustees_report_year ({tr_year})",
+      "i" = "Default derivation: TR_YEAR = {tr_year}"
+    ))
+  }
+
+  # projected_population.starting_year should equal projection_period.start_year - 1
+  if (!is.null(config$projected_population$starting_year) &&
+      config$projected_population$starting_year != (proj_start - 1L)) {
+    cli::cli_warn(c(
+      "projected_population.starting_year ({config$projected_population$starting_year}) != projection_period.start_year - 1 ({proj_start - 1L})",
+      "i" = "Default derivation: proj_start - 1 = {proj_start - 1L}"
+    ))
+  }
+
+  proj_end <- config$metadata$projection_period$end_year
+
+  # Marriage/divorce ultimate_year should be within projection range
+  for (domain in c("marriage", "divorce")) {
+    uy <- config[[domain]]$ultimate_year
+    if (!is.null(uy) && (uy < proj_start || uy > proj_end)) {
+      cli::cli_warn(c(
+        "{domain}.ultimate_year ({uy}) is outside projection range ({proj_start}-{proj_end})"
+      ))
+    }
+  }
+
+  # historical_population.end_year should be < projection_period.start_year
+  hist_end <- config$historical_population$end_year
+  if (!is.null(hist_end) && hist_end >= proj_start) {
+    cli::cli_warn(c(
+      "historical_population.end_year ({hist_end}) >= projection_period.start_year ({proj_start})",
+      "i" = "Historical end should be before projection start"
+    ))
+  }
+
+  invisible()
 }
 
 #' Load API endpoint configuration
@@ -329,7 +507,12 @@ resolve_tr_file_path <- function(config, config_path, default_filename,
     # Try to derive from config
     data_dir <- tryCatch(
       get_tr_data_dir(config),
-      error = function(e) "data/raw/SSA_TR2025"  # Legacy fallback
+      error = function(e) {
+        # Derive from TR year if available, else error
+        yr <- get_config_with_default(config, "metadata", "trustees_report_year", default = NULL)
+        if (!is.null(yr)) paste0("data/raw/SSA_TR", yr)
+        else cli::cli_abort("Cannot resolve TR file path: no data_dir, va2_file, or trustees_report_year in config")
+      }
     )
   }
   file.path(data_dir, default_filename)
@@ -371,9 +554,14 @@ select_population_source <- function(tr_pop, census_pop, use_tr) {
 get_projection_years <- function(config, component = "population") {
   # Get global projection period from metadata
 
-proj_period <- get_config_with_default(
+  # Derive fallback from TR year if available
+  tr_year <- get_config_with_default(config, "metadata", "trustees_report_year", default = 2025L)
+  default_proj_start <- tr_year - 2L
+  default_proj_end <- tr_year + 74L
+
+  proj_period <- get_config_with_default(
     config, "metadata", "projection_period",
-    default = list(start_year = 2023, end_year = 2099)
+    default = list(start_year = default_proj_start, end_year = default_proj_end)
   )
 
   # Get component-specific config
@@ -394,7 +582,7 @@ proj_period <- get_config_with_default(
     projection_end = proj_period$end_year,
     ultimate_year = get_config_with_default(
       comp_config, "ultimate_year",
-      default = 2049
+      default = tr_year + 24L
     )
   )
 }

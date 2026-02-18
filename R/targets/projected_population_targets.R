@@ -69,8 +69,7 @@ create_projected_population_targets <- function() {
         starting_year <- config_projected_pop$starting_year
         if (isTRUE(use_tr)) {
           cli::cli_alert_info("Using TR2025 historical population for starting population")
-          tr_file <- config_projected_pop$tr_historical_population_file %||%
-            "data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv"
+          tr_file <- config_projected_pop$tr_historical_population_file
           tr_start_status <- load_tr_starting_population(
             tr_file = tr_file,
             starting_year = starting_year
@@ -94,9 +93,9 @@ create_projected_population_targets <- function() {
     targets::tar_target(
       tr2025_period_life_tables,
       load_tr_period_life_tables(
-        male_file = "data/raw/SSA_TR2025/PerLifeTables_M_Alt2_TR2025.csv",
-        female_file = "data/raw/SSA_TR2025/PerLifeTables_F_Alt2_TR2025.csv",
-        start_year = 1900, end_year = 2099
+        male_file = resolve_tr_file(list(metadata = config_metadata), "life_tables_proj", sex = "male"),
+        female_file = resolve_tr_file(list(metadata = config_metadata), "life_tables_proj", sex = "female"),
+        start_year = 1900, end_year = config_metadata$projection_period$end_year
       )
     ),
 
@@ -121,12 +120,10 @@ create_projected_population_targets <- function() {
     targets::tar_target(
       qx_100_119,
       {
-        male_proj_file <- config_mortality$starting_tr_qx$male_qx_proj_file %||%
-          "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
-        female_proj_file <- config_mortality$starting_tr_qx$female_qx_proj_file %||%
-          "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
-        proj_start <- config_metadata$projection_period$start_year %||% 2023
-        proj_end <- config_metadata$projection_period$end_year %||% 2099
+        male_proj_file <- config_mortality$starting_tr_qx$male_qx_file
+        female_proj_file <- config_mortality$starting_tr_qx$female_qx_file
+        proj_start <- config_metadata$projection_period$start_year
+        proj_end <- config_metadata$projection_period$end_year
         load_tr_qx_all_years(
           male_qx_file = male_proj_file,
           female_qx_file = female_proj_file,

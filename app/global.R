@@ -65,8 +65,8 @@ if (!file.exists(file.path(ARTEMIS_ROOT, "_targets.R"))) {
   ARTEMIS_ROOT <- normalizePath(here::here(), winslash = "/")
 }
 
-# Default config path
-DEFAULT_CONFIG_PATH <- file.path(ARTEMIS_ROOT, "config/assumptions/tr2025.yaml")
+# Default config path (from env var or conventional location)
+DEFAULT_CONFIG_PATH <- Sys.getenv("ARTEMIS_CONFIG", file.path(ARTEMIS_ROOT, "config/assumptions/tr2025.yaml"))
 
 # Source ARTEMIS utilities (needed for config loading)
 source_artemis_files <- function() {
@@ -199,9 +199,11 @@ dir.create(SCENARIOS_DIR, recursive = TRUE, showWarnings = FALSE)
 # Constants
 # =============================================================================
 
-# Projection years
-MIN_YEAR <- 2022
-MAX_YEAR <- 2099
+# Projection years (derived from config)
+.baseline_config <- tryCatch(yaml::read_yaml(DEFAULT_CONFIG_PATH), error = function(e) list())
+MIN_YEAR <- .baseline_config$projected_population$starting_year %||% 2022L
+MAX_YEAR <- .baseline_config$metadata$projection_period$end_year %||% 2099L
+MID_YEAR <- (.baseline_config$metadata$trustees_report_year %||% 2025L) + 25L  # e.g., 2050 for TR2025
 
 # Age limits
 MIN_AGE <- 0

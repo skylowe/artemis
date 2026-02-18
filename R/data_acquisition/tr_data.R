@@ -20,7 +20,8 @@ NULL
 #'
 #' @export
 load_tr_life_tables_hist <- function(sex = c("both", "male", "female"),
-                                          data_dir = "data/raw/SSA_TR2025") {
+                                          data_dir = NULL) {
+  if (is.null(data_dir)) cli::cli_abort("data_dir is required — pass the TR data directory from config")
   sex <- match.arg(sex)
 
   read_life_table <- function(file_path, sex_label) {
@@ -75,7 +76,8 @@ load_tr_life_tables_hist <- function(sex = c("both", "male", "female"),
 #' @export
 get_baseline_qx_1939_41 <- function(sex = c("both", "male", "female"),
                                      average = TRUE,
-                                     data_dir = "data/raw/SSA_TR2025") {
+                                     data_dir = NULL) {
+  if (is.null(data_dir)) cli::cli_abort("data_dir is required — pass the TR data directory from config")
   sex <- match.arg(sex)
 
   # Load full historical life tables
@@ -117,7 +119,8 @@ get_baseline_qx_1939_41 <- function(sex = c("both", "male", "female"),
 #' @export
 load_tr_death_probs <- function(sex = c("both", "male", "female"),
                                      alternative = "Alt2",
-                                     data_dir = "data/raw/SSA_TR2025") {
+                                     data_dir = NULL) {
+  if (is.null(data_dir)) cli::cli_abort("data_dir is required — pass the TR data directory from config")
   sex <- match.arg(sex)
 
   read_death_probs <- function(file_path, sex_label) {
@@ -180,7 +183,8 @@ load_tr_death_probs <- function(sex = c("both", "male", "female"),
 #'
 #' @export
 load_tr_death_probs_hist <- function(sex = c("both", "male", "female"),
-                                          data_dir = "data/raw/SSA_TR2025") {
+                                          data_dir = NULL) {
+  if (is.null(data_dir)) cli::cli_abort("data_dir is required — pass the TR data directory from config")
   sex <- match.arg(sex)
 
   read_death_probs_hist <- function(file_path, sex_label) {
@@ -284,10 +288,11 @@ load_tr_death_probs_hist <- function(sex = c("both", "male", "female"),
 #' - **O AOS**: Persons converting from O status to LPR status
 #'
 #' @export
-load_tr_immigration_assumptions <- function(data_dir = "data/raw/SSA_TR2025",
+load_tr_immigration_assumptions <- function(data_dir = NULL,
                                                  alternative = "intermediate",
                                                  cache = TRUE,
                                                  cache_dir = "data/cache/tr2025") {
+  if (is.null(data_dir)) cli::cli_abort("data_dir is required — pass the TR data directory from config")
   alternative <- tolower(alternative)
   if (!alternative %in% c("intermediate", "low", "high")) {
     cli::cli_abort("alternative must be one of: intermediate, low, high")
@@ -501,8 +506,9 @@ load_tr_immigration_assumptions <- function(data_dir = "data/raw/SSA_TR2025",
 #' @export
 get_tr_historical_lpr <- function(years = 1940:2024,
                                        convert_to_persons = TRUE,
-                                       data_dir = "data/raw/SSA_TR2025",
+                                       data_dir = NULL,
                                        alternative = "intermediate") {
+  if (is.null(data_dir)) cli::cli_abort("data_dir is required — pass the TR data directory from config")
   # Load full immigration assumptions
   imm <- load_tr_immigration_assumptions(data_dir = data_dir, alternative = alternative)
 
@@ -545,8 +551,9 @@ get_tr_historical_lpr <- function(years = 1940:2024,
 #' @export
 get_tr_historical_o_flows <- function(years = 1940:2024,
                                            convert_to_persons = TRUE,
-                                           data_dir = "data/raw/SSA_TR2025",
+                                           data_dir = NULL,
                                            alternative = "intermediate") {
+  if (is.null(data_dir)) cli::cli_abort("data_dir is required — pass the TR data directory from config")
   # Load full immigration assumptions
   imm <- load_tr_immigration_assumptions(data_dir = data_dir, alternative = alternative)
 
@@ -592,8 +599,9 @@ get_tr_historical_o_flows <- function(years = 1940:2024,
 #' @export
 get_tr_total_net_immigration <- function(years = 1940:2024,
                                               convert_to_persons = TRUE,
-                                              data_dir = "data/raw/SSA_TR2025",
+                                              data_dir = NULL,
                                               alternative = "intermediate") {
+  if (is.null(data_dir)) cli::cli_abort("data_dir is required — pass the TR data directory from config")
   imm <- load_tr_immigration_assumptions(data_dir = data_dir, alternative = alternative)
 
   result <- imm[year %in% years, .(year, total_net, data_type)]
@@ -636,8 +644,9 @@ get_tr_total_net_immigration <- function(years = 1940:2024,
 #' @export
 get_tr_va2_net_immigration <- function(years = 2023:2099,
                                             alternative = "intermediate",
-                                            data_dir = "data/raw/SSA_TR2025",
+                                            data_dir = NULL,
                                             convert_to_persons = TRUE) {
+  if (is.null(data_dir)) cli::cli_abort("data_dir is required — pass the TR data directory from config")
   # Load V.A2 data for specified alternative
   imm <- load_tr_immigration_assumptions(
     data_dir = data_dir,
@@ -698,8 +707,9 @@ get_tr_va2_net_immigration <- function(years = 2023:2099,
 #' @export
 get_tr_va2_net_o <- function(years = 2023:2099,
                                   alternative = "intermediate",
-                                  data_dir = "data/raw/SSA_TR2025",
+                                  data_dir = NULL,
                                   distribution = NULL) {
+  if (is.null(data_dir)) cli::cli_abort("data_dir is required — pass the TR data directory from config")
   # Get V.A2 totals
   va2 <- get_tr_va2_net_immigration(
     years = years,
@@ -769,7 +779,8 @@ get_tr_va2_net_o <- function(years = 2023:2099,
 #' @return data.table with columns: year, age, sex, population
 #'
 #' @export
-load_tr_population_long <- function(file_path = here::here("data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv")) {
+load_tr_population_long <- function(file_path = NULL) {
+  if (is.null(file_path)) cli::cli_abort("file_path is required — pass the TR population file path from config")
   if (!file.exists(file_path)) {
     cli::cli_abort("TR2025 population file not found: {file_path}")
   }
@@ -798,8 +809,9 @@ load_tr_population_long <- function(file_path = here::here("data/raw/SSA_TR2025/
 #' @return data.table with columns: year, age, sex, qx
 #'
 #' @export
-load_tr_qx_long <- function(male_file = here::here("data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"),
-                                 female_file = here::here("data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv")) {
+load_tr_qx_long <- function(male_file = NULL,
+                                 female_file = NULL) {
+  if (is.null(male_file) || is.null(female_file)) cli::cli_abort("male_file and female_file are required — pass TR qx file paths from config")
   if (!file.exists(male_file) || !file.exists(female_file)) {
     cli::cli_abort("TR2025 qx files not found")
   }

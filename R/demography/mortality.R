@@ -282,12 +282,15 @@ calculate_annual_reduction_rates <- function(mx,
 #'
 #' @export
 load_tr_starting_values <- function(
-    male_qx_file = "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv",
-    female_qx_file = "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv",
+    male_qx_file = NULL,
+    female_qx_file = NULL,
     base_year = 2024,
     aax_reference_years = c(2024, 2025),
     ages = 0:99
 ) {
+  if (is.null(male_qx_file) || is.null(female_qx_file)) {
+    cli::cli_abort("male_qx_file and female_qx_file are required — pass TR qx file paths from config")
+  }
   checkmate::assert_file_exists(male_qx_file)
   checkmate::assert_file_exists(female_qx_file)
   checkmate::assert_int(base_year)
@@ -382,8 +385,8 @@ load_tr_starting_values <- function(
 #'
 #' @export
 load_tr_qx_all_years <- function(
-    male_qx_file = "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv",
-    female_qx_file = "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv",
+    male_qx_file = NULL,
+    female_qx_file = NULL,
     start_year = NULL,
     end_year = NULL,
     ages = 0:119,
@@ -394,10 +397,12 @@ load_tr_qx_all_years <- function(
     years <- get_projection_years(config, "mortality")
     if (is.null(start_year)) start_year <- years$projection_start
     if (is.null(end_year)) end_year <- years$projection_end
-  } else {
-    # Fallback defaults
-    if (is.null(start_year)) start_year <- 2024
-    if (is.null(end_year)) end_year <- 2099
+  }
+  if (is.null(male_qx_file) || is.null(female_qx_file)) {
+    cli::cli_abort("male_qx_file and female_qx_file are required — pass TR qx file paths from config")
+  }
+  if (is.null(start_year) || is.null(end_year)) {
+    cli::cli_abort("start_year and end_year are required — pass from config or provide a config object")
   }
   checkmate::assert_file_exists(male_qx_file)
   checkmate::assert_file_exists(female_qx_file)
@@ -458,8 +463,8 @@ load_tr_qx_all_years <- function(
 #'
 #' @export
 load_tr_period_life_tables <- function(
-    male_file = "data/raw/SSA_TR2025/PerLifeTables_M_Alt2_TR2025.csv",
-    female_file = "data/raw/SSA_TR2025/PerLifeTables_F_Alt2_TR2025.csv",
+    male_file = NULL,
+    female_file = NULL,
     start_year = NULL,
     end_year = NULL,
     config = NULL
@@ -470,10 +475,13 @@ load_tr_period_life_tables <- function(
     # start_year defaults to 1900 for historical coverage, not projection start
     if (is.null(start_year)) start_year <- 1900
     if (is.null(end_year)) end_year <- years$projection_end
-  } else {
-    # Fallback defaults
-    if (is.null(start_year)) start_year <- 1900
-    if (is.null(end_year)) end_year <- 2099
+  }
+  if (is.null(male_file) || is.null(female_file)) {
+    cli::cli_abort("male_file and female_file are required — pass TR life table file paths from config")
+  }
+  if (is.null(start_year)) start_year <- 1900  # Historical coverage always starts at 1900
+  if (is.null(end_year)) {
+    cli::cli_abort("end_year is required — pass from config or provide a config object")
   }
   checkmate::assert_file_exists(male_file)
   checkmate::assert_file_exists(female_file)
@@ -686,26 +694,17 @@ apply_starting_aax_method <- function(regression_aax,
         "i" = "Use starting_aax_method = 'regression' with by_cause = TRUE"
       ))
     }
-    # TR_QX method: use TR2025's actual qx as starting point
-    # Returns both starting_mx AND starting_aax from TR2025 files
-    male_file <- "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
-    female_file <- "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
-    base_year <- 2024
-    aax_ref_years <- c(2024, 2025)
-
-    if (!is.null(config) && !is.null(config$starting_tr_qx)) {
-      if (!is.null(config$starting_tr_qx$male_qx_file)) {
-        male_file <- config$starting_tr_qx$male_qx_file
-      }
-      if (!is.null(config$starting_tr_qx$female_qx_file)) {
-        female_file <- config$starting_tr_qx$female_qx_file
-      }
-      if (!is.null(config$starting_tr_qx$base_year)) {
-        base_year <- config$starting_tr_qx$base_year
-      }
-      if (!is.null(config$starting_tr_qx$aax_reference_years)) {
-        aax_ref_years <- config$starting_tr_qx$aax_reference_years
-      }
+    # TR_QX method: use TR's actual qx as starting point
+    # Returns both starting_mx AND starting_aax from TR files
+    if (is.null(config) || is.null(config$starting_tr_qx)) {
+      cli::cli_abort("mortality config$starting_tr_qx is required for tr_qx method — set male_qx_file, female_qx_file, base_year, aax_reference_years in config")
+    }
+    male_file <- config$starting_tr_qx$male_qx_file
+    female_file <- config$starting_tr_qx$female_qx_file
+    base_year <- config$starting_tr_qx$base_year
+    aax_ref_years <- config$starting_tr_qx$aax_reference_years
+    if (is.null(male_file) || is.null(female_file) || is.null(base_year) || is.null(aax_ref_years)) {
+      cli::cli_abort("mortality config$starting_tr_qx must specify male_qx_file, female_qx_file, base_year, and aax_reference_years")
     }
 
     # Check if files exist
@@ -714,7 +713,7 @@ apply_starting_aax_method <- function(regression_aax,
         "TR2025 qx files not found for tr_qx method",
         "x" = "Male: {male_file} (exists: {file.exists(male_file)})",
         "x" = "Female: {female_file} (exists: {file.exists(female_file)})",
-        "i" = "Use starting_aax_method = 'regression' or place TR2025 files in data/raw/SSA_TR2025/"
+        "i" = "Use starting_aax_method = 'regression' or set TR qx file paths in config$mortality$starting_tr_qx"
       ))
     }
 
@@ -1667,15 +1666,13 @@ run_mortality_projection <- function(deaths,
     cli::cli_h2("Step 6: Load TR2025 qx directly (skipping projection)")
 
     # Get config for file paths
-    male_file <- "data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"
-    female_file <- "data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv"
-    if (!is.null(mortality_config) && !is.null(mortality_config$starting_tr_qx)) {
-      if (!is.null(mortality_config$starting_tr_qx$male_qx_file)) {
-        male_file <- mortality_config$starting_tr_qx$male_qx_file
-      }
-      if (!is.null(mortality_config$starting_tr_qx$female_qx_file)) {
-        female_file <- mortality_config$starting_tr_qx$female_qx_file
-      }
+    if (is.null(mortality_config) || is.null(mortality_config$starting_tr_qx)) {
+      cli::cli_abort("mortality_config$starting_tr_qx is required for tr_qx method — set male_qx_file, female_qx_file in config")
+    }
+    male_file <- mortality_config$starting_tr_qx$male_qx_file
+    female_file <- mortality_config$starting_tr_qx$female_qx_file
+    if (is.null(male_file) || is.null(female_file)) {
+      cli::cli_abort("mortality_config$starting_tr_qx must specify male_qx_file and female_qx_file")
     }
 
     # Load TR2025 qx for all years

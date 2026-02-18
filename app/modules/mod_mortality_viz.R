@@ -40,8 +40,8 @@ mod_mortality_viz_ui <- function(id) {
         sliderInput(
           ns("qx_year_range"),
           "Year Range",
-          min = 2023, max = 2099,
-          value = c(2023, 2099),
+          min = MIN_YEAR + 1, max = MAX_YEAR,
+          value = c(MIN_YEAR + 1, MAX_YEAR),
           step = 1,
           sep = ""
         ),
@@ -66,8 +66,8 @@ mod_mortality_viz_ui <- function(id) {
       sliderInput(
         ns("year_range"),
         "Year Range",
-        min = 2022, max = 2099,
-        value = c(2022, 2099),
+        min = MIN_YEAR, max = MAX_YEAR,
+        value = c(MIN_YEAR, MAX_YEAR),
         step = 1,
         sep = ""
       )

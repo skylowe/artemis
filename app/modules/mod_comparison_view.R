@@ -54,8 +54,8 @@ mod_comparison_view_ui <- function(id) {
       sliderInput(
         ns("year_range"),
         "Year Range",
-        min = 2022, max = 2099,
-        value = c(2022, 2099),
+        min = MIN_YEAR, max = MAX_YEAR,
+        value = c(MIN_YEAR, MAX_YEAR),
         step = 1,
         sep = ""
       ),
@@ -107,8 +107,8 @@ mod_comparison_view_ui <- function(id) {
             sliderInput(
               ns("pyramid_year"),
               "Year",
-              min = 2022, max = 2099,
-              value = 2050,
+              min = MIN_YEAR, max = MAX_YEAR,
+              value = MID_YEAR,
               step = 1,
               sep = "",
               width = "100%"

@@ -6088,12 +6088,9 @@ combine_mortality_qx_for_projection <- function(mortality_qx_projected,
     male_hist_file <- config$mortality$starting_tr_qx$male_qx_hist_file
     female_hist_file <- config$mortality$starting_tr_qx$female_qx_hist_file
 
-    # Use default paths if not in config
-    if (is.null(male_hist_file)) {
-      male_hist_file <- "data/raw/SSA_TR2025/DeathProbsE_M_Hist_TR2025.csv"
-    }
-    if (is.null(female_hist_file)) {
-      female_hist_file <- "data/raw/SSA_TR2025/DeathProbsE_F_Hist_TR2025.csv"
+    # Require file paths from config
+    if (is.null(male_hist_file) || is.null(female_hist_file)) {
+      cli::cli_abort("config$mortality$starting_tr_qx must specify male_qx_hist_file and female_qx_hist_file")
     }
 
     # Load TR2025 historical qx (1900-2022)

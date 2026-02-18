@@ -30,8 +30,8 @@ mod_fertility_viz_ui <- function(id) {
         sliderInput(
           ns("asfr_year_range"),
           "Year Range",
-          min = 2022, max = 2099,
-          value = c(2023, 2099),
+          min = MIN_YEAR, max = MAX_YEAR,
+          value = c(MIN_YEAR + 1, MAX_YEAR),
           step = 1,
           sep = ""
         ),
@@ -43,8 +43,8 @@ mod_fertility_viz_ui <- function(id) {
         sliderInput(
           ns("tfr_year_range"),
           "Year Range",
-          min = 2022, max = 2099,
-          value = c(2022, 2099),
+          min = MIN_YEAR, max = MAX_YEAR,
+          value = c(MIN_YEAR, MAX_YEAR),
           step = 1,
           sep = ""
         ),

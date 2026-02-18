@@ -86,7 +86,7 @@ server <- function(input, output, session) {
     req(rv$active_data$projected_population)
 
     pop <- rv$active_data$projected_population
-    selected_year <- input$dashboard_year %||% 2050
+    selected_year <- input$dashboard_year %||% MID_YEAR
 
     pop_year <- pop[year == selected_year]
     total <- sum(pop_year$population, na.rm = TRUE)
@@ -139,7 +139,7 @@ server <- function(input, output, session) {
     p <- ggplot(pop_by_year, aes(x = year, y = population / 1e6)) +
       geom_line(color = "#3498DB", linewidth = 1) +
       geom_vline(
-        xintercept = input$dashboard_year %||% 2050,
+        xintercept = input$dashboard_year %||% MID_YEAR,
         linetype = "dashed",
         color = "#E74C3C"
       ) +
@@ -156,7 +156,7 @@ server <- function(input, output, session) {
     req(rv$active_data$projected_population)
 
     pop <- rv$active_data$projected_population
-    selected_year <- input$dashboard_year %||% 2050
+    selected_year <- input$dashboard_year %||% MID_YEAR
 
     pop_year <- pop[year == selected_year]
 
@@ -222,7 +222,7 @@ server <- function(input, output, session) {
       geom_area(alpha = 0.7) +
       geom_hline(yintercept = 0, color = "black", linewidth = 0.5) +
       geom_vline(
-        xintercept = input$dashboard_year %||% 2050,
+        xintercept = input$dashboard_year %||% MID_YEAR,
         linetype = "dashed",
         color = "#2C3E50"
       ) +
@@ -274,7 +274,7 @@ server <- function(input, output, session) {
     p <- ggplot(dep_long, aes(x = year, y = ratio, color = type, group = type)) +
       geom_line(linewidth = 1) +
       geom_vline(
-        xintercept = input$dashboard_year %||% 2050,
+        xintercept = input$dashboard_year %||% MID_YEAR,
         linetype = "dashed",
         color = "#7F8C8D"
       ) +
@@ -377,9 +377,10 @@ server <- function(input, output, session) {
           tags$dt("Version"),
           tags$dd("1.0.0 (Development)"),
           tags$dt("Trustees Report"),
-          tags$dd("TR2025 Intermediate Assumptions"),
+          tags$dd(paste0("TR", .baseline_config$metadata$trustees_report_year %||% 2025,
+                        " Intermediate Assumptions")),
           tags$dt("Projection Period"),
-          tags$dd("2023-2099")
+          tags$dd(paste0(MIN_YEAR, "-", MAX_YEAR))
         ),
         hr(),
         p(

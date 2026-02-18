@@ -26,7 +26,8 @@ NULL
 validate_qx_against_tr <- function(qx_calculated,
                                         years = NULL,
                                         tolerance = 0.02,
-                                        data_dir = "data/raw/SSA_TR2025") {
+                                        data_dir = NULL) {
+  if (is.null(data_dir)) cli::cli_abort("data_dir is required — pass the TR data directory from config")
   checkmate::assert_data_table(qx_calculated)
   checkmate::assert_names(names(qx_calculated), must.include = c("year", "age", "sex", "qx"))
 
@@ -139,7 +140,8 @@ validate_qx_against_tr <- function(qx_calculated,
 validate_life_expectancy_against_tr <- function(life_table,
                                                      at_ages = c(0, 65),
                                                      tolerance = 0.1,
-                                                     data_dir = "data/raw/SSA_TR2025") {
+                                                     data_dir = NULL) {
+  if (is.null(data_dir)) cli::cli_abort("data_dir is required — pass the TR data directory from config")
   checkmate::assert_data_table(life_table)
   checkmate::assert_names(names(life_table), must.include = c("age", "sex", "ex"))
 

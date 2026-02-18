@@ -15,8 +15,8 @@ mod_population_viz_ui <- function(id) {
       sliderInput(
         ns("year"),
         "Year",
-        min = 2022, max = 2099,
-        value = 2050,
+        min = MIN_YEAR, max = MAX_YEAR,
+        value = MID_YEAR,
         step = 1,
         sep = "",
         animate = animationOptions(interval = 300)

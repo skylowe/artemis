@@ -366,13 +366,13 @@ create_mortality_targets <- function() {
     # TR2025 historical qx for validation
     targets::tar_target(
       tr2025_qx_historical,
-      load_tr_death_probs_hist(sex = "both")
+      load_tr_death_probs_hist(sex = "both", data_dir = get_tr_data_dir(list(metadata = config_metadata)))
     ),
 
     # TR2025 life tables for validation
     targets::tar_target(
       tr2025_life_tables,
-      load_tr_life_tables_hist(sex = "both")
+      load_tr_life_tables_hist(sex = "both", data_dir = get_tr_data_dir(list(metadata = config_metadata)))
     ),
 
     # Validate qx against TR2025
@@ -381,7 +381,8 @@ create_mortality_targets <- function() {
       validate_qx_against_tr(
         qx_calculated = mortality_qx_historical,
         years = 2010:2019,
-        tolerance = 0.05
+        tolerance = 0.05,
+        data_dir = get_tr_data_dir(list(metadata = config_metadata))
       )
     ),
 
@@ -391,7 +392,8 @@ create_mortality_targets <- function() {
       validate_life_expectancy_against_tr(
         life_table = mortality_life_tables,
         at_ages = c(0, 65),
-        tolerance = 0.5
+        tolerance = 0.5,
+        data_dir = get_tr_data_dir(list(metadata = config_metadata))
       )
     ),
 

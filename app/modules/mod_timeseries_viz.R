@@ -42,8 +42,8 @@ mod_timeseries_viz_ui <- function(id, show_marital = FALSE) {
       sliderInput(
         ns("year_range"),
         "Year Range",
-        min = 2022, max = 2099,
-        value = c(2022, 2099),
+        min = MIN_YEAR, max = MAX_YEAR,
+        value = c(MIN_YEAR, MAX_YEAR),
         step = 1,
         sep = ""
       ),
@@ -330,11 +330,12 @@ mod_timeseries_viz_server <- function(id, rv, show_marital = FALSE) {
       req(data, nrow(data) > 0)
 
       # Define periods
-      periods <- list(
-        "2022-2030" = 2022:2030,
-        "2031-2050" = 2031:2050,
-        "2051-2075" = 2051:2075,
-        "2076-2099" = 2076:2099
+      periods <- setNames(
+        list(MIN_YEAR:2030, 2031:MID_YEAR, (MID_YEAR + 1):2075, 2076:MAX_YEAR),
+        c(paste0(MIN_YEAR, "-2030"),
+          paste0("2031-", MID_YEAR),
+          paste0(MID_YEAR + 1, "-2075"),
+          paste0("2076-", MAX_YEAR))
       )
 
       summary_list <- lapply(names(periods), function(period) {

@@ -25,7 +25,7 @@ create_fertility_targets <- function() {
     targets::tar_target(
       nchs_births_raw,
       fetch_nchs_births_by_age_multi(
-        years = config_data_sources$historical_birth_data$start_year:2024
+        years = config_data_sources$historical_birth_data$start_year:config_data_sources$historical_birth_data$end_year
       ),
       cue = targets::tar_cue(mode = "thorough")
     ),

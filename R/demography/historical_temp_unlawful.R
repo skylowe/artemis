@@ -578,7 +578,7 @@ build_o_stock_from_flows <- function(o_flows,
     if (is.null(mortality) || !yr %in% mortality$year) {
       cli::cli_abort(c(
         "Mortality data missing for year {yr} in O-population buildup",
-        "i" = "Ensure TR2025 qx files are present in data/raw/SSA_TR2025/"
+        "i" = "Ensure TR qx files are present in the TR data directory specified in config"
       ))
     }
     qx <- mortality[year == yr]
@@ -1162,7 +1162,7 @@ build_temp_unlawful_stock <- function(residuals,
     if (is.null(mortality) || !yr %in% mortality$year) {
       cli::cli_abort(c(
         "Mortality data missing for year {yr} in O-stock buildup",
-        "i" = "Ensure TR2025 qx files are present in data/raw/SSA_TR2025/"
+        "i" = "Ensure TR qx files are present in the TR data directory specified in config"
       ))
     }
     qx <- mortality[year == yr]

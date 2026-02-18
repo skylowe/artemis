@@ -242,13 +242,16 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
 
   report_progress(95, "Calculating summary statistics...")
 
-  # Get summary stats
+  # Get summary stats (use config-derived milestone years)
+  mid_year <- MID_YEAR %||% 2050L
+  end_year <- MAX_YEAR %||% 2099L
+
   pop_2050 <- if (!is.null(data$projected_population)) {
-    sum(data$projected_population[year == 2050]$population, na.rm = TRUE)
+    sum(data$projected_population[year == mid_year]$population, na.rm = TRUE)
   } else NA
 
   pop_2099 <- if (!is.null(data$projected_population)) {
-    sum(data$projected_population[year == 2099]$population, na.rm = TRUE)
+    sum(data$projected_population[year == end_year]$population, na.rm = TRUE)
   } else NA
 
   report_progress(100, "Complete")

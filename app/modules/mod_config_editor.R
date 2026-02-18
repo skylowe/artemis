@@ -66,8 +66,8 @@ mod_config_editor_ui <- function(id) {
         numericInput(
           ns("fertility_ultimate_year"),
           "Ultimate Year",
-          value = 2050,
-          min = 2030, max = 2080
+          value = MID_YEAR,
+          min = 2030, max = MAX_YEAR
         ),
 
         numericInput(
@@ -507,7 +507,7 @@ mod_config_editor_server <- function(id, rv) {
         value = config$divorce$ultimate_adr %||% 1700)
 
       updateNumericInput(session, "fertility_ultimate_year",
-        value = config$fertility$ultimate_year %||% 2050)
+        value = config$fertility$ultimate_year %||% MID_YEAR)
 
       updateNumericInput(session, "weight_exponent",
         value = config$fertility$weight_exponent %||% 1.5)

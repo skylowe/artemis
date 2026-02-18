@@ -40,7 +40,7 @@ create_immigration_targets <- function() {
     targets::tar_target(
       tr2025_population_long,
       load_tr_population_long(
-        file_path = here::here("data/raw/SSA_TR2025/SSPopDec_Alt2_TR2025.csv")
+        file_path = here::here(resolve_tr_file(list(metadata = config_metadata), "population_dec"))
       )
     ),
 
@@ -48,8 +48,8 @@ create_immigration_targets <- function() {
     targets::tar_target(
       tr2025_qx_long,
       load_tr_qx_long(
-        male_file = here::here("data/raw/SSA_TR2025/DeathProbsE_M_Alt2_TR2025.csv"),
-        female_file = here::here("data/raw/SSA_TR2025/DeathProbsE_F_Alt2_TR2025.csv")
+        male_file = here::here(resolve_tr_file(list(metadata = config_metadata), "death_probs_proj", sex = "male")),
+        female_file = here::here(resolve_tr_file(list(metadata = config_metadata), "death_probs_proj", sex = "female"))
       )
     ),
 
@@ -140,13 +140,7 @@ create_immigration_targets <- function() {
           # Get historical from V.A2
           emig_ratio <- config_lpr_immigration$emigration$ratio
           alternative <- config_lpr_immigration$va2_alternative
-          va2_file <- config_lpr_immigration$va2_file
-          data_dir <- if (is.null(va2_file) || va2_file == "") {
-            "data/raw/SSA_TR2025"
-          } else {
-            dirname(va2_file)
-          }
-          if (data_dir == ".") data_dir <- "data/raw/SSA_TR2025"
+          data_dir <- get_tr_data_dir(list(metadata = config_metadata))
 
           hist_years <- hist_start:(proj_start - 1L)
           va2_hist <- get_tr_lpr_assumptions(
@@ -159,13 +153,7 @@ create_immigration_targets <- function() {
         } else {
           emig_ratio <- config_lpr_immigration$emigration$ratio
           alternative <- config_lpr_immigration$va2_alternative
-          va2_file <- config_lpr_immigration$va2_file
-          data_dir <- if (is.null(va2_file) || va2_file == "") {
-            "data/raw/SSA_TR2025"
-          } else {
-            dirname(va2_file)
-          }
-          if (data_dir == ".") data_dir <- "data/raw/SSA_TR2025"
+          data_dir <- get_tr_data_dir(list(metadata = config_metadata))
 
           get_tr_lpr_assumptions(
             years = all_years,
@@ -374,9 +362,7 @@ create_immigration_targets <- function() {
     targets::tar_target(
       va2_net_immigration,
       {
-        va2_file <- config_lpr_immigration$va2_file
-        data_dir <- dirname(va2_file)
-        if (data_dir == ".") data_dir <- "data/raw/SSA_TR2025"
+        data_dir <- get_tr_data_dir(list(metadata = config_metadata))
         get_tr_va2_net_immigration(
           years = config_metadata$projection_period$start_year:
                   config_metadata$projection_period$end_year,

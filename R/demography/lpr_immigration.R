@@ -1670,7 +1670,7 @@ run_lpr_projection <- function(dhs_data = NULL,
   assumptions <- get_tr_lpr_assumptions(
     years = projection_years,
     alternative = "intermediate",
-    data_dir = "data/raw/SSA_TR2025",
+    data_dir = NULL,
     emigration_ratio = 0.25
   )
   cli::cli_alert_info("Projection years: {min(projection_years)}-{max(projection_years)}")

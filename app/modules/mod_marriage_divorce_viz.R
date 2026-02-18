@@ -39,8 +39,8 @@ mod_marriage_divorce_viz_ui <- function(id) {
         sliderInput(
           ns("heatmap_year"),
           "Year",
-          min = 2023, max = 2099,
-          value = 2050,
+          min = MIN_YEAR + 1, max = MAX_YEAR,
+          value = MID_YEAR,
           step = 1,
           sep = "",
           animate = TRUE
@@ -59,8 +59,8 @@ mod_marriage_divorce_viz_ui <- function(id) {
         sliderInput(
           ns("year_range"),
           "Year Range",
-          min = 2022, max = 2099,
-          value = c(2022, 2099),
+          min = MIN_YEAR, max = MAX_YEAR,
+          value = c(MIN_YEAR, MAX_YEAR),
           step = 1,
           sep = ""
         ),
@@ -288,8 +288,11 @@ mod_marriage_divorce_viz_server <- function(id, rv) {
       # Calculate summary by period
       data[, period := cut(
         year,
-        breaks = c(2022, 2030, 2050, 2075, 2100),
-        labels = c("2023-2030", "2031-2050", "2051-2075", "2076-2099"),
+        breaks = c(MIN_YEAR, 2030, MID_YEAR, 2075, MAX_YEAR + 1),
+        labels = c(paste0(MIN_YEAR + 1, "-2030"),
+                   paste0("2031-", MID_YEAR),
+                   paste0(MID_YEAR + 1, "-2075"),
+                   paste0("2076-", MAX_YEAR)),
         right = TRUE
       )]
 

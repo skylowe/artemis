@@ -53,7 +53,7 @@ create_marriage_divorce_targets <- function() {
 
     targets::tar_target(
       nchs_us_total_marriages,
-      fetch_nchs_us_total_marriages(years = 1989:2022)
+      fetch_nchs_us_total_marriages(years = 1989:config_marriage$acs_end)
     ),
 
     targets::tar_target(
@@ -90,7 +90,7 @@ create_marriage_divorce_targets <- function() {
 
     targets::tar_target(
       acs_same_sex_grids,
-      fetch_acs_same_sex_grids(years = 2015:2022),
+      fetch_acs_same_sex_grids(years = min(config_marriage$same_sex$reference_years):config_marriage$acs_end),
       cue = targets::tar_cue(mode = "thorough")
     ),
 

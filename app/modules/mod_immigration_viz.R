@@ -28,8 +28,8 @@ mod_immigration_viz_ui <- function(id) {
       sliderInput(
         ns("year_range"),
         "Year Range",
-        min = 2022, max = 2099,
-        value = c(2022, 2099),
+        min = MIN_YEAR, max = MAX_YEAR,
+        value = c(MIN_YEAR, MAX_YEAR),
         step = 1,
         sep = ""
       ),
@@ -41,8 +41,8 @@ mod_immigration_viz_ui <- function(id) {
         sliderInput(
           ns("age_dist_year"),
           "Year",
-          min = 2023, max = 2099,
-          value = 2050,
+          min = MIN_YEAR + 1, max = MAX_YEAR,
+          value = MID_YEAR,
           step = 1,
           sep = "",
           animate = TRUE
@@ -82,19 +82,19 @@ mod_immigration_viz_ui <- function(id) {
         width = 1/3,
 
         value_box(
-          title = "Avg Annual (2025-2030)",
+          title = paste0("Avg Annual (2025-2030)"),
           value = textOutput(ns("avg_early")),
           theme = "success"
         ),
 
         value_box(
-          title = "Avg Annual (2031-2050)",
+          title = paste0("Avg Annual (2031-", MID_YEAR, ")"),
           value = textOutput(ns("avg_mid")),
           theme = "info"
         ),
 
         value_box(
-          title = "Avg Annual (2051-2099)",
+          title = paste0("Avg Annual (", MID_YEAR + 1, "-", MAX_YEAR, ")"),
           value = textOutput(ns("avg_late")),
           theme = "secondary"
         )
@@ -241,7 +241,7 @@ mod_immigration_viz_server <- function(id, rv) {
     output$avg_mid <- renderText({
       req(rv$active_data$projected_net_immigration)
       imm <- rv$active_data$projected_net_immigration
-      avg <- imm[year >= 2031 & year <= 2050,
+      avg <- imm[year >= 2031 & year <= MID_YEAR,
                  sum(net_immigration, na.rm = TRUE) / length(unique(year))]
       format_number(avg)
     })
@@ -249,7 +249,7 @@ mod_immigration_viz_server <- function(id, rv) {
     output$avg_late <- renderText({
       req(rv$active_data$projected_net_immigration)
       imm <- rv$active_data$projected_net_immigration
-      avg <- imm[year >= 2051 & year <= 2099,
+      avg <- imm[year >= (MID_YEAR + 1) & year <= MAX_YEAR,
                  sum(net_immigration, na.rm = TRUE) / length(unique(year))]
       format_number(avg)
     })
