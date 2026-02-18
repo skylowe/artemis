@@ -1729,8 +1729,13 @@ run_mortality_projection <- function(deaths,
     2043L
   }
 
+  # Get ultimate AAx from the config passed to this function (which may be a
+  # scenario config with user-modified values), NOT from the YAML file on disk.
+  ultimate_aax <- get_ultimate_aax_assumptions(config = mortality_config)
+
   aax_trajectory <- calculate_aax_trajectory(
     starting_aax = starting_aax,
+    ultimate_aax = ultimate_aax,
     base_year = effective_base_year,
     ultimate_year = config_ultimate_year,
     projection_years = projection_years,
