@@ -571,11 +571,6 @@ marriage:
   # Interpolation method: "beers" (TR2025) or "uniform" (legacy)
   interpolation_method: "beers"
 
-  # SS area factor: ratio of SS area population to U.S. resident population.
-  # Computed dynamically from historical population cache (~1.019 to ~1.027).
-  # Set to a numeric value to override (e.g., 1.02); null = compute from cache.
-  ss_area_factor_override: null
-
   # Same-sex marriage configuration
   # DEVIATION: TR2025 Input #15 uses state vital statistics (2004-2012) for
   # same-sex marriage counts. These are not centrally published. ARTEMIS uses
@@ -651,11 +646,6 @@ divorce:
 
   # Maximum plausible divorce rate per 100,000 (cap for extreme cells)
   rate_cap: 50000
-
-  # SS area factor: ratio of SS area population to U.S. resident population.
-  # Computed dynamically from historical population cache (~1.01 to ~1.03).
-  # Set to a numeric value to override (e.g., 1.02); null = compute from cache.
-  ss_area_factor_override: null
 
   # PR/VI divorce estimation parameters
   # Used for gap years when no NCHS or ACS data is available

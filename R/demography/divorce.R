@@ -124,7 +124,6 @@ get_divorce_config <- function(config = NULL) {
     base_period_end = as.integer(dc$base_period_end),
     historical_end_year = as.integer(dc$historical_end_year),
     rate_cap = dc$rate_cap,
-    ss_area_factor_override = dc$ss_area_factor_override,
     pr_vi = list(
       anchor_1988_total = dc$pr_vi$anchor_1988_total,
       us_ratio = dc$pr_vi$us_ratio,

@@ -107,22 +107,14 @@ MARRIAGE_AGE_GROUPS <- list(
 #' and territory populations have changed relative to the U.S. total.
 #'
 #' @export
-get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache"),
-                               config = NULL) {
-  # Check for config override first
-  if (!is.null(config) && !is.null(config$marriage$ss_area_factor_override)) {
-    override <- config$marriage$ss_area_factor_override
-    cli::cli_alert_warn("Using config SS area factor override: {round(override, 5)}")
-    return(override)
-  }
-
+get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache")) {
   # Load from historical population cache
   cache_file <- file.path(cache_dir, "historical_population", "ss_population_1940_2022.rds")
 
   if (!file.exists(cache_file)) {
     cli::cli_abort(c(
       "Historical population cache not found at {.path {cache_file}}",
-      "i" = "Run the historical population subprocess first, or set {.field marriage.ss_area_factor_override} in config"
+      "i" = "Run the historical population subprocess first"
     ))
   }
 
@@ -132,7 +124,7 @@ get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache")
     cli::cli_abort(c(
       "Historical population cache missing {.field components}",
       "i" = "This happens when population_source = 'ssa' and Census USAF data was unavailable",
-      "i" = "Set population_source to 'census' or 'hybrid' and rebuild, or set {.field marriage.ss_area_factor_override} in config"
+      "i" = "Set population_source to 'census' or 'hybrid' and rebuild"
     ))
   }
 
@@ -162,8 +154,7 @@ get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache")
   if (length(factor_val) == 0 || is.na(factor_val)) {
     cli::cli_abort(c(
       "No SS area factor data for year {target_year}",
-      "i" = "Available years: {min_year}-{max_year}",
-      "i" = "Set {.field marriage.ss_area_factor_override} in config as a workaround"
+      "i" = "Available years: {min_year}-{max_year}"
     ))
   }
 
@@ -182,24 +173,14 @@ get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache")
 #' @return Named numeric vector with SS area factors keyed by year
 #'
 #' @export
-get_ss_area_factors <- function(years, cache_dir = here::here("data/cache"),
-                                config = NULL) {
-  # Check for config override first
-  if (!is.null(config) && !is.null(config$marriage$ss_area_factor_override)) {
-    override <- config$marriage$ss_area_factor_override
-    cli::cli_alert_warn("Using config SS area factor override: {round(override, 5)} for all years")
-    factors <- rep(override, length(years))
-    names(factors) <- as.character(years)
-    return(factors)
-  }
-
+get_ss_area_factors <- function(years, cache_dir = here::here("data/cache")) {
   # Load cache once for efficiency
   cache_file <- file.path(cache_dir, "historical_population", "ss_population_1940_2022.rds")
 
   if (!file.exists(cache_file)) {
     cli::cli_abort(c(
       "Historical population cache not found at {.path {cache_file}}",
-      "i" = "Run the historical population subprocess first, or set {.field marriage.ss_area_factor_override} in config"
+      "i" = "Run the historical population subprocess first"
     ))
   }
 
@@ -209,7 +190,7 @@ get_ss_area_factors <- function(years, cache_dir = here::here("data/cache"),
     cli::cli_abort(c(
       "Historical population cache missing {.field components}",
       "i" = "This happens when population_source = 'ssa' and Census USAF data was unavailable",
-      "i" = "Set population_source to 'census' or 'hybrid' and rebuild, or set {.field marriage.ss_area_factor_override} in config"
+      "i" = "Set population_source to 'census' or 'hybrid' and rebuild"
     ))
   }
 
