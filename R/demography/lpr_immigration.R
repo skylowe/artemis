@@ -1595,11 +1595,17 @@ get_lpr_distribution_for_projection <- function(config, tr_derived_dist = NULL) 
         interpolation_method = interp_method
       )
 
-      # Apply elderly override to combined distribution (for backward compat targets)
-      elderly_override <- config$immigration$lpr$elderly_override
-      if (!is.null(elderly_override) && isTRUE(elderly_override$enabled)) {
+      # Apply elderly override to all three distributions
+      elderly_ovr <- config$immigration$lpr$elderly_override_tr_derived
+      if (!is.null(elderly_ovr) && isTRUE(elderly_ovr$enabled)) {
+        result$new_distribution <- apply_elderly_override(
+          result$new_distribution, elderly_ovr, total_net_imm
+        )
+        result$aos_distribution <- apply_elderly_override(
+          result$aos_distribution, elderly_ovr, total_net_imm
+        )
         result$combined_distribution <- apply_elderly_override(
-          result$combined_distribution, elderly_override, total_net_imm
+          result$combined_distribution, elderly_ovr, total_net_imm
         )
       }
 
@@ -1610,7 +1616,7 @@ get_lpr_distribution_for_projection <- function(config, tr_derived_dist = NULL) 
         method = "dhs",
         dhs_data = dhs_data,
         dhs_years = ref_years,
-        elderly_override = config$immigration$lpr$elderly_override,
+        elderly_override = config$immigration$lpr$elderly_override_tr_derived,
         total_net_immigration = total_net_imm
       )
       dist

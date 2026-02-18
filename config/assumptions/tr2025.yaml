@@ -297,7 +297,7 @@ immigration:
     # calculated by analyzing population transitions with age-last-birthday qx.
     # =========================================================================
     elderly_override_tr_derived:
-      enabled: true
+      enabled: false
       # Ages 65-84: TR2025 implies ~50,000-75,000 net immigrants per year
       # Our TR-derived shows 105K-168K (2-3x higher)
       # Using ~60,000 as middle estimate (average of implied range)

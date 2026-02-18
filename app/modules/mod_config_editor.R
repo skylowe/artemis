@@ -367,7 +367,7 @@ mod_config_editor_ui <- function(id) {
         checkboxInput(
           ns("elderly_override_enabled"),
           "Enable Elderly Override (Ages 65+)",
-          value = TRUE
+          value = FALSE
         ),
 
         conditionalPanel(
@@ -631,7 +631,7 @@ mod_config_editor_server <- function(id, rv) {
       # --- Advanced: LPR Elderly Immigration ---
       eld <- config$immigration$lpr$elderly_override_tr_derived
       updateCheckboxInput(session, "elderly_override_enabled",
-        value = if (!is.null(eld$enabled)) eld$enabled else TRUE)
+        value = if (!is.null(eld$enabled)) eld$enabled else FALSE)
 
       if (!is.null(eld)) {
         updateNumericInput(session, "elderly_65_84_total",
@@ -665,6 +665,13 @@ mod_config_editor_server <- function(id, rv) {
     observe({
       req(rv$config)
       sync_inputs_to_config(rv$config)
+    })
+
+    # Auto-enable elderly override when tr_derived is selected
+    observeEvent(input$distribution_method, {
+      if (isTRUE(input$distribution_method == "tr_derived")) {
+        updateCheckboxInput(session, "elderly_override_enabled", value = TRUE)
+      }
     })
 
     # Helper: update a nested config value only if it actually changed.
