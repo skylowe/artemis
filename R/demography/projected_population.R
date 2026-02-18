@@ -952,13 +952,12 @@ validate_input_consistency <- function(inputs) {
 #'
 #' @export
 get_projected_population_config <- function(config = NULL) {
-  # Default values
+  # Default values (years must come from config — no hardcoded fallbacks)
   defaults <- list(
-    # Time period
-    starting_year = 2022,
-    projection_start = 2023,
-    projection_end = 2099,
-    extended_end = 2105,
+    # Time period (filled from config below)
+    starting_year = NULL,
+    projection_start = NULL,
+    projection_end = NULL,
 
     # Reference date
     reference_date = "dec31",
@@ -1022,7 +1021,6 @@ get_projected_population_config <- function(config = NULL) {
       if (!is.null(pp$starting_year)) defaults$starting_year <- pp$starting_year
       if (!is.null(pp$projection_start)) defaults$projection_start <- pp$projection_start
       if (!is.null(pp$projection_end)) defaults$projection_end <- pp$projection_end
-      if (!is.null(pp$extended_end)) defaults$extended_end <- pp$extended_end
       if (!is.null(pp$reference_date)) defaults$reference_date <- pp$reference_date
 
       # Population status
@@ -1045,6 +1043,11 @@ get_projected_population_config <- function(config = NULL) {
         if (!is.null(ages$marriage_min)) defaults$ages$marriage_min <- ages$marriage_min
       }
     }
+  }
+
+  # Verify required year values are set
+  if (is.null(defaults$starting_year) || is.null(defaults$projection_start) || is.null(defaults$projection_end)) {
+    cli::cli_abort("projected_population config must specify starting_year, projection_start, and projection_end — ensure derive_config_defaults() ran or set values in config")
   }
 
   defaults
@@ -1581,10 +1584,12 @@ run_population_projection <- function(starting_population,
 
   # Derive start_year/end_year from config if not explicitly provided
   if (is.null(start_year)) {
-    start_year <- config$starting_year %||% 2022
+    start_year <- config$starting_year
+    if (is.null(start_year)) cli::cli_abort("start_year is required — pass from config or provide explicitly")
   }
   if (is.null(end_year)) {
-    end_year <- config$projection_end %||% 2099
+    end_year <- config$projection_end
+    if (is.null(end_year)) cli::cli_abort("end_year is required — pass from config or provide explicitly")
   }
 
   if (verbose) {

@@ -7,7 +7,7 @@ metadata:
   alternative_number: 2
   projection_period:
     start_year: 2023  # Default: TR_YEAR - 2 (= 2023). Changed from 2024 to include TR2025's estimated 2023 immigration
-    end_year: 2099    # Default: TR_YEAR + 74 (= 2099). Independent — set explicitly for each TR.
+    end_year: 2100    # Default: TR_YEAR + 75 (= 2100). Independent — set explicitly for each TR.
   valuation_date: "2025-01-01"
 
 fertility:
@@ -21,17 +21,17 @@ fertility:
   # deviate from the standard methodology and is not recommended.
   reference_age: 30
   # Ultimate attainment years
-  projection_start_year: 2025  # Default: TR_YEAR (= 2025)
+  # projection_start_year: derived from TR_YEAR (= 2025)
   # TR2025: Year when oldest fertility age (49) reaches ultimate rate
   # Formula: u_x = 2025 + (x-14) * (2050-2025) / (49-14)
   # Age 30 reaches ultimate in 2036 (derived from this formula)
-  ultimate_year: 2050  # Default: TR_YEAR + 25 (= 2050)
+  # ultimate_year: derived from TR_YEAR + 25 (= 2050)
   # Interpolation weight exponent (TR2025 uses 1.5)
   # 1.0 = linear, >1 = front-loaded (faster initial change)
   weight_exponent: 1.5
   # Base year for projections
   # TR2025 uses 2024 with estimated rates (TFR=1.62 from provisional data)
-  rate_base_year: 2024  # Default: TR_YEAR - 1 (= 2024)
+  # rate_base_year: derived from TR_YEAR - 1 (= 2024)
   # Override TFR for recent years where final NCHS data may differ from TR assumptions
   # Typically applies to TR_year - 1 and TR_year - 2 (e.g., 2023 and 2024 for TR2025),
   # where only provisional data was available when the TR was published.
@@ -82,7 +82,7 @@ mortality:
     male_qx_hist_file: "data/raw/SSA_TR2025/DeathProbsE_M_Hist_TR2025.csv"
     female_qx_hist_file: "data/raw/SSA_TR2025/DeathProbsE_F_Hist_TR2025.csv"
     # Base year for starting qx (2023 = first year TR2025 projected file covers)
-    base_year: 2023  # Default: projection_period.start_year (= 2023)
+    # base_year: derived from projection_period.start_year (= 2023)
     # Years to use for calculating implied AAx (2024-2025 gives first year improvement)
     aax_reference_years: [2024, 2025]
 
@@ -531,7 +531,7 @@ marriage:
   # TR2025 Section 1.6.a, Input #3: "The AMR reaches its ultimate value in the
   # 25th year of the 75-year projection period." The 75-year projection period
   # is 2025-2099 (Section 0). So: 2025 + 24 = 2049.
-  ultimate_year: 2049  # Default: TR_YEAR + 24 (= 2049)
+  # ultimate_year: derived from TR_YEAR + 24 (= 2049)
 
   # Age range for MarGrid
   min_age: 14
@@ -539,7 +539,7 @@ marriage:
 
   # ACS data period for historical rates
   acs_start: 2008
-  acs_end: 2022  # Default: TR_YEAR - 3 (= 2022)
+  # acs_end: derived from TR_YEAR - 3 (= 2022)
 
   # TR2025 Section 1.6.b, Input #13: standard population year
   standard_population_year: 2010
@@ -610,7 +610,7 @@ divorce:
 
   # Year when ultimate ADR is reached (25th year of 75-year projection period)
   # TR2025 Section 1.7.b, Input #6: projection period is 2025-2099, so 2025 + 24 = 2049
-  ultimate_year: 2049  # Default: TR_YEAR + 24 (= 2049)
+  # ultimate_year: derived from TR_YEAR + 24 (= 2049)
 
   # Age range for DivGrid
   min_age: 14
@@ -647,7 +647,7 @@ divorce:
 
   # Last year of historical divorce data (NCHS US totals)
   # For TR2026, update to 2023 (or whatever the last available data year is)
-  historical_end_year: 2022  # Default: TR_YEAR - 3 (= 2022)
+  # historical_end_year: derived from TR_YEAR - 3 (= 2022)
 
   # Maximum plausible divorce rate per 100,000 (cap for extreme cells)
   rate_cap: 50000
@@ -676,10 +676,9 @@ divorce:
 
 projected_population:
   # Time period
-  starting_year: 2022  # Default: projection_period.start_year - 1 (= 2022). December 31 basis
-  projection_start: 2023  # Default: projection_period.start_year (= 2023)
-  projection_end: 2099  # Default: projection_period.end_year (= 2099)
-  extended_end: 2105  # For some outputs needing longer projection
+  # starting_year: derived from projection_period.start_year - 1 (= 2022). December 31 basis
+  # projection_start: derived from projection_period.start_year (= 2023)
+  # projection_end: derived from projection_period.end_year (= 2100)
 
   # Use TR2025 historical population instead of our calculated historical population
   # This is useful for testing to isolate projection methodology differences
@@ -774,13 +773,13 @@ projected_population:
 data_sources:
   historical_birth_data:
     start_year: 1980
-    end_year: 2024  # Default: TR_YEAR - 1 (= 2024). Includes preliminary NCHS data.
+    # end_year: derived from TR_YEAR - 1 (= 2024). Includes preliminary NCHS data.
   historical_rate_data:
     start_year: 1917
     end_year: 1979
   population_estimates:
     start_year: 1980
-    end_year: 2024  # Default: TR_YEAR - 1 (= 2024)
+    # end_year: derived from TR_YEAR - 1 (= 2024)
   # ACS foreign-born flow years (PUMS microdata, 2020 excluded due to COVID)
   acs_foreign_born_years: [2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013,
     2014, 2015, 2016, 2017, 2018, 2019, 2021, 2022, 2023]
@@ -843,7 +842,7 @@ historical_population:
   # end_year: Last year before projection starts (= last year with Census/ACS data)
   # These change with each Trustees Report year
   start_year: 1940
-  end_year: 2022  # Default: TR_YEAR - 3 (= 2022)
+  # end_year: derived from TR_YEAR - 3 (= 2022)
 
   # Data source for historical population estimation
   # "census": Census PEP + Eq 1.4.1 adjustments for all ages 0-100

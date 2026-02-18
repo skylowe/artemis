@@ -212,7 +212,6 @@ derive_config_defaults <- function(config) {
     config$projected_population$starting_year <- pp$starting_year %||% (proj_start - 1L)
     config$projected_population$projection_start <- pp$projection_start %||% proj_start
     config$projected_population$projection_end <- pp$projection_end %||% proj_end
-    # Note: extended_end is not auto-derived — set explicitly in config if needed
   }
 
   # Data sources
@@ -299,6 +298,15 @@ warn_config_inconsistencies <- function(config) {
         "{domain}.ultimate_year ({uy}) is outside projection range ({proj_start}-{proj_end})"
       ))
     }
+  }
+
+  # projected_population.projection_end should equal projection_period.end_year
+  pp_end <- config$projected_population$projection_end
+  if (!is.null(pp_end) && !is.null(proj_end) && pp_end != proj_end) {
+    cli::cli_warn(c(
+      "projected_population.projection_end ({pp_end}) != metadata.projection_period.end_year ({proj_end})",
+      "i" = "Remove the explicit projection_end from config to auto-derive from the master end_year"
+    ))
   }
 
   # historical_population.end_year should be < projection_period.start_year

@@ -345,6 +345,7 @@ create_projected_population_targets <- function() {
         }, error = function(e) NULL)
         validate_projected_population_comprehensive(projection_results = projection_results,
                                                       tr2025_pop = tr2025_pop,
+                                                      config = list(projected_population = config_projected_pop),
                                                       tolerance = config_projected_pop$validation$comprehensive_tolerance)
       }
     ),

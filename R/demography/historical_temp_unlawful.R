@@ -108,6 +108,9 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
                                                 cache_dir = here::here("data/cache")) {
   cli::cli_h1("Calculating Temporary/Unlawfully Present Population (Eq 1.4.3)")
 
+  # Derive TR data directory from config
+  tr_data_dir <- get_tr_data_dir(config)
+
   # Read method from config
   method <- config$historical_population$o_population$method %||% "residual"
   if (!method %in% c("residual", "va2_flows")) {
@@ -185,7 +188,7 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
 
     # Load V.A2 O flows for stock levels
     cli::cli_h2("Step 5: Loading V.A2 O Flows for Stock Levels")
-    o_flows <- get_tr_historical_o_flows(years = years, convert_to_persons = TRUE)
+    o_flows <- get_tr_historical_o_flows(years = years, convert_to_persons = TRUE, data_dir = tr_data_dir)
     cli::cli_alert_info("Loaded V.A2 O flows for {nrow(o_flows)} years")
 
     # Build O stock using V.A2 levels + residual-derived age-sex distribution
@@ -207,7 +210,8 @@ calculate_historical_temp_unlawful <- function(start_year = 1940,
     cli::cli_h2("Step 1: Loading TR2025 O Flows (Table V.A2)")
     o_flows <- get_tr_historical_o_flows(
       years = years,
-      convert_to_persons = TRUE
+      convert_to_persons = TRUE,
+      data_dir = tr_data_dir
     )
     cli::cli_alert_info("Loaded O flows for {nrow(o_flows)} years")
 
