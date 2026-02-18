@@ -426,12 +426,6 @@ mod_config_editor_ui <- function(id) {
           value = 4.5,
           step = 0.5,
           post = "%"
-        ),
-
-        checkboxInput(
-          ns("armed_forces_hold_constant"),
-          "Armed Forces Hold Constant",
-          value = TRUE
         )
       )
     ),
@@ -657,8 +651,6 @@ mod_config_editor_server <- function(id, rv) {
         value = (config$projected_population$population_status$lesbian_percent %||% 0.045) * 100)
       updateSliderInput(session, "same_sex_fraction",
         value = (config$marriage$same_sex$default_fraction %||% 0.045) * 100)
-      updateCheckboxInput(session, "armed_forces_hold_constant",
-        value = config$projected_population$armed_forces$hold_constant %||% TRUE)
     }
 
     # Initialize from baseline config
@@ -819,7 +811,6 @@ mod_config_editor_server <- function(id, rv) {
       config <- set_config(config, c("projected_population", "population_status", "gay_percent"), input$gay_percent / 100)
       config <- set_config(config, c("projected_population", "population_status", "lesbian_percent"), input$lesbian_percent / 100)
       config <- set_config(config, c("marriage", "same_sex", "default_fraction"), input$same_sex_fraction / 100)
-      config <- set_config(config, c("projected_population", "armed_forces", "hold_constant"), input$armed_forces_hold_constant)
 
       # Store modified config
       modified_config(config)
