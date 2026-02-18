@@ -45,35 +45,11 @@ create_fertility_targets <- function() {
       cue = targets::tar_cue(mode = "thorough")
     ),
 
-    # TR2025 female population for fertility rate calculations
-    targets::tar_target(
-      tr2025_female_pop,
-      {
-        tr_file <- config_projected_pop$tr_historical_population_file
-        if (is.null(tr_file) || !file.exists(tr_file)) {
-          cli::cli_alert_warning("TR2025 population file not found, returning empty data")
-          return(data.table::data.table(year = integer(), age = integer(), population = numeric()))
-        }
-
-        tr_pop <- data.table::fread(tr_file)
-        years <- config_data_sources$population_estimates$start_year:
-                 config_data_sources$population_estimates$end_year
-        result <- tr_pop[Year %in% years & Age >= 10 & Age <= 54,
-                         .(year = Year, age = Age, population = `F Tot`)]
-        data.table::setorder(result, year, age)
-        cli::cli_alert_success("Loaded TR2025 female population for {length(unique(result$year))} years")
-        result
-      }
-    ),
-
-    # Female population for fertility - uses TR2025 or Census based on config
+    # Female population for fertility - always Census per TR2025 Section 1.1.b Input #3:
+    # "From the U.S. Census Bureau, estimates of the July 1st female resident population"
     targets::tar_target(
       female_pop_for_fertility,
-      select_population_source(
-        tr_pop = tr2025_female_pop,
-        census_pop = census_female_pop,
-        use_tr = config_projected_pop$use_tr_historical_population
-      )
+      census_female_pop
     ),
 
     # ==========================================================================

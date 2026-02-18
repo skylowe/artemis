@@ -527,26 +527,6 @@ resolve_tr_file_path <- function(config, config_path, default_filename,
 }
 
 #' Select population source based on config
-#'
-#' @description
-#' Helper to select between TR2025 and Census population based on config setting.
-#'
-#' @param tr_pop data.table: TR2025 population data
-#' @param census_pop data.table: Census population data
-#' @param use_tr Logical: whether to use TR2025 (from config)
-#'
-#' @return Selected population data.table
-#' @export
-select_population_source <- function(tr_pop, census_pop, use_tr) {
-  if (isTRUE(use_tr)) {
-    cli::cli_alert_info("Using TR2025 population for calculations")
-    tr_pop
-  } else {
-    cli::cli_alert_info("Using Census population for calculations")
-    census_pop
-  }
-}
-
 #' Get projection year parameters from config
 #'
 #' @description
