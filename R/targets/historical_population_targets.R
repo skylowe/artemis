@@ -56,7 +56,7 @@ create_historical_population_targets <- function() {
         ages = 14:config_historical_pop$max_age,
         config = list(
           historical_population = config_historical_pop,
-          projected_population = list(population_status = config_projected_pop$population_status)
+          projected_population = list(population_status = config_population_status)
         ),
         use_cache = TRUE,
         include_same_sex = TRUE
@@ -87,10 +87,10 @@ create_historical_population_targets <- function() {
       calculate_historical_civilian_noninst(
         start_year = config_historical_pop$cni_start_year,
         end_year = config_historical_pop$end_year,
-        ages = 0:config_historical_pop$max_age,
+        ages = 0:min(config_historical_pop$max_age, 99L),
         config = list(
           historical_population = config_historical_pop,
-          projected_population = list(population_status = config_projected_pop$population_status)
+          projected_population = list(population_status = config_population_status)
         ),
         include_orientation = TRUE,
         use_cache = TRUE

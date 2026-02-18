@@ -67,6 +67,7 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     "config_marriage",
     "config_divorce",
     "config_projected_pop",
+    "config_population_status",
     "config_metadata",
     "config_data_sources",
 

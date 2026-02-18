@@ -143,6 +143,13 @@ create_config_targets <- function() {
     targets::tar_target(config_projected_pop, config_assumptions$projected_population,
                         format = format_config),
 
+    # Narrow gate: population_status only (gay/lesbian %, etc.)
+    # Prevents net_o_source changes from invalidating historical pop targets
+    # that only need orientation percentages.
+    targets::tar_target(config_population_status,
+                        config_assumptions$projected_population$population_status,
+                        format = format_config),
+
     # Cross-cutting sections
     targets::tar_target(config_metadata, config_assumptions$metadata,
                         format = format_config),
