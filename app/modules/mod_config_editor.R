@@ -612,7 +612,7 @@ mod_config_editor_server <- function(id, rv) {
       updateSliderInput(session, "ultimate_gross_o",
         value = config$immigration$o_immigration$ultimate_gross_o %||% 1350000)
       updateSliderInput(session, "transition_gross_o",
-        value = config$immigration$o_immigration$transition_gross_o %||% 2000000)
+        value = config$immigration$o_immigration$total_by_year[["2025"]] %||% 2000000)
       updateSelectInput(session, "emigration_dist_source",
         selected = config$immigration$emigration$distribution_source %||% "cbo")
 
@@ -763,7 +763,8 @@ mod_config_editor_server <- function(id, rv) {
 
       # --- Advanced: O-Immigration ---
       config <- set_config(config, c("immigration", "o_immigration", "ultimate_gross_o"), input$ultimate_gross_o)
-      config <- set_config(config, c("immigration", "o_immigration", "transition_gross_o"), input$transition_gross_o)
+      # transition_gross_o maps to total_by_year$2025 (the path the code reads)
+      config <- set_config(config, c("immigration", "o_immigration", "total_by_year", "2025"), as.integer(input$transition_gross_o))
       config <- set_config(config, c("immigration", "emigration", "distribution_source"), input$emigration_dist_source)
 
       # Departure rate multipliers
@@ -774,6 +775,28 @@ mod_config_editor_server <- function(id, rv) {
       config <- set_config(config, c("immigration", "o_immigration", "departure_rates", "v_pre_2015_multiplier"), input$dr_v_pre_2015)
       config <- set_config(config, c("immigration", "o_immigration", "departure_rates", "v_post_2015_multiplier"), input$dr_v_post_2015)
       config <- set_config(config, c("immigration", "o_immigration", "departure_rates", "daca_rate_reduction"), input$daca_rate_reduction)
+
+      # Auto-switch net_o_source to "artemis" when O-immigration params differ
+      # from baseline, so the population projection uses ARTEMIS-computed values
+      baseline_o <- rv$config$immigration$o_immigration
+      ne <- function(a, b) !isTRUE(all.equal(as.numeric(a), as.numeric(b)))
+      o_changed <- ne(input$ultimate_gross_o, baseline_o$ultimate_gross_o) ||
+        ne(input$transition_gross_o, baseline_o$total_by_year[["2025"]]) ||
+        ne(input$dr_n_pre_2015, baseline_o$departure_rates$n_pre_2015_multiplier) ||
+        ne(input$dr_n_post_2015, baseline_o$departure_rates$n_post_2015_multiplier) ||
+        ne(input$dr_n_recent, baseline_o$departure_rates$n_recent_arrival_multiplier) ||
+        ne(input$dr_ni_initial, baseline_o$departure_rates$ni_initial_multiplier) ||
+        ne(input$dr_v_pre_2015, baseline_o$departure_rates$v_pre_2015_multiplier) ||
+        ne(input$dr_v_post_2015, baseline_o$departure_rates$v_post_2015_multiplier) ||
+        ne(input$daca_rate_reduction, baseline_o$departure_rates$daca_rate_reduction)
+      if (o_changed && input$net_o_source != "artemis") {
+        config$projected_population$net_o_source <- "artemis"
+        updateSelectInput(session, "net_o_source", selected = "artemis")
+        showNotification(
+          "Switched Net O source to 'ARTEMIS Computed' to apply O-immigration changes.",
+          type = "warning"
+        )
+      }
 
       # --- Advanced: LPR Elderly Immigration ---
       config <- set_config(config, c("immigration", "lpr", "elderly_override_tr_derived", "enabled"), input$elderly_override_enabled)
