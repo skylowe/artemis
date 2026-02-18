@@ -150,11 +150,33 @@ calculate_historical_population <- function(start_year = 1940,
     cli::cli_h2("Loading SSPopDec for all years/ages (SSA mode)")
     all_pop <- load_tr_population_by_year(start_year:end_year, ages, config)
 
-    # Components are not used for SSA mode output — population comes directly
-    # from SSPopDec. Skip component gathering entirely to avoid unnecessary
-    # API calls (IDB territory fetches fail in Docker/scenario contexts).
-    component_totals <- NULL
-    cli::cli_alert_info("Skipping component gathering (not needed in SSA mode)")
+    # SSA mode uses SSPopDec directly as the SS area population total.
+    # We still need a minimal component_totals with the SS area factor
+    # (total / census_usaf) for marriage/divorce rate calculations.
+    # Census USAF is a cached Census PEP call — safe in Docker.
+    cli::cli_alert_info("Computing SS area factor for marriage/divorce (SSA mode)")
+    census_usaf <- tryCatch(
+      fetch_census_usaf_for_historical(start_year:end_year, ages, cache_dir, config),
+      error = function(e) {
+        cli::cli_alert_warning("Could not fetch Census USAF: {e$message}")
+        NULL
+      }
+    )
+    if (!is.null(census_usaf)) {
+      ss_total <- all_pop[, .(total = sum(population)), by = year]
+      usaf_total <- census_usaf[, .(census_usaf = sum(population)), by = year]
+      component_totals <- merge(ss_total, usaf_total, by = "year", all.x = TRUE)
+      # Fill remaining component columns with 0 (not computed in SSA mode)
+      component_totals[, `:=`(undercount_adj = 0, territories = 0,
+                               fed_employees = 0, armed_forces = 0,
+                               dependents = 0, beneficiaries = 0,
+                               other_overseas = 0)]
+      data.table::setorder(component_totals, year)
+      cli::cli_alert_success("SS area factor computed for {nrow(component_totals)} years")
+    } else {
+      component_totals <- NULL
+      cli::cli_alert_warning("SS area factor unavailable — marriage/divorce may fail")
+    }
 
   } else {
     # =========================================================================

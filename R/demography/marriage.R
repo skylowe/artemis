@@ -131,7 +131,7 @@ get_ss_area_factor <- function(target_year, cache_dir = here::here("data/cache")
   if (!"components" %in% names(pop_data) || is.null(pop_data$components)) {
     cli::cli_abort(c(
       "Historical population cache missing {.field components}",
-      "i" = "This happens when population_source = 'ssa' (components not computed)",
+      "i" = "This happens when population_source = 'ssa' and Census USAF data was unavailable",
       "i" = "Set population_source to 'census' or 'hybrid' and rebuild, or set {.field marriage.ss_area_factor_override} in config"
     ))
   }
@@ -208,7 +208,7 @@ get_ss_area_factors <- function(years, cache_dir = here::here("data/cache"),
   if (!"components" %in% names(pop_data) || is.null(pop_data$components)) {
     cli::cli_abort(c(
       "Historical population cache missing {.field components}",
-      "i" = "This happens when population_source = 'ssa' (components not computed)",
+      "i" = "This happens when population_source = 'ssa' and Census USAF data was unavailable",
       "i" = "Set population_source to 'census' or 'hybrid' and rebuild, or set {.field marriage.ss_area_factor_override} in config"
     ))
   }
