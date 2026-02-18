@@ -31,7 +31,7 @@ mod_comparison_view_ui <- function(id) {
           "Net Immigration" = "immigration",
           "Life Expectancy (e0)" = "life_exp",
           "TFR" = "tfr",
-          "Dependency Ratio" = "dependency"
+          "Dependency Ratio (per 100 working-age)" = "dependency"
         ),
         selected = "population"
       ),
@@ -127,6 +127,17 @@ mod_comparison_view_ui <- function(id) {
 mod_comparison_view_server <- function(id, rv) {
   moduleServer(id, function(input, output, session) {
 
+    # Life expectancy at birth from qx schedule
+    calc_e0 <- function(qx_dt) {
+      qx_dt <- qx_dt[order(age)]
+      px <- 1 - qx_dt$qx
+      lx <- c(100000, 100000 * cumprod(px[-length(px)]))
+      dx <- lx * qx_dt$qx
+      Lx <- lx - 0.5 * dx
+      Tx <- rev(cumsum(rev(Lx)))
+      Tx[1] / lx[1]
+    }
+
     # Update scenario choices when scenarios change
     observe({
       choices <- c("TR2025 Baseline" = "baseline")
@@ -205,6 +216,15 @@ mod_comparison_view_server <- function(id, rv) {
               fert[year %in% years, .(value = sum(get(rate_col), na.rm = TRUE)), by = year]
             }
           },
+          "life_exp" = {
+            if (!is.null(data$mortality_qx_projected)) {
+              qx <- data$mortality_qx_projected[year %in% years]
+              qx[, .(value = mean(sapply(c("male", "female"), function(s) {
+                sq <- .SD[sex == s]
+                if (nrow(sq) > 0) calc_e0(sq) else NA_real_
+              }), na.rm = TRUE)), by = year]
+            }
+          },
           "dependency" = {
             if (!is.null(data$projected_population)) {
               pop <- data$projected_population[year %in% years]
@@ -257,7 +277,8 @@ mod_comparison_view_server <- function(id, rv) {
         "deaths" = "Deaths",
         "immigration" = "Net Immigration",
         "tfr" = "TFR",
-        "dependency" = "Dependency Ratio (%)",
+        "life_exp" = "Life Expectancy at Birth (years)",
+        "dependency" = "Dependents per 100 working-age (18\u201366)",
         "Value"
       )
 

@@ -30,7 +30,7 @@ mod_timeseries_viz_ui <- function(id, show_marital = FALSE) {
             "Deaths" = "deaths",
             "Net Immigration" = "immigration",
             "Natural Increase" = "natural_increase",
-            "Dependency Ratio" = "dependency"
+            "Dependency Ratio (per 100 working-age)" = "dependency"
           )
         },
         selected = if (show_marital) "marital_pop" else "population"
@@ -233,7 +233,7 @@ mod_timeseries_viz_server <- function(id, rv, show_marital = FALSE) {
         data[, value := numerator / working * 100]
         data[, group := factor(group,
           levels = c("young", "elderly"),
-          labels = c("Young (0-17)", "Elderly (67+)")
+          labels = c("Young (0\u201317)", "Elderly (67+)")
         )]
 
       } else if (metric == "marital_pop") {
@@ -265,7 +265,7 @@ mod_timeseries_viz_server <- function(id, rv, show_marital = FALSE) {
         "deaths" = "Annual Deaths",
         "immigration" = "Net Immigration",
         "natural_increase" = "Natural Increase (Births - Deaths)",
-        "dependency" = "Dependency Ratio (%)",
+        "dependency" = "Dependency Ratio (per 100 working-age 18\u201366)",
         "marital_pop" = "Population by Marital Status",
         "amr" = "Age-Adjusted Marriage Rate",
         "adr" = "Age-Adjusted Divorce Rate",
@@ -306,8 +306,10 @@ mod_timeseries_viz_server <- function(id, rv, show_marital = FALSE) {
       # Apply log scale if selected
       if (input$log_scale && input$metric %in% c("population", "births", "deaths")) {
         p <- p + scale_y_log10(labels = scales::comma)
-      } else if (input$metric %in% c("dependency", "pct_married")) {
+      } else if (input$metric == "pct_married") {
         p <- p + scale_y_continuous(labels = function(x) paste0(x, "%"))
+      } else if (input$metric == "dependency") {
+        p <- p + scale_y_continuous(labels = scales::number_format(accuracy = 1))
       } else {
         p <- p + scale_y_continuous(labels = scales::comma)
       }

@@ -171,20 +171,27 @@ server <- function(input, output, session) {
     pyramid <- pop_year[, .(population = sum(population, na.rm = TRUE)),
                         by = .(age_group, sex)]
 
-    # Make male negative for pyramid
-    pyramid[sex == "male", population := -population]
+    # Convert to percent of total population
+    total_pop <- sum(abs(pyramid$population))
+    pyramid[, pct := population / total_pop * 100]
 
-    p <- ggplot(pyramid, aes(x = age_group, y = population / 1e6, fill = sex)) +
+    # Make male negative for pyramid
+    pyramid[sex == "male", pct := -pct]
+
+    p <- ggplot(pyramid, aes(x = age_group, y = pct, fill = sex)) +
       geom_col() +
       coord_flip() +
       scale_fill_manual(values = SEX_COLORS) +
-      labs(x = NULL, y = "Population (millions)") +
-      scale_y_continuous(labels = function(x) abs(x)) +
+      labs(x = NULL, y = "% of Total Population") +
+      scale_y_continuous(limits = c(-5, 5), labels = function(x) paste0(abs(x), "%")) +
       theme_minimal() +
       theme(legend.position = "bottom")
 
     ggplotly(p) |>
-      layout(legend = list(orientation = "h", y = -0.1))
+      layout(
+        legend = list(orientation = "h", y = -0.2),
+        margin = list(b = 80)
+      )
   })
 
   # Components of change
@@ -220,9 +227,9 @@ server <- function(input, output, session) {
         color = "#2C3E50"
       ) +
       scale_fill_manual(values = c(
-        "Births" = "#27AE60",
-        "Deaths" = "#E74C3C",
-        "Net Immigration" = "#3498DB"
+        "Births" = "#8E6FBF",
+        "Deaths" = "#C4635F",
+        "Net Immigration" = "#5A9BD5"
       )) +
       labs(x = NULL, y = "Millions", fill = NULL) +
       theme_minimal() +
@@ -261,10 +268,10 @@ server <- function(input, output, session) {
 
     dep_long[, type := factor(type,
       levels = c("young_ratio", "elderly_ratio", "total_ratio"),
-      labels = c("Young (0-17)", "Elderly (67+)", "Total")
+      labels = c("Young (0\u201317)", "Elderly (67+)", "Total Dependency")
     )]
 
-    p <- ggplot(dep_long, aes(x = year, y = ratio, color = type)) +
+    p <- ggplot(dep_long, aes(x = year, y = ratio, color = type, group = type)) +
       geom_line(linewidth = 1) +
       geom_vline(
         xintercept = input$dashboard_year %||% 2050,
@@ -272,17 +279,17 @@ server <- function(input, output, session) {
         color = "#7F8C8D"
       ) +
       scale_color_manual(values = c(
-        "Young (0-17)" = "#9B59B6",
+        "Young (0\u201317)" = "#9B59B6",
         "Elderly (67+)" = "#E67E22",
-        "Total" = "#2C3E50"
+        "Total Dependency" = "#2C3E50"
       )) +
-      labs(x = NULL, y = "Ratio (%)", color = NULL) +
+      labs(x = NULL, y = "Dependents per 100 working-age", color = NULL) +
       theme_minimal() +
       theme(legend.position = "bottom")
 
-    ggplotly(p) |>
+    ggplotly(p, tooltip = c("x", "color", "y")) |>
       layout(
-        legend = list(orientation = "h", y = -0.1),
+        legend = list(orientation = "h", y = -0.15),
         hovermode = "x unified"
       )
   })

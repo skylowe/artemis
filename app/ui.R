@@ -100,7 +100,14 @@ ui <- page_navbar(
 
         # Dependency ratios
         card(
-          card_header("Dependency Ratios", class = "bg-light"),
+          card_header(
+            "Dependency Ratio",
+            tags$small(
+              class = "text-muted d-block fw-normal",
+              "Dependents (ages 0\u201317 and 67+) per 100 working-age (18\u201366)"
+            ),
+            class = "bg-light"
+          ),
           card_body(
             plotlyOutput("dashboard_dependency", height = "400px")
           )
@@ -115,6 +122,10 @@ ui <- page_navbar(
   nav_panel(
     title = "Population",
     icon = icon("users"),
+    tags$div(
+      class = "alert alert-warning text-center fw-bold mb-3",
+      "Under Development"
+    ),
     navset_card_tab(
       nav_panel(
         "Pyramids",
@@ -137,6 +148,10 @@ ui <- page_navbar(
   nav_panel(
     title = "Fertility",
     icon = icon("baby"),
+    tags$div(
+      class = "alert alert-warning text-center fw-bold mb-3",
+      "Under Development"
+    ),
     mod_fertility_viz_ui("fertility_viz")
   ),
 
@@ -146,6 +161,10 @@ ui <- page_navbar(
   nav_panel(
     title = "Mortality",
     icon = icon("heartbeat"),
+    tags$div(
+      class = "alert alert-warning text-center fw-bold mb-3",
+      "Under Development"
+    ),
     mod_mortality_viz_ui("mortality_viz")
   ),
 
@@ -155,6 +174,10 @@ ui <- page_navbar(
   nav_panel(
     title = "Immigration",
     icon = icon("plane"),
+    tags$div(
+      class = "alert alert-warning text-center fw-bold mb-3",
+      "Under Development"
+    ),
     mod_immigration_viz_ui("immigration_viz")
   ),
 
@@ -164,6 +187,10 @@ ui <- page_navbar(
   nav_panel(
     title = "Marriage/Divorce",
     icon = icon("heart"),
+    tags$div(
+      class = "alert alert-warning text-center fw-bold mb-3",
+      "Under Development"
+    ),
     mod_marriage_divorce_viz_ui("marriage_viz")
   ),
 
