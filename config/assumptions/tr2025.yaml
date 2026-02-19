@@ -694,7 +694,7 @@ projected_population:
   # Net O immigration source for projection
   # "va2" = V.A2 totals with TR-derived distribution (default, matches TR2025)
   # "artemis" = ARTEMIS-computed O-immigration from full Section 1.5 pipeline
-  net_o_source: "va2"
+  net_o_source: "artemis"
 
   # Married couples grid (Phase 8C)
   # Source: ACS PUMS married-couple households (husband age × wife age)
