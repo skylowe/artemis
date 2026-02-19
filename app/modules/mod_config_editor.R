@@ -273,6 +273,14 @@ mod_config_editor_ui <- function(id) {
           ),
           selected = "residual"
         ),
+        helpText(
+          "Controls how the historical O-population stock (1940-2022) is estimated.",
+          "Residual: uses the population accounting identity (total pop minus known",
+          "components) for the age-sex distribution shape, with V.A2 totals for stock",
+          "levels. V.A2 flows only: builds stocks directly from annual V.A2 net O",
+          "flows without the residual identity.",
+          "Changing this automatically switches Net O source to ARTEMIS Computed."
+        ),
 
         selectInput(
           ns("net_o_source"),
@@ -790,9 +798,11 @@ mod_config_editor_server <- function(id, rv) {
       config <- set_config(config, c("immigration", "o_immigration", "departure_rates", "v_post_2015_multiplier"), input$dr_v_post_2015)
       config <- set_config(config, c("immigration", "o_immigration", "departure_rates", "daca_rate_reduction"), input$daca_rate_reduction)
 
-      # Auto-switch net_o_source to "artemis" when O-immigration params differ
-      # from baseline, so the population projection uses ARTEMIS-computed values
+      # Auto-switch net_o_source to "artemis" when O-immigration params or
+      # O-population method differ from baseline, so the population projection
+      # uses ARTEMIS-computed values instead of V.A2 totals with TR-derived dist.
       baseline_o <- rv$config$immigration$o_immigration
+      baseline_o_method <- rv$config$historical_population$o_population$method %||% "residual"
       ne <- function(a, b) !isTRUE(all.equal(as.numeric(a), as.numeric(b)))
       o_changed <- ne(input$ultimate_gross_o, baseline_o$ultimate_gross_o) ||
         ne(input$transition_gross_o, baseline_o$total_by_year[["2025"]]) ||
@@ -802,7 +812,8 @@ mod_config_editor_server <- function(id, rv) {
         ne(input$dr_ni_initial, baseline_o$departure_rates$ni_initial_multiplier) ||
         ne(input$dr_v_pre_2015, baseline_o$departure_rates$v_pre_2015_multiplier) ||
         ne(input$dr_v_post_2015, baseline_o$departure_rates$v_post_2015_multiplier) ||
-        ne(input$daca_rate_reduction, baseline_o$departure_rates$daca_rate_reduction)
+        ne(input$daca_rate_reduction, baseline_o$departure_rates$daca_rate_reduction) ||
+        !identical(input$o_population_method, baseline_o_method)
       if (o_changed && input$net_o_source != "artemis") {
         config$projected_population$net_o_source <- "artemis"
         updateSelectInput(session, "net_o_source", selected = "artemis")
