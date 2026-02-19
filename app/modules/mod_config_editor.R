@@ -100,7 +100,9 @@ mod_config_editor_ui <- function(id) {
         helpText(
           "Regression uses NCHS-derived mortality for 1980+",
           "and SSA/TR2025 historical data for pre-1980 years.",
-          "TR2025 Official uses SSA data for all years."
+          "TR2025 Official uses SSA data for all years",
+          "and disables cause-specific projection (by_cause),",
+          "since TR2025 qx files contain total qx only."
         ),
 
         checkboxInput(
@@ -726,6 +728,9 @@ mod_config_editor_server <- function(id, rv) {
       # Mortality
       config <- set_config(config, c("mortality", "ultimate_year"), input$mortality_ultimate_year)
       config <- set_config(config, c("mortality", "starting_aax_method"), input$starting_aax_method)
+      if (input$starting_aax_method == "tr_qx") {
+        config <- set_config(config, c("mortality", "by_cause"), FALSE)
+      }
       config <- set_config(config, c("mortality", "apply_covid_adjustments"), input$apply_covid_adjustments)
       config <- set_config(config, c("mortality", "use_wonder_provisional"), input$use_wonder_provisional)
       config <- set_config(config, c("mortality", "hmd_calibration", "enabled"), input$hmd_calibration_enabled)
