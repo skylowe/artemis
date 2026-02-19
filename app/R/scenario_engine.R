@@ -242,15 +242,17 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
 
   report_progress(95, "Calculating summary statistics...")
 
-  # Get summary stats (use config-derived milestone years)
-  mid_year <- MID_YEAR %||% 2050L
-  end_year <- MAX_YEAR %||% 2099L
+  # Get summary stats — derive milestone years from the scenario config
+  # so they reflect the user's projection_end_year, not the app-startup default.
+  tr_year <- config$metadata$trustees_report_year %||% 2025L
+  mid_year <- tr_year + 25L
+  end_year <- config$metadata$projection_period$end_year %||% MAX_YEAR %||% 2100L
 
-  pop_2050 <- if (!is.null(data$projected_population)) {
+  pop_mid <- if (!is.null(data$projected_population)) {
     sum(data$projected_population[year == mid_year]$population, na.rm = TRUE)
   } else NA
 
-  pop_2099 <- if (!is.null(data$projected_population)) {
+  pop_end <- if (!is.null(data$projected_population)) {
     sum(data$projected_population[year == end_year]$population, na.rm = TRUE)
   } else NA
 
@@ -263,8 +265,10 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
   result <- list(
     success = has_core_data,
     data = data,
-    pop_2050 = pop_2050,
-    pop_2099 = pop_2099
+    mid_year = mid_year,
+    end_year = end_year,
+    pop_2050 = pop_mid,
+    pop_2099 = pop_end
   )
 
   if (!is.null(pipeline_error)) {

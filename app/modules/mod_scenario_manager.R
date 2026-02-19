@@ -143,8 +143,10 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
             tags$small(
               class = "d-block mt-1",
               sprintf("Population: %.1fM (%d), %.1fM (%d)",
-                      projection_state$last_result$pop_2050 / 1e6, MID_YEAR,
-                      projection_state$last_result$pop_2099 / 1e6, MAX_YEAR)
+                      projection_state$last_result$pop_2050 / 1e6,
+                      projection_state$last_result$mid_year %||% MID_YEAR,
+                      projection_state$last_result$pop_2099 / 1e6,
+                      projection_state$last_result$end_year %||% MAX_YEAR)
             ))
       } else {
         div(class = "alert alert-danger mb-0 py-2",

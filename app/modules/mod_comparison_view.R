@@ -154,6 +154,35 @@ mod_comparison_view_server <- function(id, rv) {
       )
     })
 
+    # Dynamically extend year range to match the max year in selected scenarios
+    observe({
+      req(input$scenarios)
+
+      max_year <- MAX_YEAR
+
+      for (scenario_id in input$scenarios) {
+        data <- if (scenario_id == "baseline") {
+          rv$baseline
+        } else if (scenario_id %in% names(rv$scenarios)) {
+          rv$scenarios[[scenario_id]]$results
+        } else {
+          NULL
+        }
+
+        if (!is.null(data$projected_population)) {
+          scenario_max <- max(data$projected_population$year, na.rm = TRUE)
+          max_year <- max(max_year, scenario_max)
+        }
+      }
+
+      current_range <- isolate(input$year_range)
+      updateSliderInput(session, "year_range",
+        max = max_year,
+        value = c(current_range[1], max_year)
+      )
+      updateSliderInput(session, "pyramid_year", max = max_year)
+    })
+
     # Number of selected scenarios
     output$n_scenarios <- renderText({
       length(input$scenarios)
