@@ -8,60 +8,33 @@ mod_config_editor_ui <- function(id) {
   ns <- NS(id)
 
   tagList(
-    # CRITICAL Parameters - Always Visible
-    h5("Critical Parameters", class = "text-primary"),
-
-    # Ultimate TFR
-    sliderInput(
-      ns("ultimate_tfr"),
-      "Ultimate TFR",
-      min = 1.0, max = 3.0,
-      value = 1.90,
-      step = 0.05
-    ),
-
-    # Immigration Scenario
-    selectInput(
-      ns("immigration_scenario"),
-      "Immigration Scenario",
-      choices = c(
-        "Low Cost" = "low",
-        "Intermediate" = "intermediate",
-        "High Cost" = "high"
-      ),
-      selected = "intermediate"
-    ),
-
-    # Ultimate Marriage Rate
-    sliderInput(
-      ns("ultimate_amr"),
-      "Ultimate Marriage Rate (AMR)",
-      min = 2000, max = 6000,
-      value = 4000,
-      step = 100,
-      post = " per 100K"
-    ),
-
-    # Ultimate Divorce Rate
-    sliderInput(
-      ns("ultimate_adr"),
-      "Ultimate Divorce Rate (ADR)",
-      min = 1000, max = 2500,
-      value = 1700,
-      step = 50,
-      post = " per 100K"
+    # Projection End Year - Always visible
+    numericInput(
+      ns("projection_end_year"),
+      "Projection End Year",
+      value = MAX_YEAR,
+      min = 2030, max = 2150
     ),
 
     hr(),
 
-    # HIGH Priority Parameters - Collapsible
+    # All parameter panels in a single accordion
     accordion(
-      id = ns("high_params"),
+      id = ns("params"),
       open = FALSE,
 
+      # --- Fertility ---
       accordion_panel(
         title = "Fertility Options",
         icon = icon("baby"),
+
+        sliderInput(
+          ns("ultimate_tfr"),
+          "Ultimate TFR",
+          min = 1.0, max = 3.0,
+          value = 1.90,
+          step = 0.05
+        ),
 
         numericInput(
           ns("fertility_ultimate_year"),
@@ -103,6 +76,7 @@ mod_config_editor_ui <- function(id) {
         )
       ),
 
+      # --- Mortality Options ---
       accordion_panel(
         title = "Mortality Options",
         icon = icon("heartbeat"),
@@ -166,81 +140,7 @@ mod_config_editor_ui <- function(id) {
         )
       ),
 
-      accordion_panel(
-        title = "Immigration Options",
-        icon = icon("plane"),
-
-        selectInput(
-          ns("lpr_assumptions_source"),
-          "LPR Assumptions Source",
-          choices = c(
-            "TR2025 V.A2 (Official)" = "va2",
-            "CBO Demographic Outlook" = "cbo"
-          ),
-          selected = "va2"
-        ),
-
-        conditionalPanel(
-          condition = sprintf("input['%s'] == 'cbo'", ns("lpr_assumptions_source")),
-          tags$div(
-            class = "alert alert-warning py-1 px-2 small mb-2",
-            "CBO provides a single projection. The Immigration Scenario",
-            " dropdown (Low/Intermediate/High) has no effect on LPR totals",
-            " when this source is selected."
-          )
-        ),
-
-        selectInput(
-          ns("distribution_method"),
-          "Age-Sex Distribution",
-          choices = c(
-            "TR2025-derived" = "tr_derived",
-            "DHS Historical" = "dhs"
-          ),
-          selected = "tr_derived"
-        ),
-
-        conditionalPanel(
-          condition = sprintf("input['%s'] == 'va2'", ns("lpr_assumptions_source")),
-          sliderInput(
-            ns("emigration_ratio"),
-            "Emigration Ratio",
-            min = 0.10, max = 0.50,
-            value = 0.25,
-            step = 0.01
-          )
-        ),
-
-        selectInput(
-          ns("o_population_method"),
-          "O-Population Method",
-          choices = c(
-            "Residual + V.A2 levels (default)" = "residual",
-            "V.A2 flows only" = "va2_flows"
-          ),
-          selected = "residual"
-        ),
-
-        selectInput(
-          ns("net_o_source"),
-          "Net O Immigration Source",
-          choices = c(
-            "V.A2 Totals (Official)" = "va2",
-            "ARTEMIS Computed" = "artemis"
-          ),
-          selected = "va2"
-        )
-      )
-    ),
-
-    hr(),
-
-    # ADVANCED Parameters - Collapsible
-    accordion(
-      id = ns("advanced_params"),
-      open = FALSE,
-
-      # Panel A: Mortality Improvement Rates
+      # --- Mortality Improvement Rates ---
       accordion_panel(
         title = "Mortality Improvement Rates",
         icon = icon("chart-line"),
@@ -305,7 +205,85 @@ mod_config_editor_ui <- function(id) {
         )
       ),
 
-      # Panel B: O-Immigration
+      # --- Immigration Options ---
+      accordion_panel(
+        title = "Immigration Options",
+        icon = icon("plane"),
+
+        selectInput(
+          ns("immigration_scenario"),
+          "Immigration Scenario",
+          choices = c(
+            "Low Cost" = "low",
+            "Intermediate" = "intermediate",
+            "High Cost" = "high"
+          ),
+          selected = "intermediate"
+        ),
+
+        selectInput(
+          ns("lpr_assumptions_source"),
+          "LPR Assumptions Source",
+          choices = c(
+            "TR2025 V.A2 (Official)" = "va2",
+            "CBO Demographic Outlook" = "cbo"
+          ),
+          selected = "va2"
+        ),
+
+        conditionalPanel(
+          condition = sprintf("input['%s'] == 'cbo'", ns("lpr_assumptions_source")),
+          tags$div(
+            class = "alert alert-warning py-1 px-2 small mb-2",
+            "CBO provides a single projection. The Immigration Scenario",
+            " dropdown (Low/Intermediate/High) has no effect on LPR totals",
+            " when this source is selected."
+          )
+        ),
+
+        selectInput(
+          ns("distribution_method"),
+          "Age-Sex Distribution",
+          choices = c(
+            "TR2025-derived" = "tr_derived",
+            "DHS Historical" = "dhs"
+          ),
+          selected = "tr_derived"
+        ),
+
+        conditionalPanel(
+          condition = sprintf("input['%s'] == 'va2'", ns("lpr_assumptions_source")),
+          sliderInput(
+            ns("emigration_ratio"),
+            "Emigration Ratio",
+            min = 0.10, max = 0.50,
+            value = 0.25,
+            step = 0.01
+          )
+        ),
+
+        selectInput(
+          ns("o_population_method"),
+          "O-Population Method",
+          choices = c(
+            "Residual + V.A2 levels (default)" = "residual",
+            "V.A2 flows only" = "va2_flows"
+          ),
+          selected = "residual"
+        ),
+
+        selectInput(
+          ns("net_o_source"),
+          "Net O Immigration Source",
+          choices = c(
+            "V.A2 Totals (Official)" = "va2",
+            "ARTEMIS Computed" = "artemis"
+          ),
+          selected = "va2"
+        )
+      ),
+
+      # --- O-Immigration ---
       accordion_panel(
         title = "O-Immigration",
         icon = icon("globe"),
@@ -359,7 +337,7 @@ mod_config_editor_ui <- function(id) {
         )
       ),
 
-      # Panel C: LPR Elderly Immigration
+      # --- LPR Elderly Immigration ---
       accordion_panel(
         title = "LPR Elderly Immigration",
         icon = icon("user-plus"),
@@ -387,7 +365,31 @@ mod_config_editor_ui <- function(id) {
         )
       ),
 
-      # Panel D: Population Composition
+      # --- Marriage & Divorce ---
+      accordion_panel(
+        title = "Marriage & Divorce",
+        icon = icon("heart"),
+
+        sliderInput(
+          ns("ultimate_amr"),
+          "Ultimate Marriage Rate (AMR)",
+          min = 2000, max = 6000,
+          value = 4000,
+          step = 100,
+          post = " per 100K"
+        ),
+
+        sliderInput(
+          ns("ultimate_adr"),
+          "Ultimate Divorce Rate (ADR)",
+          min = 1000, max = 2500,
+          value = 1700,
+          step = 50,
+          post = " per 100K"
+        )
+      ),
+
+      # --- Population Composition ---
       accordion_panel(
         title = "Population Composition",
         icon = icon("users"),
@@ -494,6 +496,9 @@ mod_config_editor_server <- function(id, rv) {
 
     # Sync all UI inputs to match a config list
     sync_inputs_to_config <- function(config) {
+      updateNumericInput(session, "projection_end_year",
+        value = config$metadata$projection_period$end_year %||% MAX_YEAR)
+
       updateSliderInput(session, "ultimate_tfr",
         value = config$fertility$ultimate_ctfr %||% 1.90)
 
@@ -695,6 +700,9 @@ mod_config_editor_server <- function(id, rv) {
       # Start with baseline config — only fields that actually changed
       # get written back, preserving original types for unchanged sections
       config <- rv$config
+
+      # Metadata
+      config <- set_config(config, c("metadata", "projection_period", "end_year"), input$projection_end_year)
 
       # Fertility
       config <- set_config(config, c("fertility", "ultimate_ctfr"), input$ultimate_tfr)

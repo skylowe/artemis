@@ -75,6 +75,18 @@ validate_config <- function(config) {
     errors <- c(errors, paste("Missing sections:", paste(missing, collapse = ", ")))
   }
 
+  # Validate projection end year
+  end_year <- config$metadata$projection_period$end_year
+  if (!is.null(end_year)) {
+    start_year <- config$metadata$projection_period$start_year %||% 2023
+    if (end_year < start_year + 10) {
+      errors <- c(errors, paste("Projection end year must be at least", start_year + 10))
+    }
+    if (end_year > 2200) {
+      errors <- c(errors, "Projection end year must be at most 2200")
+    }
+  }
+
   # Validate fertility
   if (!is.null(config$fertility)) {
     tfr <- config$fertility$ultimate_ctfr
@@ -281,6 +293,7 @@ summarize_config <- function(config) {
   params <- list(
     list("TR Year", config$metadata$trustees_report_year),
     list("Alternative", config$metadata$alternative),
+    list("End Year", config$metadata$projection_period$end_year),
     list("Ultimate TFR", config$fertility$ultimate_ctfr),
     list("TFR Ultimate Year", config$fertility$ultimate_year),
     list("Mortality Ultimate Year", config$mortality$ultimate_year),
