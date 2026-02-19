@@ -823,6 +823,18 @@ mod_config_editor_server <- function(id, rv) {
         )
       }
 
+      # Auto-switch distribution to TR-derived when net O source is V.A2,
+      # since V.A2 totals always use the TR-derived age-sex distribution.
+      effective_net_o <- config$projected_population$net_o_source %||% "va2"
+      if (effective_net_o == "va2" && input$distribution_method != "tr_derived") {
+        config <- set_config(config, c("immigration", "lpr", "distribution_method"), "tr_derived")
+        updateSelectInput(session, "distribution_method", selected = "tr_derived")
+        showNotification(
+          "Switched age-sex distribution to 'TR2025-derived' (V.A2 totals always use TR-derived distribution).",
+          type = "warning"
+        )
+      }
+
       # --- Advanced: LPR Elderly Immigration ---
       config <- set_config(config, c("immigration", "lpr", "elderly_override_tr_derived", "enabled"), input$elderly_override_enabled)
       config$immigration$lpr$elderly_override_tr_derived$ages_65_84$annual_total <- as.integer(input$elderly_65_84_total)
