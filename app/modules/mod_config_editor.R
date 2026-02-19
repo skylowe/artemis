@@ -245,12 +245,17 @@ mod_config_editor_ui <- function(id) {
 
         selectInput(
           ns("distribution_method"),
-          "Age-Sex Distribution",
+          "LPR Age-Sex Distribution",
           choices = c(
             "TR2025-derived" = "tr_derived",
             "DHS Historical" = "dhs"
           ),
           selected = "tr_derived"
+        ),
+        helpText(
+          "Controls the age-sex distribution for LPR immigration only.",
+          "O-immigration uses a separate distribution: TR-derived when",
+          "Net O source is V.A2, or ACS/DHS-derived (ODIST) when ARTEMIS Computed."
         ),
 
         conditionalPanel(
