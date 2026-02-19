@@ -673,6 +673,24 @@ get_tr_va2_net_immigration <- function(years = 2023:2099,
   result[is.na(o_net), o_net := 0]
   result[is.na(total_net), total_net := 0]
 
+  # Extend last year's values for years beyond V.A2 data range
+  max_data_year <- max(result$year)
+  max_requested_year <- max(years)
+  if (max_requested_year > max_data_year) {
+    extend_years <- (max_data_year + 1L):max_requested_year
+    last_row <- result[year == max_data_year]
+    extended <- data.table::rbindlist(lapply(extend_years, function(yr) {
+      row <- data.table::copy(last_row)
+      row[, year := yr]
+      row[, data_type := "extended"]
+      row
+    }))
+    result <- data.table::rbindlist(list(result, extended), use.names = TRUE)
+    cli::cli_alert_warning(
+      "V.A2 data ends at {max_data_year}; extending last-year values through {max_requested_year} ({length(extend_years)} additional years)"
+    )
+  }
+
   # Report sample values
   if (2027 %in% result$year) {
     lpr_2027 <- format(result[year == 2027, lpr_net], big.mark = ",")

@@ -1135,6 +1135,24 @@ get_tr_lpr_assumptions_va2 <- function(years,
   result[is.na(total_emigration), total_emigration := 0]
   result[is.na(net_lpr_total), net_lpr_total := total_lpr - total_emigration]
 
+  # Extend last year's values for years beyond V.A2 data range
+  max_data_year <- max(result$year)
+  max_requested_year <- max(years)
+  if (max_requested_year > max_data_year) {
+    extend_years <- (max_data_year + 1L):max_requested_year
+    last_row <- result[year == max_data_year]
+    extended <- data.table::rbindlist(lapply(extend_years, function(yr) {
+      row <- data.table::copy(last_row)
+      row[, year := yr]
+      row[, data_type := "extended"]
+      row
+    }))
+    result <- data.table::rbindlist(list(result, extended), use.names = TRUE)
+    cli::cli_alert_warning(
+      "V.A2 LPR data ends at {max_data_year}; extending last-year values through {max_requested_year} ({length(extend_years)} additional years)"
+    )
+  }
+
   # Report what we loaded
   n_hist <- sum(result$data_type == "historical")
   n_proj <- sum(result$data_type %in% c("projected", "estimated"))
