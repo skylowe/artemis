@@ -23,24 +23,31 @@ create_economics_targets <- function() {
     # DATA ACQUISITION
     # ══════════════════════════════════════════════════════════════════
 
-    # TR2025 projected economic assumptions (V.B1, V.B2)
+    # TR projected economic assumptions (V.B1, V.B2)
     targets::tar_target(
-      tr2025_economic_assumptions,
-      load_tr2025_economic_assumptions(config_assumptions),
+      tr_economic_assumptions,
+      load_tr_economic_assumptions(config_assumptions),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
-    # TR2025 DI prevalence (V.C5)
+    # TR DI prevalence (V.C5)
     targets::tar_target(
-      tr2025_di_prevalence,
-      load_tr2025_di_prevalence(config_assumptions),
+      tr_di_prevalence,
+      load_tr_di_prevalence(config_assumptions),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
-    # TR2025 benefit parameters (V.C7)
+    # TR benefit parameters (V.C7)
     targets::tar_target(
-      tr2025_benefit_params,
-      load_tr2025_benefit_params(config_assumptions),
+      tr_benefit_params,
+      load_tr_benefit_params(config_assumptions),
+      cue = targets::tar_cue(mode = "thorough")
+    ),
+
+    # TR economic levels (VI.G6 — AWI, CPI, GDP, interest)
+    targets::tar_target(
+      tr_economic_levels,
+      load_tr_vig6(config_assumptions),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
@@ -90,9 +97,10 @@ create_economics_targets <- function() {
         projected_marital_population = projected_marital_population,
         o_population_stock = o_population_stock,
         military_population = armed_forces_for_projection,
-        tr2025_economic_assumptions = tr2025_economic_assumptions,
-        tr2025_di_prevalence = tr2025_di_prevalence,
-        tr2025_benefit_params = tr2025_benefit_params,
+        tr_economic_assumptions = tr_economic_assumptions,
+        tr_economic_levels = tr_economic_levels,
+        tr_di_prevalence = tr_di_prevalence,
+        tr_benefit_params = tr_benefit_params,
         cps_labor_data = cps_labor_force,
         config_employment = config_economics$employment
       )
@@ -120,7 +128,7 @@ create_economics_targets <- function() {
           .(year, quarter = 1L, age_group, sex, rate = value)
         ],
         target_ru = {
-          ru_annual <- unique(tr2025_economic_assumptions[
+          ru_annual <- unique(tr_economic_assumptions[
             variable == "unemployment_rate", .(year, rate = value)])
           data.table::rbindlist(lapply(1:4, function(q) {
             data.table::copy(ru_annual)[, quarter := q]
@@ -200,7 +208,7 @@ create_economics_targets <- function() {
         labor_force_employment = labor_force_employment,
         employed_op = employed_op_projection,
         teo = teo_projection,
-        tr2025_assumptions = tr2025_economic_assumptions,
+        tr_assumptions = tr_economic_assumptions,
         config_employment = config_economics$employment
       )
     )

@@ -520,11 +520,37 @@ construct_rradj <- function(benefit_amounts, awi_levels, config_employment) {
   result
 }
 
+#' Compute Normal Retirement Age for a given birth year
+#'
+#' @description
+#' Returns NRA in years (fractional) based on the Social Security NRA schedule:
+#' - Born ≤1937: 65
+#' - Born 1938-1942: 65 + 2 months per year after 1937
+#' - Born 1943-1954: 66
+#' - Born 1955-1959: 66 + 2 months per year after 1954
+#' - Born ≥1960: 67
+#'
+#' @param birth_year Integer vector of birth years
+#' @return Numeric vector of NRA in years (e.g., 66.5 = 66 years 6 months)
+#' @keywords internal
+compute_nra <- function(birth_year) {
+  fifelse(birth_year <= 1937, 65,
+  fifelse(birth_year <= 1942, 65 + (birth_year - 1937) * 2 / 12,
+  fifelse(birth_year <= 1954, 66,
+  fifelse(birth_year <= 1959, 66 + (birth_year - 1954) * 2 / 12,
+          67))))
+}
+
 #' Construct potential earnings test tax rate
 #'
 #' @description
 #' POT_ET_TXRT is the implicit marginal tax rate on earnings above the
 #' earnings test threshold for Social Security beneficiaries below NRA.
+#'
+#' Uses the full NRA schedule to determine rates:
+#' - Ages below NRA: $1 withheld per $2 earned above exempt amount → 0.50
+#' - Year of reaching NRA (months before NRA month): $1 per $3 → 0.33
+#' - At/after NRA: no earnings test → 0
 #'
 #' @param benefit_params TR2025 benefit/earnings test parameters
 #' @param config_employment Employment config section
@@ -535,10 +561,6 @@ construct_rradj <- function(benefit_amounts, awi_levels, config_employment) {
 construct_pot_et_txrt <- function(benefit_params, config_employment) {
   cli::cli_alert_info("Constructing POT_ET_TXRT (earnings test tax rate)")
 
-  # The earnings test withholds $1 for every $2 earned above threshold (ages 62 to NRA-1)
-  # and $1 for every $3 in the year of reaching NRA
-  # Effective marginal tax rate depends on benefit amount relative to earnings
-
   base_year <- config_employment$base_year
   end_year <- config_employment$end_year
   if (is.null(end_year)) cli::cli_abort("economics.employment.end_year not set in config")
@@ -546,13 +568,24 @@ construct_pot_et_txrt <- function(benefit_params, config_employment) {
   ages <- 62:69
   result <- data.table::CJ(year = years, age = ages)
 
-  # NRA is 67 for cohorts born 1960+ (age 67 in 2027+)
-  # Before NRA: $1 withheld per $2 over exempt amount → 50% marginal rate
-  # At NRA year: $1 per $3 → 33% rate
-  # At/after NRA: no earnings test
-  result[, nra := 67]
-  result[, pot_et_txrt := fifelse(age < nra, 0.50, fifelse(age == nra, 0.33, 0))]
-  result[, nra := NULL]
+  # Compute NRA for each cohort (birth_year = year - age)
+  result[, birth_year := year - age]
+  result[, nra := compute_nra(birth_year)]
+
+  # The integer age at which NRA is reached (floor of NRA)
+  result[, nra_age := floor(nra)]
+
+  # Earnings test rates based on relationship to NRA:
+  # Below NRA age: 50% ($1 per $2)
+  # At NRA age (the year of attaining NRA): 33% ($1 per $3 for months before NRA)
+  # Above NRA age: 0% (no earnings test)
+  result[, pot_et_txrt := fifelse(
+    age < nra_age, 0.50,
+    fifelse(age == nra_age, 1 / 3,
+            0)
+  )]
+
+  result[, c("birth_year", "nra", "nra_age") := NULL]
 
   cli::cli_alert_success("Constructed POT_ET_TXRT for {nrow(result)} cells")
   result
@@ -573,9 +606,10 @@ construct_pot_et_txrt <- function(benefit_params, config_employment) {
 #' @param projected_marital_population From demography pipeline (Phase 8C)
 #' @param o_population_stock OP components from demography pipeline
 #' @param military_population Armed forces for projection
-#' @param tr2025_economic_assumptions TR2025 V.B1/V.B2 data
-#' @param tr2025_di_prevalence TR2025 V.C5 data
-#' @param tr2025_benefit_params TR2025 V.C7/V.C1 data
+#' @param tr_economic_assumptions TR V.B1/V.B2 data
+#' @param tr_economic_levels TR VI.G6 data (AWI, CPI, GDP levels)
+#' @param tr_di_prevalence TR V.C5 data
+#' @param tr_benefit_params TR V.C7 data
 #' @param cps_labor_data CPS ASEC labor force data from IPUMS (unified extract)
 #' @param config_employment Employment config section
 #'
@@ -596,9 +630,10 @@ build_employment_inputs <- function(projected_population,
                                      projected_marital_population,
                                      o_population_stock,
                                      military_population,
-                                     tr2025_economic_assumptions,
-                                     tr2025_di_prevalence,
-                                     tr2025_benefit_params,
+                                     tr_economic_assumptions,
+                                     tr_economic_levels,
+                                     tr_di_prevalence,
+                                     tr_benefit_params,
                                      cps_labor_data,
                                      config_employment) {
   cli::cli_h1("Building Employment Input Variables")
@@ -658,21 +693,21 @@ build_employment_inputs <- function(projected_population,
 
   # 5. Disability prevalence ratio
   cli::cli_h2("Disability Prevalence Ratio")
-  rd <- construct_disability_ratio(tr2025_di_prevalence, config_employment)
+  rd <- construct_disability_ratio(tr_di_prevalence, config_employment)
 
   # 6. RRADJ and POT_ET_TXRT
   cli::cli_h2("Retirement Variables")
   rradj <- construct_rradj(
-    tr2025_benefit_params,
-    tr2025_economic_assumptions,
+    tr_benefit_params,
+    tr_economic_levels,
     config_employment
   )
-  pot_et_txrt <- construct_pot_et_txrt(tr2025_benefit_params, config_employment)
+  pot_et_txrt <- construct_pot_et_txrt(tr_benefit_params, config_employment)
 
   # 7. RTP
   cli::cli_h2("RTP (Real/Potential GDP Ratio)")
-  # Extract unemployment rate path from TR2025 assumptions (deduplicate)
-  unemployment_path <- unique(tr2025_economic_assumptions[
+  # Extract unemployment rate path from TR assumptions (deduplicate)
+  unemployment_path <- unique(tr_economic_assumptions[
     variable == "unemployment_rate",
     .(year, rate = value)
   ])

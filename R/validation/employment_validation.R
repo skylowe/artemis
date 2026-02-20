@@ -23,7 +23,7 @@ NULL
 #' @param labor_force_employment From project_labor_force_employment()
 #' @param employed_op From project_employed_op()
 #' @param teo From compute_teo()
-#' @param tr2025_assumptions TR2025 economic assumptions (V.B2 target rates)
+#' @param tr_assumptions TR2025 economic assumptions (V.B2 target rates)
 #' @param config_employment Employment config section
 #'
 #' @return List with validation results:
@@ -39,7 +39,7 @@ validate_employment_projections <- function(unemployment_projection,
                                               labor_force_employment,
                                               employed_op,
                                               teo,
-                                              tr2025_assumptions,
+                                              tr_assumptions,
                                               config_employment) {
   cli::cli_h1("Validating Employment Projections")
 
@@ -49,7 +49,7 @@ validate_employment_projections <- function(unemployment_projection,
   # ── 1. Aggregate unemployment rate vs V.B2 target ───────────────
   cli::cli_h2("1. Unemployment Rate Target Match")
 
-  target_ru <- tr2025_assumptions[variable == "unemployment_rate"]
+  target_ru <- tr_assumptions[variable == "unemployment_rate"]
   if (nrow(target_ru) > 0 && !is.null(unemployment_projection)) {
     actual_ru <- unemployment_projection$actual
     if (nrow(actual_ru) > 0) {
