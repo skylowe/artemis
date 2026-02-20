@@ -101,14 +101,13 @@ parse_tr2025_sectioned_sheet <- function(file_path, sheet, skip_rows,
 #'
 #' @export
 load_tr2025_vb1 <- function(config, alternative = "intermediate") {
-  tr_dir <- get_tr_data_dir(config)
-  file_path <- file.path(tr_dir, "SingleYearTRTables_TR2025.xlsx")
+  file_path <- resolve_tr_file(config, "single_year_tables")
 
   if (!file.exists(file_path)) {
     cli::cli_abort(c(
-      "TR2025 SingleYear tables not found",
+      "TR SingleYear tables not found",
       "x" = "Expected: {.file {file_path}}",
-      "i" = "Place TR2025 data files in {.file {tr_dir}}"
+      "i" = "Place TR data files in the TR data directory"
     ))
   }
 
@@ -150,12 +149,11 @@ load_tr2025_vb1 <- function(config, alternative = "intermediate") {
 #'
 #' @export
 load_tr2025_vb2 <- function(config, alternative = "intermediate") {
-  tr_dir <- get_tr_data_dir(config)
-  file_path <- file.path(tr_dir, "SingleYearTRTables_TR2025.xlsx")
+  file_path <- resolve_tr_file(config, "single_year_tables")
 
   if (!file.exists(file_path)) {
     cli::cli_abort(c(
-      "TR2025 SingleYear tables not found",
+      "TR SingleYear tables not found",
       "x" = "Expected: {.file {file_path}}"
     ))
   }
@@ -207,8 +205,7 @@ load_tr2025_vb2 <- function(config, alternative = "intermediate") {
 #'
 #' @export
 load_tr2025_vc5 <- function(config, alternative = "intermediate") {
-  tr_dir <- get_tr_data_dir(config)
-  file_path <- file.path(tr_dir, "SingleYearTRTables_TR2025.xlsx")
+  file_path <- resolve_tr_file(config, "single_year_tables")
 
   if (!file.exists(file_path)) {
     cli::cli_abort("TR2025 SingleYear tables not found: {.file {file_path}}")
@@ -295,8 +292,7 @@ load_tr2025_vc5 <- function(config, alternative = "intermediate") {
 #'
 #' @export
 load_tr2025_vc7 <- function(config) {
-  tr_dir <- get_tr_data_dir(config)
-  file_path <- file.path(tr_dir, "SingleYearTRTables_TR2025.xlsx")
+  file_path <- resolve_tr_file(config, "single_year_tables")
 
   if (!file.exists(file_path)) {
     cli::cli_abort("TR2025 SingleYear tables not found: {.file {file_path}}")
@@ -341,8 +337,7 @@ load_tr2025_vc7 <- function(config) {
 #'
 #' @export
 load_tr2025_vig6 <- function(config) {
-  tr_dir <- get_tr_data_dir(config)
-  file_path <- file.path(tr_dir, "SingleYearTRTables_TR2025.xlsx")
+  file_path <- resolve_tr_file(config, "single_year_tables")
 
   if (!file.exists(file_path)) {
     cli::cli_abort("TR2025 SingleYear tables not found: {.file {file_path}}")
