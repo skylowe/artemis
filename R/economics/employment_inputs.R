@@ -154,112 +154,57 @@ compute_cni_population <- function(projected_population,
 # Marital Status CNI Population (for LFPR disaggregation)
 # =============================================================================
 
-#' Compute CNI population by LFPR marital status categories
+#' Remap CNI population marital statuses to LFPR categories
 #'
 #' @description
-#' The LFPR equations for ages 20-54 disaggregate by 3 CPS marital statuses:
-#' - NM (never married) = demography "single"
-#' - MS (married, spouse present) = fraction of demography "married"
-#' - MA (married, spouse absent) = remainder of "married" + "divorced" + "widowed"
+#' The LFPR equations for ages 20-54 disaggregate by 3 marital statuses:
+#' - NM (never married)
+#' - MS (married, spouse present)
+#' - MA (married, spouse absent)
 #'
-#' The demography pipeline produces 4 categories (single, married, divorced, widowed).
-#' This function splits "married" into present/absent using CPS-derived ratios,
-#' then maps to the LFPR 3-category scheme.
+#' The demography pipeline's `projected_cni_population` already provides:
+#' - single → NM (never married)
+#' - married_spouse_present → MS
+#' - separated, divorced, widowed → MA (married, spouse absent)
 #'
-#' @param projected_marital_population Projected marital population from demography
+#' This function simply remaps these categories.
+#'
+#' @param projected_cni_population CNI population from demography pipeline
 #'   (data.table with year, age, sex, marital_status, population)
-#' @param cps_labor_data CPS ASEC data with marital status detail
-#' @param config_employment Employment config section
 #'
 #' @return data.table with columns: year, age, sex, lfpr_marital_status, population
 #'   lfpr_marital_status values: never_married, married_present, married_absent
 #'
 #' @export
-compute_marital_cni_population <- function(projected_marital_population,
-                                            cps_labor_data,
-                                            config_employment) {
-  checkmate::assert_data_table(projected_marital_population)
-  checkmate::assert_data_table(cps_labor_data)
+compute_marital_cni_population <- function(projected_cni_population) {
+  checkmate::assert_data_table(projected_cni_population)
+  checkmate::assert_names(names(projected_cni_population),
+                          must.include = c("year", "age", "sex", "marital_status", "population"))
 
-  cli::cli_alert_info("Computing CNI population by LFPR marital status categories")
+  cli::cli_alert_info("Remapping CNI marital statuses to LFPR categories")
 
-  mp <- data.table::copy(projected_marital_population)
-  base_year <- config_employment$base_year %||% 2024
+  dt <- data.table::copy(projected_cni_population)
 
-  # Step 1: Compute married_present / total_married ratio from CPS data
-  # by age group and sex (use most recent available year)
-  cps_ms <- cps_labor_data[concept == "population" & !is.na(age_group) & is.na(age) &
-                            marital_status %in% c("married_present", "married_absent")]
-  if (nrow(cps_ms) > 0) {
-    latest_year <- max(cps_ms$year)
-    ms_ratios <- cps_ms[year == latest_year,
-                        .(pop = sum(value)), by = .(age_group, sex, marital_status)]
-    ms_totals <- ms_ratios[, .(total_married = sum(pop)), by = .(age_group, sex)]
-    ms_ratios <- merge(ms_ratios, ms_totals, by = c("age_group", "sex"))
-    ms_ratios[, frac := pop / total_married]
-
-    # Extract married_present fraction by age group and sex
-    mp_frac <- ms_ratios[marital_status == "married_present",
-                          .(age_group, sex, mp_fraction = frac)]
-
-    cli::cli_alert_success(
-      "Computed married present/absent ratios from CPS {latest_year} ({nrow(mp_frac)} groups)"
-    )
-  } else {
-    cli::cli_alert_warning("No CPS married present/absent data — using default 0.85 ratio")
-    mp_frac <- data.table::data.table(
-      age_group = character(), sex = character(), mp_fraction = numeric()
-    )
-  }
-
-  # Step 2: Assign each single-year age to an age group for ratio lookup
-  mp[, age_group := fcase(
-    age <= 17, "16-17", age <= 19, "18-19", age <= 24, "20-24",
-    age <= 29, "25-29", age <= 34, "30-34", age <= 39, "35-39",
-    age <= 44, "40-44", age <= 49, "45-49", age <= 54, "50-54",
-    age <= 59, "55-59", age <= 64, "60-64", age <= 69, "65-69",
-    age <= 74, "70-74", default = "75+"
+  # Map demography marital statuses to LFPR 3-category scheme
+  dt[, lfpr_marital_status := fcase(
+    marital_status == "single", "never_married",
+    marital_status == "married_spouse_present", "married_present",
+    marital_status %in% c("separated", "divorced", "widowed"), "married_absent",
+    default = NA_character_
   )]
 
-  # Step 3: Merge married present/absent ratio onto marital population
-  mp <- merge(mp, mp_frac, by = c("age_group", "sex"), all.x = TRUE)
-  mp[is.na(mp_fraction), mp_fraction := 0.85]  # Default: 85% married spouse present
+  # Drop any unmapped rows and aggregate (separated + divorced + widowed → married_absent)
+  dt <- dt[!is.na(lfpr_marital_status)]
+  result <- dt[, .(population = sum(population)),
+               by = .(year, age, sex, lfpr_marital_status)]
 
-  # Step 4: Map to LFPR marital status categories
-  result <- list()
-
-  # Never married = "single"
-  nm <- mp[marital_status == "single",
-           .(year, age, sex, lfpr_marital_status = "never_married", population)]
-  result$nm <- nm
-
-  # Married spouse present = "married" × mp_fraction
-  ms <- mp[marital_status == "married",
-           .(year, age, sex, lfpr_marital_status = "married_present",
-             population = population * mp_fraction)]
-  result$ms <- ms
-
-  # Married spouse absent = "married" × (1 - mp_fraction) + "divorced" + "widowed"
-  ma_married <- mp[marital_status == "married",
-                   .(year, age, sex, lfpr_marital_status = "married_absent",
-                     population = population * (1 - mp_fraction))]
-  ma_divorced <- mp[marital_status == "divorced",
-                    .(year, age, sex, lfpr_marital_status = "married_absent", population)]
-  ma_widowed <- mp[marital_status == "widowed",
-                   .(year, age, sex, lfpr_marital_status = "married_absent", population)]
-  ma_all <- data.table::rbindlist(list(ma_married, ma_divorced, ma_widowed))
-  ma_all <- ma_all[, .(population = sum(population)),
-                   by = .(year, age, sex, lfpr_marital_status)]
-  result$ma <- ma_all
-
-  combined <- data.table::rbindlist(result)
-  data.table::setorder(combined, year, sex, age, lfpr_marital_status)
+  data.table::setorder(result, year, sex, age, lfpr_marital_status)
 
   cli::cli_alert_success(
-    "Computed marital CNI population: {nrow(combined)} rows, {length(unique(combined$year))} years"
+    "Remapped marital CNI population: {nrow(result)} rows, {length(unique(result$year))} years"
   )
 
-  combined
+  result
 }
 
 # =============================================================================
@@ -678,11 +623,9 @@ build_employment_inputs <- function(projected_population,
     value_col = "population"
   )
 
-  # 3. Marital status population and married share
+  # 3. Marital status population (remap demography categories to LFPR categories)
   cli::cli_h2("Marital Status Population")
-  marital_cni_pop <- compute_marital_cni_population(
-    projected_marital_population, cps_labor_data, config_employment
-  )
+  marital_cni_pop <- compute_marital_cni_population(projected_cni_population)
 
   cli::cli_h2("Married Share")
   msshare <- compute_married_share(projected_marital_population)
