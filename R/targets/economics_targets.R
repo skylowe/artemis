@@ -108,17 +108,24 @@ create_economics_targets <- function() {
       project_unemployment_rates(
         rtp_quarterly = employment_inputs$rtp_quarterly,
         base_year_labor_force = cps_labor_force[
-          year == config_economics$employment$base_year & concept == "labor_force",
+          year == config_economics$employment$base_year &
+            concept == "labor_force" &
+            marital_status == "all" &
+            is.na(age),
           .(age_group, sex, labor_force = value)
         ],
         historical_ru = cps_labor_force[
-          concept == "unemployment_rate",
+          concept == "unemployment_rate" & marital_status == "all" &
+            is.na(age),  # Exclude single-year-of-age rows
           .(year, quarter = 1L, age_group, sex, rate = value)
         ],
-        target_ru = tr2025_economic_assumptions[
-          variable == "unemployment_rate",
-          .(year, quarter = 1L, rate = value)
-        ],
+        target_ru = {
+          ru_annual <- unique(tr2025_economic_assumptions[
+            variable == "unemployment_rate", .(year, rate = value)])
+          data.table::rbindlist(lapply(1:4, function(q) {
+            data.table::copy(ru_annual)[, quarter := q]
+          }))
+        },
         ru_coefficients = unemployment_coefficients,
         config_employment = config_economics$employment
       )

@@ -110,7 +110,8 @@ project_unemployment_rates <- function(rtp_quarterly,
       d <- c(coeffs$d0, coeffs$d1, coeffs$d2, coeffs$d3)
 
       # Get historical values for this age-sex group
-      hist_vals <- historical_ru[age_group == ag & sex == (!!sex)]
+      sex_val <- sex  # Local copy avoids data.table column name collision
+      hist_vals <- historical_ru[age_group == ag & sex == sex_val]
       data.table::setorder(hist_vals, year, quarter)
 
       # Seed the projection with the last historical value
@@ -188,8 +189,9 @@ project_unemployment_rates <- function(rtp_quarterly,
   constrained[, ru_asa_adj := rate - ru_asa_p]
 
   # Apply proportional adjustment to each age-sex group
+  # Many-to-one join: each (year, quarter) in constrained maps to 28 age-sex groups
   actual <- merge(preliminary, constrained[, .(year, quarter, ru_asa_adj, ru_asa_p)],
-                  by = c("year", "quarter"))
+                  by = c("year", "quarter"), allow.cartesian = TRUE)
   actual[, rate := rate * (1 + ru_asa_adj / ru_asa_p)]
   actual[, c("ru_asa_adj", "ru_asa_p") := NULL]
 
@@ -575,7 +577,8 @@ project_lfpr <- function(unemployment_rates,
       }
 
       # Aggregate 80+ into PM80O / PF80O using population weights
-      pop_80_plus <- cni_population[sex == (!!sex) & age >= 80 & year == yr]
+      sex_val <- sex  # Avoid data.table column name collision
+      pop_80_plus <- cni_population[sex == sex_val & age >= 80 & year == yr]
       if (nrow(pop_80_plus) > 0) {
         lfpr_80_vals <- vapply(80:100, function(a) {
           key <- paste(yr, sex, as.character(a))
@@ -679,79 +682,76 @@ project_labor_force_employment <- function(lfpr_projection,
 # =============================================================================
 
 #' @keywords internal
-.get_ru_lags <- function(ru_annual, age_group, sex, year, n_lags) {
+.get_ru_lags <- function(ru_annual, tgt_age_group, tgt_sex, tgt_year, n_lags) {
   vals <- numeric(n_lags)
   for (i in seq_len(n_lags)) {
-    lag_year <- year - (i - 1)
-    row <- ru_annual[age_group == (!!age_group) & sex == (!!sex) & year == lag_year]
+    lag_year <- tgt_year - (i - 1)
+    row <- ru_annual[age_group == tgt_age_group & sex == tgt_sex & year == lag_year]
     vals[i] <- if (nrow(row) > 0) row$rate[1] else NA_real_
   }
-  # Replace NA with 0 for initialization
   vals[is.na(vals)] <- 0
   vals
 }
 
 #' @keywords internal
-.compute_time_trend <- function(year, age_group, sex, base_year) {
-  # Linear time trend counting from base year
-  year - base_year
+.compute_time_trend <- function(tgt_year, tgt_age_group, tgt_sex, base_year) {
+  tgt_year - base_year
 }
 
 #' @keywords internal
-.get_child_under6_prop <- function(children_props, age_group, year) {
+.get_child_under6_prop <- function(children_props, tgt_age_group, tgt_year) {
   if (is.null(children_props)) return(0)
-  row <- children_props[age_group == (!!age_group) & year == (!!year)]
+  row <- children_props[age_group == tgt_age_group & year == tgt_year]
   if (nrow(row) > 0) row$proportion[1] else 0
 }
 
 #' @keywords internal
-.get_rd <- function(rd, age_group, sex, year) {
+.get_rd <- function(rd, tgt_age_group, tgt_sex, tgt_year) {
   if (is.null(rd)) return(0)
-  row <- rd[age_group == (!!age_group) & sex == (!!sex) & year == (!!year)]
+  row <- rd[age_group == tgt_age_group & sex == tgt_sex & year == tgt_year]
   if (nrow(row) > 0) row$rd[1] else 0
 }
 
 #' @keywords internal
-.get_edscore <- function(edscore, age_group, sex, year) {
+.get_edscore <- function(edscore, tgt_age_group, tgt_sex, tgt_year) {
   if (is.null(edscore)) return(1)
-  row <- edscore[age_group == (!!age_group) & sex == (!!sex) & year == (!!year)]
+  row <- edscore[age_group == tgt_age_group & sex == tgt_sex & year == tgt_year]
   if (nrow(row) > 0) row$edscore[1] else 1
 }
 
 #' @keywords internal
-.get_msshare <- function(msshare, age, sex, year) {
+.get_msshare <- function(msshare, tgt_age, tgt_sex, tgt_year) {
   if (is.null(msshare)) return(0.5)
-  row <- msshare[age == (!!age) & sex == (!!sex) & year == (!!year)]
+  row <- msshare[age == tgt_age & sex == tgt_sex & year == tgt_year]
   if (nrow(row) > 0) row$msshare[1] else 0.5
 }
 
 #' @keywords internal
-.get_rradj <- function(rradj, age, sex, year) {
+.get_rradj <- function(rradj, tgt_age, tgt_sex, tgt_year) {
   if (is.null(rradj)) return(0)
-  row <- rradj[age == (!!age) & sex == (!!sex) & year == (!!year)]
+  row <- rradj[age == tgt_age & sex == tgt_sex & year == tgt_year]
   if (nrow(row) > 0) row$rradj[1] else 0
 }
 
 #' @keywords internal
-.get_pot_et_txrt <- function(pot_et_txrt, age, year) {
+.get_pot_et_txrt <- function(pot_et_txrt, tgt_age, tgt_year) {
   if (is.null(pot_et_txrt)) return(0)
-  row <- pot_et_txrt[age == (!!age) & year == (!!year)]
+  row <- pot_et_txrt[age == tgt_age & year == tgt_year]
   if (nrow(row) > 0) row$pot_et_txrt[1] else 0
 }
 
 #' @keywords internal
-.get_cni_pop <- function(cni_pop, age_group, sex, marital_status, year) {
-  # Map internal marital status names to data column values
+.get_cni_pop <- function(cni_pop, tgt_age_group, tgt_sex, tgt_marital_status, tgt_year) {
   ms_map <- c(
     never_married = "single",
     married_present = "married",
     married_absent = "married"
   )
-  ms_val <- ms_map[[marital_status]]
-  if (is.null(ms_val)) ms_val <- marital_status
+  ms_val <- ms_map[[tgt_marital_status]]
+  if (is.null(ms_val)) ms_val <- tgt_marital_status
 
-  row <- cni_pop[age_group == (!!age_group) & sex == (!!sex) &
-                 marital_status == ms_val & year == (!!year)]
+  row <- cni_pop[age_group == tgt_age_group & sex == tgt_sex &
+                 marital_status == ms_val & year == tgt_year]
   if (nrow(row) > 0) sum(row$population) else 1
 }
 
