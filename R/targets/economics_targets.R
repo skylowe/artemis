@@ -157,6 +157,11 @@ create_economics_targets <- function() {
         employment_inputs = employment_inputs,
         lfpr_coefficients = lfpr_coefficients,
         historical_lfpr = cps_labor_force[concept == "lfpr"],
+        historical_ru = cps_labor_force[
+          concept == "unemployment_rate" & marital_status == "all" &
+            is.na(age),
+          .(year, age_group, sex, rate = value)
+        ],
         config_employment = config_economics$employment
       )
     ),

@@ -237,6 +237,219 @@ project_unemployment_rates <- function(rtp_quarterly,
 }
 
 # =============================================================================
+# LFPR Time Trend Calibration
+# =============================================================================
+
+#' Calibrate LFPR time trend base values from historical CPS data
+#'
+#' @description
+#' For each (age_group, sex, marital_status, child_status) combination that has
+#' a non-zero trend coefficient, solve for the base-year trend value that makes
+#' the LFPR equation reproduce the observed CPS LFPR.
+#'
+#' The LFPR equations include a time trend term `trend_coeff * TR`. The trend
+#' variable is a cumulative counter reflecting decades of structural participation
+#' change. At the base year, it should be calibrated so the equation reproduces
+#' observed LFPR. For projection years, trend_val = TR_base + (year - base_year).
+#'
+#' @param lfpr_coefficients LFPR regression coefficients
+#' @param historical_lfpr Historical LFPR from CPS (data.table)
+#' @param historical_ru Historical unemployment rates from CPS (data.table)
+#' @param rd Disability prevalence ratio (data.table or NULL)
+#' @param children_props Children under 6 proportions (data.table or NULL)
+#' @param base_year Base year for calibration
+#'
+#' @return data.table with columns: age_group, sex, marital_status, child_status,
+#'   category, type, calibrated_tr_base
+#'
+#' @keywords internal
+calibrate_lfpr_trends <- function(lfpr_coefficients, historical_lfpr,
+                                   historical_ru, rd, children_props,
+                                   base_year) {
+  cli::cli_alert_info("Calibrating LFPR time trends from CPS data at base year {base_year}")
+
+  results <- list()
+
+  # Helper: get RU lag terms for (age_group, sex) at base_year from historical data
+  get_ru_lags_hist <- function(ag, sx, ru_lag_coeffs) {
+    ru_sum <- 0
+    for (lag_i in seq_along(ru_lag_coeffs)) {
+      lag_year <- base_year - (lag_i - 1L)
+      ru_val <- historical_ru[age_group == ag & sex == sx & year == lag_year, rate]
+      if (length(ru_val) == 0) ru_val <- 0
+      ru_sum <- ru_sum + ru_lag_coeffs[lag_i] * ru_val[1]
+    }
+    ru_sum
+  }
+
+  # Helper: get RD at base year for (age_group, sex)
+  get_rd_base <- function(ag, sx) {
+    if (is.null(rd)) return(0)
+    rd_val <- rd[age_group == ag & sex == sx & year == base_year, rd]
+    if (length(rd_val) == 0) {
+      # Try first available year
+      rd_val <- rd[age_group == ag & sex == sx, rd]
+      if (length(rd_val) == 0) return(0)
+      return(rd_val[1])
+    }
+    rd_val[1]
+  }
+
+  # Helper: get children proportion at base year for (age_group)
+  get_c6u_base <- function(ag) {
+    if (is.null(children_props)) return(0)
+    cp_val <- children_props[age_group == ag & year == base_year, proportion]
+    if (length(cp_val) == 0) {
+      cp_val <- children_props[age_group == ag, proportion]
+      if (length(cp_val) == 0) return(0)
+      return(cp_val[1])
+    }
+    cp_val[1]
+  }
+
+  # ── Section 1: Young ages (16-17, 18-19) ──────────────────────────
+  for (sex_name in c("male", "female")) {
+    for (ag in c("16-17", "18-19")) {
+      coeffs <- lfpr_coefficients[[sex_name]][[ag]]
+      if (is.null(coeffs$trend_coeff) || coeffs$trend_coeff == 0) next
+
+      # Observed CPS LFPR at base year (marital_status = "all", child_status = "all")
+      obs_lfpr <- historical_lfpr[
+        age_group == ag & sex == sex_name & year == base_year &
+          marital_status == "all" & child_status == "all", value]
+      if (length(obs_lfpr) == 0) {
+        cli::cli_abort("No CPS LFPR for {sex_name} {ag} at base year {base_year}")
+      }
+      obs_lfpr <- obs_lfpr[1]
+
+      # RU lag terms
+      ru_sum <- get_ru_lags_hist(ag, sex_name, coeffs$ru_lags)
+
+      # RD at base year
+      rd_val <- get_rd_base(ag, sex_name)
+
+      # Children proportion terms (female only)
+      c6u_effect <- 0
+      if (!is.null(coeffs$child_under6_coeff)) {
+        c6u_prop <- get_c6u_base(ag)
+        c6u_effect <- coeffs$child_under6_coeff * c6u_prop +
+          (coeffs$child_under6_offset %||% 0)
+      }
+
+      # Solve: obs_lfpr * (1 + rd) = ru_sum + trend_coeff * TR + trend_offset + c6u + intercept
+      numerator_target <- obs_lfpr * (1 + rd_val)
+      tr_base <- (numerator_target - ru_sum - (coeffs$trend_offset %||% 0) -
+                    c6u_effect - coeffs$intercept) / coeffs$trend_coeff
+
+      # Validate: plug back in to verify
+      check_num <- ru_sum + coeffs$trend_coeff * tr_base +
+        (coeffs$trend_offset %||% 0) + c6u_effect + coeffs$intercept
+      check_lfpr <- check_num / (1 + rd_val)
+      if (abs(check_lfpr - obs_lfpr) > 0.005) {
+        cli::cli_abort(c(
+          "Trend calibration failed for {sex_name} {ag}",
+          "i" = "Observed LFPR: {round(obs_lfpr, 4)}, reconstructed: {round(check_lfpr, 4)}"
+        ))
+      }
+
+      results[[length(results) + 1L]] <- data.table::data.table(
+        age_group = ag, sex = sex_name,
+        marital_status = "all", child_status = "all",
+        category = NA_character_, type = "young",
+        calibrated_tr_base = tr_base
+      )
+      cli::cli_alert_success(
+        "  {sex_name} {ag}: TR_base = {round(tr_base, 1)}, obs LFPR = {round(obs_lfpr * 100, 1)}%"
+      )
+    }
+  }
+
+  # ── Section 2: Male marital ages (20-24, 25-29) ───────────────────
+  marital_statuses <- c("never_married", "married_present", "married_absent")
+  for (ag in c("20-24", "25-29", "30-34", "35-39", "40-44", "45-49", "50-54")) {
+    coeffs <- lfpr_coefficients$male[[ag]]
+    if (is.null(coeffs) || coeffs$type != "marital") next
+    for (ms in marital_statuses) {
+      ms_coeffs <- coeffs[[ms]]
+      tc <- ms_coeffs$trend_coeff %||% 0
+      if (tc == 0) next
+
+      # Observed CPS LFPR for this (age_group, male, marital_status)
+      obs_lfpr <- historical_lfpr[
+        age_group == ag & sex == "male" & year == base_year &
+          marital_status == ms & child_status == "all", value]
+      if (length(obs_lfpr) == 0) {
+        cli::cli_abort("No CPS LFPR for male {ag} {ms} at base year {base_year}")
+      }
+      obs_lfpr <- obs_lfpr[1]
+
+      ru_sum <- get_ru_lags_hist(ag, "male", ms_coeffs$ru_lags)
+      rd_val <- get_rd_base(ag, "male")
+
+      # Solve: obs_lfpr * (1 + rd) = ru_sum + tc * TR + intercept
+      numerator_target <- obs_lfpr * (1 + rd_val)
+      tr_base <- (numerator_target - ru_sum - ms_coeffs$intercept) / tc
+
+      results[[length(results) + 1L]] <- data.table::data.table(
+        age_group = ag, sex = "male",
+        marital_status = ms, child_status = "all",
+        category = NA_character_, type = "marital",
+        calibrated_tr_base = tr_base
+      )
+    }
+  }
+
+  # ── Section 3: Female marital×children ages (20-44) ────────────────
+  mc_categories <- c(
+    "never_married_child_under6", "never_married_no_child",
+    "married_present_child_under6", "married_present_no_child",
+    "married_absent_child_under6", "married_absent_no_child"
+  )
+  for (ag in c("20-24", "25-29", "30-34", "35-39", "40-44")) {
+    coeffs <- lfpr_coefficients$female[[ag]]
+    if (is.null(coeffs) || coeffs$type != "marital_children") next
+    for (cat in mc_categories) {
+      cat_coeffs <- coeffs[[cat]]
+      if (is.null(cat_coeffs)) next
+      tc <- cat_coeffs$trend_coeff %||% 0
+      if (tc == 0) next
+
+      ms <- sub("_(child_under6|no_child)$", "", cat)
+      cs <- sub("^.*_(child_under6|no_child)$", "\\1", cat)
+
+      # Observed CPS LFPR for this (age_group, female, marital_status, child_status)
+      obs_lfpr <- historical_lfpr[
+        age_group == ag & sex == "female" & year == base_year &
+          marital_status == ms & child_status == cs, value]
+      if (length(obs_lfpr) == 0) {
+        cli::cli_abort("No CPS LFPR for female {ag} {ms}/{cs} at base year {base_year}")
+      }
+      obs_lfpr <- obs_lfpr[1]
+
+      ru_sum <- get_ru_lags_hist(ag, "female", cat_coeffs$ru_lags)
+      rd_val <- get_rd_base(ag, "female")
+
+      # Solve: obs_lfpr * (1 + rd) = ru_sum + tc * TR + intercept
+      numerator_target <- obs_lfpr * (1 + rd_val)
+      tr_base <- (numerator_target - ru_sum - cat_coeffs$intercept) / tc
+
+      results[[length(results) + 1L]] <- data.table::data.table(
+        age_group = ag, sex = "female",
+        marital_status = ms, child_status = cs,
+        category = cat, type = "marital_children",
+        calibrated_tr_base = tr_base
+      )
+    }
+  }
+
+  result_dt <- data.table::rbindlist(results)
+  cli::cli_alert_success(
+    "Calibrated {nrow(result_dt)} trend base values (TR_base range: {round(min(result_dt$calibrated_tr_base), 1)} to {round(max(result_dt$calibrated_tr_base), 1)})"
+  )
+  result_dt
+}
+
+# =============================================================================
 # Labor Force Participation Rate Projection (Eq 2.1.4)
 # =============================================================================
 
@@ -260,6 +473,8 @@ project_unemployment_rates <- function(rtp_quarterly,
 #' @param employment_inputs List of constructed input variables (EDSCORE, MSSHARE, RD, RRADJ, etc.)
 #' @param lfpr_coefficients LFPR regression coefficients (from lfpr_coefficients.yaml)
 #' @param historical_lfpr Historical LFPR by detailed disaggregation
+#' @param historical_ru Historical unemployment rates by age group and sex
+#'   (data.table with year, age_group, sex, rate)
 #' @param config_employment Employment config section
 #'
 #' @return List with:
@@ -274,11 +489,13 @@ project_lfpr <- function(unemployment_rates,
                           employment_inputs,
                           lfpr_coefficients,
                           historical_lfpr,
+                          historical_ru,
                           config_employment) {
   checkmate::assert_list(unemployment_rates)
   checkmate::assert_data_table(cni_population)
   checkmate::assert_list(employment_inputs)
   checkmate::assert_list(lfpr_coefficients)
+  checkmate::assert_data_table(historical_ru)
   checkmate::assert_list(config_employment)
 
   base_year <- config_employment$base_year
@@ -310,6 +527,18 @@ project_lfpr <- function(unemployment_rates,
   addfactors <- config_employment$addfactors
 
   cli::cli_alert_info("Projecting LFPR for {n_proj_years} years")
+
+  # ============================================================================
+  # Calibrate time trend base values from historical CPS data
+  # ============================================================================
+  trend_calibration <- calibrate_lfpr_trends(
+    lfpr_coefficients = lfpr_coefficients,
+    historical_lfpr = historical_lfpr,
+    historical_ru = historical_ru,
+    rd = rd,
+    children_props = children_props,
+    base_year = base_year
+  )
 
   # ============================================================================
   # Pre-index input tables for fast keyed lookup
@@ -411,8 +640,14 @@ project_lfpr <- function(unemployment_rates,
     young_grid[, proportion := 0]
   }
 
+  # Merge calibrated trend base values
+  young_cal <- trend_calibration[type == "young", .(age_group, sex, calibrated_tr_base)]
+  young_grid <- merge(young_grid, young_cal,
+                       by = c("age_group", "sex"), all.x = TRUE, sort = FALSE)
+  young_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
+
   # Compute LFPR
-  young_grid[, trend_val := year - base_year]
+  young_grid[, trend_val := calibrated_tr_base + (year - base_year)]
   young_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                             rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   young_grid[, trend_effect := trend_coeff * trend_val + trend_offset]
@@ -464,8 +699,15 @@ project_lfpr <- function(unemployment_rates,
     male_grid[, rd := 0]
   }
 
+  # Merge calibrated trend base values (only 20-24 and 25-29 have trend_coeff)
+  male_cal <- trend_calibration[type == "marital" & sex == "male",
+    .(age_group, marital_status, calibrated_tr_base)]
+  male_grid <- merge(male_grid, male_cal,
+                      by = c("age_group", "marital_status"), all.x = TRUE, sort = FALSE)
+  male_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
+
   # Compute per-status LFPR
-  male_grid[, trend_val := year - base_year]
+  male_grid[, trend_val := calibrated_tr_base + (year - base_year)]
   male_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                            rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   male_grid[, lfpr_raw := (ru_effect + trend_coeff * trend_val + intercept) / (1 + rd)]
@@ -561,8 +803,15 @@ project_lfpr <- function(unemployment_rates,
     fmc_grid[, rd := 0]
   }
 
+  # Merge calibrated trend base values (only no_child categories in 20-24, 25-29 have trend)
+  fmc_cal <- trend_calibration[type == "marital_children" & sex == "female",
+    .(age_group, category, calibrated_tr_base)]
+  fmc_grid <- merge(fmc_grid, fmc_cal,
+                     by = c("age_group", "category"), all.x = TRUE, sort = FALSE)
+  fmc_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
+
   # Compute per-category LFPR
-  fmc_grid[, trend_val := year - base_year]
+  fmc_grid[, trend_val := calibrated_tr_base + (year - base_year)]
   fmc_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                           rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   fmc_grid[, lfpr_raw := (ru_effect + trend_coeff * trend_val + intercept) / (1 + rd)]
@@ -1076,14 +1325,34 @@ project_labor_force_employment <- function(lfpr_projection,
   # Aggregate 5-year groups
   cni_grouped <- cni_pop[, .(population = sum(population)),
                          by = .(year, quarter, age_group, sex)]
-  # Combine both
-  cni_by_group <- data.table::rbindlist(list(cni_grouped, cni_single))
+  # Create 80+ aggregate from single-year ages (LFPR outputs both single-year and 80+)
+  cni_80plus <- cni_pop[age >= 80, .(population = sum(population)),
+                        by = .(year, quarter, sex)]
+  cni_80plus[, age_group := "80+"]
+  # Combine all
+  cni_by_group <- data.table::rbindlist(list(cni_grouped, cni_single, cni_80plus),
+                                         use.names = TRUE)
+
+  # Map single-year LFPR ages (55-100, 80+) to UR 5-year groups for the merge
+  # LFPR uses single-year ages for 55+, but UR uses 5-year groups (55-59, 60-64, etc.)
+  ur_age_lookup <- data.table::data.table(
+    age_group = c(USEMP_LFPR_5YR_GROUPS, as.character(USEMP_LFPR_SINGLE_AGES), "80+"),
+    ur_age_group = c(
+      USEMP_LFPR_5YR_GROUPS,  # 16-17 through 50-54 map to themselves
+      rep("55-59", 5), rep("60-64", 5), rep("65-69", 5), rep("70-74", 5),
+      rep("75+", 26),  # ages 75-100
+      "75+"  # 80+ aggregate
+    )
+  )
+  lfpr_q <- merge(lfpr_q, ur_age_lookup, by = "age_group", all.x = TRUE)
+  lfpr_q[is.na(ur_age_group), ur_age_group := "75+"]
 
   # Merge LFPR, RU, and population
   lf_data <- merge(lfpr_q, cni_by_group,
                    by = c("year", "quarter", "age_group", "sex"), all.x = TRUE)
   lf_data <- merge(lf_data, ru_q,
-                   by = c("year", "quarter", "age_group", "sex"),
+                   by.x = c("year", "quarter", "ur_age_group", "sex"),
+                   by.y = c("year", "quarter", "age_group", "sex"),
                    all.x = TRUE, suffixes = c("", "_ru"))
 
   # LC = LFPR × N (Eq 2.1.5)
