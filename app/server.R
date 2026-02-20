@@ -68,7 +68,7 @@ server <- function(input, output, session) {
     # Update scenario selector
     if (length(rv$scenarios) > 0) {
       scenario_choices <- c(
-        "TR2025 Baseline" = "baseline",
+        "ARTEMIS 2025 Baseline" = "baseline",
         setNames(names(rv$scenarios), names(rv$scenarios))
       )
       updateSelectInput(session, "active_scenario", choices = scenario_choices)
@@ -333,7 +333,7 @@ server <- function(input, output, session) {
   # Update scenario dropdown when scenarios change
 
   observe({
-    scenario_choices <- c("TR2025 Baseline" = "baseline")
+    scenario_choices <- c("ARTEMIS 2025 Baseline" = "baseline")
     if (length(rv$scenarios) > 0) {
       scenario_choices <- c(
         scenario_choices,

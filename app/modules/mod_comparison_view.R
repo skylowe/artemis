@@ -15,7 +15,7 @@ mod_comparison_view_ui <- function(id) {
       checkboxGroupInput(
         ns("scenarios"),
         NULL,
-        choices = c("TR2025 Baseline" = "baseline"),
+        choices = c("ARTEMIS 2025 Baseline" = "baseline"),
         selected = "baseline"
       ),
 
@@ -140,7 +140,7 @@ mod_comparison_view_server <- function(id, rv) {
 
     # Update scenario choices when scenarios change
     observe({
-      choices <- c("TR2025 Baseline" = "baseline")
+      choices <- c("ARTEMIS 2025 Baseline" = "baseline")
 
       if (length(rv$scenarios) > 0) {
         scenario_choices <- setNames(names(rv$scenarios), names(rv$scenarios))
@@ -202,7 +202,7 @@ mod_comparison_view_server <- function(id, rv) {
         # Get scenario data
         if (scenario_id == "baseline") {
           data <- rv$baseline
-          name <- "TR2025 Baseline"
+          name <- "ARTEMIS 2025 Baseline"
         } else if (scenario_id %in% names(rv$scenarios)) {
           data <- rv$scenarios[[scenario_id]]$results
           name <- scenario_id
@@ -288,8 +288,8 @@ mod_comparison_view_server <- function(id, rv) {
       }
 
       # Apply comparison type transformation
-      if (input$comparison_type != "absolute" && "TR2025 Baseline" %in% unique(data$scenario)) {
-        baseline_vals <- data[scenario == "TR2025 Baseline", .(year, baseline = value)]
+      if (input$comparison_type != "absolute" && "ARTEMIS 2025 Baseline" %in% unique(data$scenario)) {
+        baseline_vals <- data[scenario == "ARTEMIS 2025 Baseline", .(year, baseline = value)]
         data <- merge(data, baseline_vals, by = "year", all.x = TRUE)
 
         if (input$comparison_type == "diff") {

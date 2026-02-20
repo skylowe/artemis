@@ -311,7 +311,7 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
           name = name,
           description = input$scenario_description,
           created = Sys.time(),
-          baseline = "tr2025_intermediate"
+          baseline = "artemis_2025_intermediate"
         ),
         config = config_result() %||% rv$config,
         results = rv$active_data,

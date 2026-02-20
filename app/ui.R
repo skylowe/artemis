@@ -46,7 +46,7 @@ ui <- page_navbar(
         selectInput(
           "active_scenario",
           "Active Scenario",
-          choices = c("TR2025 Baseline" = "baseline"),
+          choices = c("ARTEMIS 2025 Baseline" = "baseline"),
           selected = "baseline"
         ),
 
