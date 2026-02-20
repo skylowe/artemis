@@ -93,96 +93,113 @@ project_unemployment_rates <- function(rtp_quarterly,
   cli::cli_alert_info("Projecting unemployment rates from base year {base_year}")
 
   # Step 1: Compute quarterly D(RTP) = RTP(q) - RTP(q-1)
+  # ── Vectorized RTP preparation ──────────────────────────────────
   rtp <- data.table::copy(rtp_quarterly)
   data.table::setorder(rtp, year, quarter)
   rtp[, d_rtp := rtp - shift(rtp, 1)]
-
-  # Prepare lagged D(RTP) columns
   rtp[, d_rtp_1 := shift(d_rtp, 1)]
   rtp[, d_rtp_2 := shift(d_rtp, 2)]
   rtp[, d_rtp_3 := shift(d_rtp, 3)]
 
-  # Initialize results from historical data
-  all_results <- list()
-  all_fe_results <- list()
-  all_diff_results <- list()
+  # RTP lags for full-employment differentials (Section 5)
+  rtp[, rtp_1 := shift(rtp, 1)]
+  rtp[, rtp_2 := shift(rtp, 2)]
+  rtp[, rtp_3 := shift(rtp, 3)]
 
-  for (sex in c("male", "female")) {
-    sex_coeffs <- ru_coefficients[[sex]]
-    sex_prefix <- if (sex == "male") "M" else "F"
+  # Projection quarters as plain vectors (avoid repeated data.table indexing)
+  proj_mask <- (rtp$year > base_year | (rtp$year == base_year & rtp$quarter > 0)) &
+               !is.na(rtp$d_rtp)
+  proj_idx <- which(proj_mask)
+  n_proj <- length(proj_idx)
 
+  # Extract D(RTP) lag matrix: n_proj × 4, each row = [d_rtp, d_rtp_1, d_rtp_2, d_rtp_3]
+  d_rtp_mat <- cbind(
+    rtp$d_rtp[proj_idx],
+    rtp$d_rtp_1[proj_idx],
+    rtp$d_rtp_2[proj_idx],
+    rtp$d_rtp_3[proj_idx]
+  )
+  d_rtp_mat[is.na(d_rtp_mat)] <- 0
+
+  # RTP lag matrix for FE differentials: (1 - RTP) for current and 3 lags
+  fe_rtp_mat <- cbind(
+    1 - rtp$rtp[proj_idx],
+    1 - fifelse(is.na(rtp$rtp_1[proj_idx]), 1, rtp$rtp_1[proj_idx]),
+    1 - fifelse(is.na(rtp$rtp_2[proj_idx]), 1, rtp$rtp_2[proj_idx]),
+    1 - fifelse(is.na(rtp$rtp_3[proj_idx]), 1, rtp$rtp_3[proj_idx])
+  )
+
+  proj_years <- rtp$year[proj_idx]
+  proj_qtrs <- rtp$quarter[proj_idx]
+
+  # ── Build coefficient matrix (28 groups × 4 lags) ─────────────
+  group_specs <- list()
+  for (sex_name in c("male", "female")) {
+    sex_coeffs <- ru_coefficients[[sex_name]]
     for (ag in USEMP_RU_AGE_GROUPS) {
       coeffs <- sex_coeffs[[ag]]
       if (is.null(coeffs)) {
-        cli::cli_abort("Missing unemployment coefficients for {sex} {ag}")
+        cli::cli_abort("Missing unemployment coefficients for {sex_name} {ag}")
       }
-
-      d <- c(coeffs$d0, coeffs$d1, coeffs$d2, coeffs$d3)
-
-      # Get historical values for this age-sex group
-      sex_val <- sex  # Local copy avoids data.table column name collision
-      hist_vals <- historical_ru[age_group == ag & sex == sex_val]
-      data.table::setorder(hist_vals, year, quarter)
-
-      # Seed the projection with the last historical value
-      last_hist <- hist_vals[.N, rate]
-
-      # Project forward quarterly using first-difference model
-      proj_quarters <- rtp[year > base_year | (year == base_year & quarter > 0)]
-      proj_quarters <- proj_quarters[!is.na(d_rtp)]
-
-      prev_rate <- last_hist
-      rates <- numeric(nrow(proj_quarters))
-
-      for (i in seq_len(nrow(proj_quarters))) {
-        d_rtp_vec <- c(
-          proj_quarters[i, d_rtp],
-          proj_quarters[i, d_rtp_1],
-          proj_quarters[i, d_rtp_2],
-          proj_quarters[i, d_rtp_3]
-        )
-        # Replace NA lags with 0 (before enough history exists)
-        d_rtp_vec[is.na(d_rtp_vec)] <- 0
-
-        # Preliminary rate: R_P(q) = R_P(q-1) + sum(d_k * D(RTP(q-k)))
-        rate_change <- sum(d * d_rtp_vec)
-        prev_rate <- prev_rate + rate_change
-        rates[i] <- prev_rate
-      }
-
-      proj_quarters[, rate := rates]
-      proj_quarters[, age_group := ag]
-      proj_quarters[, sex := sex]
-
-      all_results[[paste(sex, ag)]] <- proj_quarters[, .(year, quarter, age_group, sex, rate)]
-
-      # Full employment differentials (Section 5)
-      # DR_FE = sum(d_k * (1 - RTP(q-k)))
-      fe_diff <- numeric(nrow(proj_quarters))
-      for (i in seq_len(nrow(proj_quarters))) {
-        rtp_vec <- c(
-          proj_quarters[i, rtp],
-          rtp[year == proj_quarters[i, year] & quarter == proj_quarters[i, quarter] - 1, rtp],
-          rtp[year == proj_quarters[i, year] & quarter == proj_quarters[i, quarter] - 2, rtp],
-          rtp[year == proj_quarters[i, year] & quarter == proj_quarters[i, quarter] - 3, rtp]
-        )
-        # Simplified — proper lagging will use full quarterly index
-        rtp_vals <- rep(1, 4)  # Placeholder for proper RTP lag lookup
-        fe_diff[i] <- sum(d * (1 - rtp_vals))
-      }
-
-      proj_quarters[, fe_differential := fe_diff]
-      proj_quarters[, fe_rate := rate + fe_differential]
-
-      all_fe_results[[paste(sex, ag)]] <- proj_quarters[, .(year, quarter, age_group, sex, fe_rate)]
-      all_diff_results[[paste(sex, ag)]] <- proj_quarters[, .(year, quarter, age_group, sex, fe_differential)]
+      group_specs[[length(group_specs) + 1]] <- list(
+        sex = sex_name, age_group = ag,
+        d = c(coeffs$d0, coeffs$d1, coeffs$d2, coeffs$d3)
+      )
     }
   }
+  n_groups <- length(group_specs)
 
-  # Combine all age-sex groups
-  preliminary <- data.table::rbindlist(all_results)
-  fe_rates <- data.table::rbindlist(all_fe_results)
-  differentials <- data.table::rbindlist(all_diff_results)
+  # Coefficient matrix: n_groups × 4
+  coeff_mat <- do.call(rbind, lapply(group_specs, function(g) g$d))
+
+  # ── Vectorized preliminary rate computation ────────────────────
+  # rate_change[q] = coeff %*% d_rtp_lags[q]  (matrix multiply)
+  # rate_change is n_proj × n_groups
+  rate_change_mat <- d_rtp_mat %*% t(coeff_mat)  # n_proj × n_groups
+
+  # Get seed rates from historical data for each group
+  seed_rates <- vapply(group_specs, function(g) {
+    hist_vals <- historical_ru[age_group == g$age_group & sex == g$sex]
+    if (nrow(hist_vals) > 0) hist_vals[.N, rate] else 0
+  }, numeric(1))
+
+  # Cumulative sum of rate changes + seed rate = preliminary rates
+  # R_P(q) = R_P(q-1) + rate_change(q) = seed + cumsum(rate_changes)
+  prelim_rates <- apply(rate_change_mat, 2, cumsum)  # n_proj × n_groups
+  prelim_rates <- sweep(prelim_rates, 2, seed_rates, `+`)
+
+  # ── Vectorized FE differentials ────────────────────────────────
+  # DR_FE = coeff %*% (1 - RTP_lags)
+  fe_diff_mat <- fe_rtp_mat %*% t(coeff_mat)  # n_proj × n_groups
+
+  # ── Assemble results ───────────────────────────────────────────
+  # Build long-format data.table directly
+  group_names <- vapply(group_specs, function(g) g$age_group, character(1))
+  group_sexes <- vapply(group_specs, function(g) g$sex, character(1))
+
+  preliminary <- data.table::data.table(
+    year = rep(proj_years, n_groups),
+    quarter = rep(proj_qtrs, n_groups),
+    age_group = rep(group_names, each = n_proj),
+    sex = rep(group_sexes, each = n_proj),
+    rate = as.vector(prelim_rates)
+  )
+
+  fe_rates_dt <- data.table::data.table(
+    year = rep(proj_years, n_groups),
+    quarter = rep(proj_qtrs, n_groups),
+    age_group = rep(group_names, each = n_proj),
+    sex = rep(group_sexes, each = n_proj),
+    fe_rate = as.vector(prelim_rates + fe_diff_mat)
+  )
+
+  differentials <- data.table::data.table(
+    year = rep(proj_years, n_groups),
+    quarter = rep(proj_qtrs, n_groups),
+    age_group = rep(group_names, each = n_proj),
+    sex = rep(group_sexes, each = n_proj),
+    fe_differential = as.vector(fe_diff_mat)
+  )
 
   # Step 2: Age-sex adjusted aggregate (Section 2)
   # Weight preliminary rates by base year labor force
@@ -214,7 +231,7 @@ project_unemployment_rates <- function(rtp_quarterly,
 
   list(
     actual = actual,
-    full_employment = fe_rates,
+    full_employment = fe_rates_dt,
     differentials = differentials
   )
 }
@@ -266,6 +283,7 @@ project_lfpr <- function(unemployment_rates,
 
   base_year <- config_employment$base_year
   projection_years <- (base_year + 1):2100
+  n_proj_years <- length(projection_years)
 
   # Extract input components
   edscore <- employment_inputs$edscore
@@ -287,330 +305,699 @@ project_lfpr <- function(unemployment_rates,
   # Addfactors (default to empty)
   addfactors <- config_employment$addfactors
 
-  cli::cli_alert_info("Projecting LFPR for {length(projection_years)} years")
+  cli::cli_alert_info("Projecting LFPR for {n_proj_years} years")
 
-  # ── Compute LFPR for each equation type ──────────────────────────
+  # ============================================================================
+  # Pre-index input tables for fast keyed lookup
+  # ============================================================================
+  # Set keys on input data.tables for O(log n) binary search instead of O(n) scan
+  if (!is.null(rd)) data.table::setkey(rd, age_group, sex, year)
+  if (!is.null(edscore)) data.table::setkey(edscore, age_group, sex, year)
+  if (!is.null(msshare)) data.table::setkey(msshare, age, sex, year)
+  if (!is.null(rradj)) data.table::setkey(rradj, age, sex, year)
+  if (!is.null(pot_et_txrt)) data.table::setkey(pot_et_txrt, age, year)
+  if (!is.null(children_props)) data.table::setkey(children_props, age_group, year)
+  data.table::setkey(ru_annual, age_group, sex, year)
+  if (!is.null(marital_pop)) data.table::setkey(marital_pop, age, sex, lfpr_marital_status, year)
 
-  detailed_results <- list()
-  aggregate_results <- list()
+  # ============================================================================
+  # Build RU lag matrix for all (age_group, sex, year) triples needed by 16-54
+  # ============================================================================
+  # For each age_group x sex x year, we need RU rates at year, year-1, ..., year-5
+  # Build this as a wide matrix via a single merge operation
 
-  for (yr in projection_years) {
+  ru_groups_16_54 <- USEMP_LFPR_5YR_GROUPS  # "16-17" through "50-54"
+  ru_grid <- data.table::CJ(
+    age_group = ru_groups_16_54,
+    sex = c("male", "female"),
+    year = projection_years,
+    sorted = FALSE
+  )
 
-    # --- Ages 16-19 (young) ---
-    for (sex in c("male", "female")) {
-      sex_coeffs <- lfpr_coefficients[[sex]]
+  # Build lag columns via repeated merge
+  for (lag_i in 0:5) {
+    lag_col <- paste0("ru_lag", lag_i)
+    ru_grid[, lag_year := year - lag_i]
+    ru_grid <- merge(ru_grid, ru_annual[, .(age_group, sex, year, rate)],
+                     by.x = c("age_group", "sex", "lag_year"),
+                     by.y = c("age_group", "sex", "year"),
+                     all.x = TRUE, sort = FALSE)
+    data.table::setnames(ru_grid, "rate", lag_col)
+    ru_grid[is.na(get(lag_col)), (lag_col) := 0]
+  }
+  ru_grid[, lag_year := NULL]
+  ru_lag_cols <- paste0("ru_lag", 0:5)
 
-      for (ag in c("16-17", "18-19")) {
-        coeffs <- sex_coeffs[[ag]]
-        ru_ag_rates <- .get_ru_lags(ru_annual, ag, sex, yr, n_lags = 6)
-        ru_effect <- sum(coeffs$ru_lags * ru_ag_rates)
-        # Time trend
-        trend_val <- .compute_time_trend(yr, ag, sex, base_year)
-        trend_effect <- coeffs$trend_coeff * trend_val + coeffs$trend_offset
+  # ============================================================================
+  # SECTION 1: Ages 16-19 (young) — fully vectorized
+  # ============================================================================
 
-        # Child-under-6 effect (female only)
-        c6u_effect <- 0
-        if (sex == "female" && !is.null(coeffs$child_under6_coeff)) {
-          c6u_prop <- .get_child_under6_prop(children_props, ag, yr)
-          c6u_effect <- coeffs$child_under6_coeff * c6u_prop + coeffs$child_under6_offset
-        }
-
-        # Disability adjustment
-        rd_val <- .get_rd(rd, ag, sex, yr)
-
-        lfpr_p <- (ru_effect + trend_effect + c6u_effect + coeffs$intercept) / (1 + rd_val)
-
-        detailed_results[[paste(yr, sex, ag)]] <- data.table::data.table(
-          year = yr, age_group = ag, sex = sex,
-          marital_status = "all", child_status = "all",
-          lfpr = lfpr_p, type = "young"
-        )
-      }
-    }
-
-    # --- Ages 20-54 male (marital status disaggregation) ---
-    for (ag in c("20-24", "25-29", "30-34", "35-39", "40-44", "45-49", "50-54")) {
-      coeffs <- lfpr_coefficients$male[[ag]]
-      if (is.null(coeffs) || coeffs$type != "marital") next
-
-      ru_ag_rates <- .get_ru_lags(ru_annual, ag, "male", yr, n_lags = 6)
-      rd_val <- .get_rd(rd, ag, "male", yr)
-
-      # Population weights for aggregation
-      pop_nm <- .get_cni_pop(cni_population, ag, "male", "never_married", yr, marital_pop)
-      pop_ms <- .get_cni_pop(cni_population, ag, "male", "married_present", yr, marital_pop)
-      pop_ma <- .get_cni_pop(cni_population, ag, "male", "married_absent", yr, marital_pop)
-      pop_total <- pop_nm + pop_ms + pop_ma
-
-      lfpr_by_status <- list()
-      for (ms in c("never_married", "married_present", "married_absent")) {
-        ms_coeffs <- coeffs[[ms]]
-        ru_effect <- sum(ms_coeffs$ru_lags * ru_ag_rates)
-        trend_effect <- 0
-        if (!is.null(ms_coeffs$trend_coeff)) {
-          trend_val <- .compute_time_trend(yr, ag, "male", base_year)
-          trend_effect <- ms_coeffs$trend_coeff * trend_val
-        }
-        lfpr_by_status[[ms]] <- (ru_effect + trend_effect + ms_coeffs$intercept) / (1 + rd_val)
-      }
-
-      # Aggregate
-      lfpr_agg <- (lfpr_by_status$never_married * pop_nm +
-                   lfpr_by_status$married_present * pop_ms +
-                   lfpr_by_status$married_absent * pop_ma) / pop_total
-
-      # Apply addfactor if any
-      lfpr_agg <- .apply_addfactor(lfpr_agg, addfactors, ag, "male")
-
-      # Rescale disaggregated to match aggregate
-      lfpr_agg_p <- (lfpr_by_status$never_married * pop_nm +
-                     lfpr_by_status$married_present * pop_ms +
-                     lfpr_by_status$married_absent * pop_ma) / pop_total
-      scale_factor <- if (lfpr_agg_p > 0) lfpr_agg / lfpr_agg_p else 1
-
-      for (ms in c("never_married", "married_present", "married_absent")) {
-        detailed_results[[paste(yr, "male", ag, ms)]] <- data.table::data.table(
-          year = yr, age_group = ag, sex = "male",
-          marital_status = ms, child_status = "all",
-          lfpr = lfpr_by_status[[ms]] * scale_factor, type = "marital"
-        )
-      }
-
-      aggregate_results[[paste(yr, "male", ag)]] <- data.table::data.table(
-        year = yr, age_group = ag, sex = "male", lfpr = lfpr_agg
+  young_specs <- list()
+  for (sex_name in c("male", "female")) {
+    for (ag in c("16-17", "18-19")) {
+      coeffs <- lfpr_coefficients[[sex_name]][[ag]]
+      young_specs[[length(young_specs) + 1L]] <- list(
+        age_group = ag, sex = sex_name,
+        ru_lags = coeffs$ru_lags,
+        trend_coeff = coeffs$trend_coeff,
+        trend_offset = coeffs$trend_offset,
+        intercept = coeffs$intercept,
+        c6u_coeff = coeffs$child_under6_coeff %||% 0,
+        c6u_offset = coeffs$child_under6_offset %||% 0,
+        has_c6u = !is.null(coeffs$child_under6_coeff)
       )
     }
+  }
 
-    # --- Ages 20-44 female (marital x children disaggregation) ---
-    for (ag in c("20-24", "25-29", "30-34", "35-39", "40-44")) {
-      coeffs <- lfpr_coefficients$female[[ag]]
-      if (is.null(coeffs) || coeffs$type != "marital_children") next
+  young_dt <- data.table::rbindlist(lapply(young_specs, function(s) {
+    data.table::data.table(
+      age_group = s$age_group, sex = s$sex,
+      rl0 = s$ru_lags[1], rl1 = s$ru_lags[2], rl2 = s$ru_lags[3],
+      rl3 = s$ru_lags[4], rl4 = s$ru_lags[5], rl5 = s$ru_lags[6],
+      trend_coeff = s$trend_coeff, trend_offset = s$trend_offset,
+      intercept = s$intercept,
+      c6u_coeff = s$c6u_coeff, c6u_offset = s$c6u_offset,
+      has_c6u = s$has_c6u
+    )
+  }))
 
-      ru_ag_rates <- .get_ru_lags(ru_annual, ag, "female", yr, n_lags = 6)
-      rd_val <- .get_rd(rd, ag, "female", yr)
+  # Cross with projection years
+  young_grid <- young_dt[, .(year = projection_years), by = names(young_dt)]
 
-      categories <- c(
-        "never_married_child_under6", "never_married_no_child",
-        "married_present_child_under6", "married_present_no_child",
-        "married_absent_child_under6", "married_absent_no_child"
-      )
+  # Merge RU lags
+  young_grid <- merge(young_grid, ru_grid,
+                       by = c("age_group", "sex", "year"), all.x = TRUE, sort = FALSE)
 
-      lfpr_by_cat <- list()
-      pop_by_cat <- list()
-      for (cat in categories) {
-        cat_coeffs <- coeffs[[cat]]
-        ru_effect <- sum(cat_coeffs$ru_lags * ru_ag_rates)
-        trend_effect <- 0
-        if (!is.null(cat_coeffs$trend_coeff)) {
-          trend_val <- .compute_time_trend(yr, ag, "female", base_year)
-          trend_effect <- cat_coeffs$trend_coeff * trend_val
-        }
-        lfpr_by_cat[[cat]] <- (ru_effect + trend_effect + cat_coeffs$intercept) / (1 + rd_val)
-        pop_by_cat[[cat]] <- .get_cni_pop_children(cni_population, children_props, ag, cat, yr)
-      }
+  # Merge RD
+  if (!is.null(rd)) {
+    young_grid <- merge(young_grid, rd[, .(age_group, sex, year, rd)],
+                         by = c("age_group", "sex", "year"), all.x = TRUE, sort = FALSE)
+    young_grid[is.na(rd), rd := 0]
+  } else {
+    young_grid[, rd := 0]
+  }
 
-      pop_total <- sum(unlist(pop_by_cat))
-      lfpr_agg <- sum(mapply(function(l, p) l * p, lfpr_by_cat, pop_by_cat)) / pop_total
+  # Merge children proportions (female only, for child_under6 effect)
+  if (!is.null(children_props)) {
+    cp_unique <- unique(children_props[, .(age_group, year, proportion)])
+    young_grid <- merge(young_grid, cp_unique,
+                         by = c("age_group", "year"), all.x = TRUE, sort = FALSE)
+    young_grid[is.na(proportion), proportion := 0]
+  } else {
+    young_grid[, proportion := 0]
+  }
 
-      lfpr_agg <- .apply_addfactor(lfpr_agg, addfactors, ag, "female")
-      lfpr_agg_p <- sum(mapply(function(l, p) l * p, lfpr_by_cat, pop_by_cat)) / pop_total
-      scale_factor <- if (lfpr_agg_p > 0) lfpr_agg / lfpr_agg_p else 1
+  # Compute LFPR
+  young_grid[, trend_val := year - base_year]
+  young_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
+                            rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
+  young_grid[, trend_effect := trend_coeff * trend_val + trend_offset]
+  young_grid[, c6u_effect := fifelse(has_c6u, c6u_coeff * proportion + c6u_offset, 0)]
+  young_grid[, lfpr := (ru_effect + trend_effect + c6u_effect + intercept) / (1 + rd)]
 
-      for (cat in categories) {
-        ms <- sub("_(child_under6|no_child)$", "", cat)
-        cs <- sub("^[^_]+_[^_]+_", "", cat)
-        detailed_results[[paste(yr, "female", ag, cat)]] <- data.table::data.table(
-          year = yr, age_group = ag, sex = "female",
-          marital_status = ms, child_status = cs,
-          lfpr = lfpr_by_cat[[cat]] * scale_factor, type = "marital_children"
-        )
-      }
+  young_detailed <- young_grid[, .(year, age_group, sex,
+                                    marital_status = "all", child_status = "all",
+                                    lfpr, type = "young")]
 
-      aggregate_results[[paste(yr, "female", ag)]] <- data.table::data.table(
-        year = yr, age_group = ag, sex = "female", lfpr = lfpr_agg
-      )
-    }
+  # ============================================================================
+  # SECTION 2: Ages 20-54 male (marital status disaggregation) — vectorized
+  # ============================================================================
 
-    # --- Ages 45-54 female (marital, no children disagg) ---
-    for (ag in c("45-49", "50-54")) {
-      coeffs <- lfpr_coefficients$female[[ag]]
-      if (is.null(coeffs) || coeffs$type != "marital") next
+  male_marital_ags <- c("20-24", "25-29", "30-34", "35-39", "40-44", "45-49", "50-54")
+  marital_statuses <- c("never_married", "married_present", "married_absent")
 
-      ru_ag_rates <- .get_ru_lags(ru_annual, ag, "female", yr, n_lags = 6)
-      rd_val <- .get_rd(rd, ag, "female", yr)
-
-      pop_nm <- .get_cni_pop(cni_population, ag, "female", "never_married", yr, marital_pop)
-      pop_ms <- .get_cni_pop(cni_population, ag, "female", "married_present", yr, marital_pop)
-      pop_ma <- .get_cni_pop(cni_population, ag, "female", "married_absent", yr, marital_pop)
-      pop_total <- pop_nm + pop_ms + pop_ma
-
-      lfpr_by_status <- list()
-      for (ms in c("never_married", "married_present", "married_absent")) {
-        ms_coeffs <- coeffs[[ms]]
-        ru_effect <- sum(ms_coeffs$ru_lags * ru_ag_rates)
-        edscore_effect <- 0
-        if (!is.null(ms_coeffs$edscore_coeff)) {
-          edscore_val <- .get_edscore(edscore, ag, "female", yr)
-          edscore_effect <- ms_coeffs$edscore_coeff * edscore_val
-        }
-        lfpr_by_status[[ms]] <- (ru_effect + edscore_effect + ms_coeffs$intercept) / (1 + rd_val)
-      }
-
-      lfpr_agg <- (lfpr_by_status$never_married * pop_nm +
-                   lfpr_by_status$married_present * pop_ms +
-                   lfpr_by_status$married_absent * pop_ma) / pop_total
-
-      lfpr_agg <- .apply_addfactor(lfpr_agg, addfactors, ag, "female")
-      lfpr_agg_p <- (lfpr_by_status$never_married * pop_nm +
-                     lfpr_by_status$married_present * pop_ms +
-                     lfpr_by_status$married_absent * pop_ma) / pop_total
-      scale_factor <- if (lfpr_agg_p > 0) lfpr_agg / lfpr_agg_p else 1
-
-      for (ms in c("never_married", "married_present", "married_absent")) {
-        detailed_results[[paste(yr, "female", ag, ms)]] <- data.table::data.table(
-          year = yr, age_group = ag, sex = "female",
-          marital_status = ms, child_status = "all",
-          lfpr = lfpr_by_status[[ms]] * scale_factor, type = "marital"
-        )
-      }
-      aggregate_results[[paste(yr, "female", ag)]] <- data.table::data.table(
-        year = yr, age_group = ag, sex = "female", lfpr = lfpr_agg
+  # Build coefficient table: one row per (age_group, marital_status)
+  male_marital_specs <- list()
+  for (ag in male_marital_ags) {
+    coeffs <- lfpr_coefficients$male[[ag]]
+    if (is.null(coeffs) || coeffs$type != "marital") next
+    for (ms in marital_statuses) {
+      ms_coeffs <- coeffs[[ms]]
+      male_marital_specs[[length(male_marital_specs) + 1L]] <- data.table::data.table(
+        age_group = ag, sex = "male", marital_status = ms,
+        rl0 = ms_coeffs$ru_lags[1], rl1 = ms_coeffs$ru_lags[2], rl2 = ms_coeffs$ru_lags[3],
+        rl3 = ms_coeffs$ru_lags[4], rl4 = ms_coeffs$ru_lags[5], rl5 = ms_coeffs$ru_lags[6],
+        trend_coeff = ms_coeffs$trend_coeff %||% 0,
+        intercept = ms_coeffs$intercept
       )
     }
+  }
+  male_coeff_dt <- data.table::rbindlist(male_marital_specs)
 
-    # --- Ages 55-74 (older / retirement) ---
-    for (sex in c("male", "female")) {
-      sex_coeffs <- lfpr_coefficients[[sex]]
-      for (age in 55:74) {
-        ag <- as.character(age)
-        coeffs <- sex_coeffs[[ag]]
-        if (is.null(coeffs)) next
+  # Cross with projection years
+  male_grid <- male_coeff_dt[, .(year = projection_years), by = names(male_coeff_dt)]
 
-        edscore_val <- .get_edscore(edscore, ag, sex, yr)
-        msshare_val <- .get_msshare(msshare, age, sex, yr)
+  # Merge RU lags
+  male_grid <- merge(male_grid, ru_grid[sex == "male"],
+                      by = c("age_group", "sex", "year"), all.x = TRUE, sort = FALSE)
 
-        # Use cohort RD at age 61 for ages 62-74
-        if (age >= 62) {
-          cohort_year <- yr - (age - 61)
-          rd_val <- .get_rd(rd, "61", sex, cohort_year)
-        } else {
-          rd_val <- .get_rd(rd, ag, sex, yr)
-        }
+  # Merge RD
+  if (!is.null(rd)) {
+    male_grid <- merge(male_grid, rd[sex == "male", .(age_group, year, rd)],
+                        by = c("age_group", "year"), all.x = TRUE, sort = FALSE)
+    male_grid[is.na(rd), rd := 0]
+  } else {
+    male_grid[, rd := 0]
+  }
 
-        lfpr_p <- coeffs$edscore_coeff * edscore_val +
-                  coeffs$msshare_coeff * msshare_val +
-                  coeffs$intercept
+  # Compute per-status LFPR
+  male_grid[, trend_val := year - base_year]
+  male_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
+                           rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
+  male_grid[, lfpr_raw := (ru_effect + trend_coeff * trend_val + intercept) / (1 + rd)]
 
-        # Retirement variables for ages 62-69
-        if (coeffs$type == "retirement") {
-          rradj_val <- .get_rradj(rradj, age, sex, yr)
-          pot_et_val <- .get_pot_et_txrt(pot_et_txrt, age, yr)
-          lfpr_p <- lfpr_p + coeffs$rradj_coeff * rradj_val +
-                    coeffs$pot_et_coeff * pot_et_val
-        }
+  # Merge marital population for weighting
+  # marital_pop has single-year ages; aggregate to age_group
+  if (!is.null(marital_pop)) {
+    marital_pop_grouped <- marital_pop[sex == "male" & year %in% projection_years,
+      .(population = sum(population, na.rm = TRUE)),
+      by = .(year, lfpr_marital_status,
+             age_group = fcase(
+               age <= 24L, "20-24", age <= 29L, "25-29", age <= 34L, "30-34",
+               age <= 39L, "35-39", age <= 44L, "40-44", age <= 49L, "45-49",
+               age <= 54L, "50-54", default = NA_character_
+             ))][!is.na(age_group)]
+    male_grid <- merge(male_grid,
+                        marital_pop_grouped[, .(age_group, year, marital_status = lfpr_marital_status, population)],
+                        by = c("age_group", "year", "marital_status"), all.x = TRUE, sort = FALSE)
+    male_grid[is.na(population) | population <= 0, population := 1]
+  } else {
+    male_grid[, population := 1]
+  }
 
-        lfpr_p <- lfpr_p / (1 + rd_val)
-        lfpr_p <- .apply_addfactor(lfpr_p, addfactors, ag, sex)
+  # Aggregate: pop-weighted LFPR per (age_group, year)
+  male_grid[, pop_total := sum(population), by = .(age_group, year)]
+  male_grid[, lfpr_agg := sum(lfpr_raw * population) / pop_total, by = .(age_group, year)]
 
-        detailed_results[[paste(yr, sex, ag)]] <- data.table::data.table(
-          year = yr, age_group = ag, sex = sex,
-          marital_status = "all", child_status = "all",
-          lfpr = lfpr_p, type = coeffs$type
-        )
-        aggregate_results[[paste(yr, sex, ag)]] <- data.table::data.table(
-          year = yr, age_group = ag, sex = sex, lfpr = lfpr_p
-        )
-      }
-    }
-
-    # --- Ages 75-79 (cohort decay) ---
-    for (sex in c("male", "female")) {
-      decay_factor <- decay_75_79[[sex]]
-      for (age in 75:79) {
-        ag <- as.character(age)
-        prior_age <- as.character(age - 1)
-        # 4-quarter (1-year) lag: use prior year's LFPR for age-1
-        prior_lfpr <- .get_prior_lfpr(aggregate_results, yr - 1, prior_age, sex)
-        lfpr_p <- prior_lfpr * decay_factor
-
-        detailed_results[[paste(yr, sex, ag)]] <- data.table::data.table(
-          year = yr, age_group = ag, sex = sex,
-          marital_status = "all", child_status = "all",
-          lfpr = lfpr_p, type = "cohort_decay_75"
-        )
-        aggregate_results[[paste(yr, sex, ag)]] <- data.table::data.table(
-          year = yr, age_group = ag, sex = sex, lfpr = lfpr_p
-        )
-      }
-    }
-
-    # --- Ages 80-100 (decay from age 79) ---
-    for (sex in c("male", "female")) {
-      for (age in 80:100) {
-        ag <- as.character(age)
-        years_from_79 <- age - 79
-
-        if (age <= 84) {
-          # PM80_P = PM79(-4) * 0.965^1  (i.e., age 79 value from years_from_79 years ago)
-          prior_yr <- yr - years_from_79
-          base_lfpr <- .get_prior_lfpr(aggregate_results, prior_yr, "79", sex)
-        } else if (age <= 94) {
-          # PM85_P = MOVAVG(8, PM79(-24)) * 0.965^6
-          # 8-quarter moving average of PM79 starting from (years_from_79) years ago
-          lag_years <- years_from_79
-          base_lfpr <- .get_movavg_lfpr(aggregate_results, yr, lag_years, "79", sex, window = 2)
-        } else {
-          # PM95+ = chain from PM94 * 0.965 each additional year
-          prior_age <- as.character(age - 1)
-          base_lfpr <- .get_prior_lfpr(aggregate_results, yr, prior_age, sex)
-          lfpr_p <- base_lfpr * decay_80_plus
-          detailed_results[[paste(yr, sex, ag)]] <- data.table::data.table(
-            year = yr, age_group = ag, sex = sex,
-            marital_status = "all", child_status = "all",
-            lfpr = lfpr_p, type = "cohort_decay_80"
-          )
-          aggregate_results[[paste(yr, sex, ag)]] <- data.table::data.table(
-            year = yr, age_group = ag, sex = sex, lfpr = lfpr_p
-          )
-          next
-        }
-
-        lfpr_p <- base_lfpr * decay_80_plus^years_from_79
-
-        detailed_results[[paste(yr, sex, ag)]] <- data.table::data.table(
-          year = yr, age_group = ag, sex = sex,
-          marital_status = "all", child_status = "all",
-          lfpr = lfpr_p, type = "cohort_decay_80"
-        )
-        aggregate_results[[paste(yr, sex, ag)]] <- data.table::data.table(
-          year = yr, age_group = ag, sex = sex, lfpr = lfpr_p
-        )
-      }
-
-      # Aggregate 80+ into PM80O / PF80O using population weights
-      sex_val <- sex  # Avoid data.table column name collision
-      pop_80_plus <- cni_population[sex == sex_val & age >= 80 & year == yr]
-      if (nrow(pop_80_plus) > 0) {
-        lfpr_80_vals <- vapply(80:100, function(a) {
-          key <- paste(yr, sex, as.character(a))
-          if (!is.null(aggregate_results[[key]])) aggregate_results[[key]]$lfpr else 0
-        }, numeric(1))
-        pop_80_vals <- vapply(80:100, function(a) {
-          pop_80_plus[age == a, sum(population, na.rm = TRUE)]
-        }, numeric(1))
-        total_pop_80 <- sum(pop_80_vals)
-        lfpr_80o <- if (total_pop_80 > 0) sum(lfpr_80_vals * pop_80_vals) / total_pop_80 else 0
-
-        aggregate_results[[paste(yr, sex, "80+")]] <- data.table::data.table(
-          year = yr, age_group = "80+", sex = sex, lfpr = lfpr_80o
-        )
+  # Apply addfactors
+  if (!is.null(addfactors)) {
+    for (ag_name in names(addfactors)) {
+      af_male <- addfactors[[ag_name]]$male
+      if (!is.null(af_male)) {
+        male_grid[age_group == ag_name, lfpr_agg := lfpr_agg + af_male]
       }
     }
   }
 
-  # Combine results
-  detailed <- data.table::rbindlist(detailed_results, fill = TRUE)
-  aggregate <- data.table::rbindlist(aggregate_results, fill = TRUE)
+  # Rescale: scale_factor = lfpr_agg_after_addfactor / lfpr_agg_before_addfactor
+  male_grid[, lfpr_agg_raw := sum(lfpr_raw * population) / pop_total, by = .(age_group, year)]
+  male_grid[, scale_factor := fifelse(lfpr_agg_raw > 0, lfpr_agg / lfpr_agg_raw, 1)]
+  male_grid[, lfpr := lfpr_raw * scale_factor]
+
+  male_detailed <- male_grid[, .(year, age_group, sex = "male",
+                                  marital_status, child_status = "all",
+                                  lfpr, type = "marital")]
+  male_aggregate <- male_grid[, .(lfpr = lfpr_agg[1L]),
+                               by = .(year, age_group, sex)]
+
+  # ============================================================================
+  # SECTION 3: Ages 20-44 female (marital x children) — vectorized
+  # ============================================================================
+
+  female_mc_ags <- c("20-24", "25-29", "30-34", "35-39", "40-44")
+  mc_categories <- c(
+    "never_married_child_under6", "never_married_no_child",
+    "married_present_child_under6", "married_present_no_child",
+    "married_absent_child_under6", "married_absent_no_child"
+  )
+
+  female_mc_specs <- list()
+  for (ag in female_mc_ags) {
+    coeffs <- lfpr_coefficients$female[[ag]]
+    if (is.null(coeffs) || coeffs$type != "marital_children") next
+    for (cat in mc_categories) {
+      cat_coeffs <- coeffs[[cat]]
+      female_mc_specs[[length(female_mc_specs) + 1L]] <- data.table::data.table(
+        age_group = ag, sex = "female", category = cat,
+        marital_status = sub("_(child_under6|no_child)$", "", cat),
+        child_status = sub("^.*_(child_under6|no_child)$", "\\1", cat),
+        rl0 = cat_coeffs$ru_lags[1], rl1 = cat_coeffs$ru_lags[2], rl2 = cat_coeffs$ru_lags[3],
+        rl3 = cat_coeffs$ru_lags[4], rl4 = cat_coeffs$ru_lags[5], rl5 = cat_coeffs$ru_lags[6],
+        trend_coeff = cat_coeffs$trend_coeff %||% 0,
+        intercept = cat_coeffs$intercept,
+        is_child_under6 = grepl("child_under6$", cat)
+      )
+    }
+  }
+  fmc_coeff_dt <- data.table::rbindlist(female_mc_specs)
+
+  # Cross with years
+  fmc_grid <- fmc_coeff_dt[, .(year = projection_years), by = names(fmc_coeff_dt)]
+
+  # Merge RU lags
+  fmc_grid <- merge(fmc_grid, ru_grid[sex == "female"],
+                     by = c("age_group", "sex", "year"), all.x = TRUE, sort = FALSE)
+
+  # Merge RD
+  if (!is.null(rd)) {
+    fmc_grid <- merge(fmc_grid, rd[sex == "female", .(age_group, year, rd)],
+                       by = c("age_group", "year"), all.x = TRUE, sort = FALSE)
+    fmc_grid[is.na(rd), rd := 0]
+  } else {
+    fmc_grid[, rd := 0]
+  }
+
+  # Compute per-category LFPR
+  fmc_grid[, trend_val := year - base_year]
+  fmc_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
+                          rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
+  fmc_grid[, lfpr_raw := (ru_effect + trend_coeff * trend_val + intercept) / (1 + rd)]
+
+  # Compute population by category: marital_pop × children_proportion
+  if (!is.null(marital_pop)) {
+    fmc_marital_pop <- marital_pop[sex == "female" & year %in% projection_years &
+                                     age <= 44L & age >= 20L,
+      .(population = sum(population, na.rm = TRUE)),
+      by = .(year, lfpr_marital_status,
+             age_group = fcase(
+               age <= 24L, "20-24", age <= 29L, "25-29", age <= 34L, "30-34",
+               age <= 39L, "35-39", age <= 44L, "40-44", default = NA_character_
+             ))][!is.na(age_group)]
+
+    fmc_grid <- merge(fmc_grid,
+                       fmc_marital_pop[, .(age_group, year,
+                                           marital_status = lfpr_marital_status,
+                                           ms_population = population)],
+                       by = c("age_group", "year", "marital_status"),
+                       all.x = TRUE, sort = FALSE)
+    fmc_grid[is.na(ms_population) | ms_population <= 0, ms_population := 1]
+  } else {
+    fmc_grid[, ms_population := 1]
+  }
+
+  # Children proportion split
+  if (!is.null(children_props)) {
+    cp_unique_fmc <- unique(children_props[, .(age_group, year, proportion)])
+    fmc_grid <- merge(fmc_grid, cp_unique_fmc,
+                       by = c("age_group", "year"), all.x = TRUE, sort = FALSE)
+    fmc_grid[is.na(proportion), proportion := 0]
+  } else {
+    fmc_grid[, proportion := 0]
+  }
+
+  fmc_grid[, cat_population := fifelse(is_child_under6, ms_population * proportion,
+                                        ms_population * (1 - proportion))]
+  fmc_grid[cat_population <= 0, cat_population := 1]
+
+  # Aggregate
+  fmc_grid[, pop_total := sum(cat_population), by = .(age_group, year)]
+  fmc_grid[, lfpr_agg := sum(lfpr_raw * cat_population) / pop_total, by = .(age_group, year)]
+
+  # Addfactors
+  if (!is.null(addfactors)) {
+    for (ag_name in names(addfactors)) {
+      af_female <- addfactors[[ag_name]]$female
+      if (!is.null(af_female)) {
+        fmc_grid[age_group == ag_name, lfpr_agg := lfpr_agg + af_female]
+      }
+    }
+  }
+
+  fmc_grid[, lfpr_agg_raw := sum(lfpr_raw * cat_population) / pop_total, by = .(age_group, year)]
+  fmc_grid[, scale_factor := fifelse(lfpr_agg_raw > 0, lfpr_agg / lfpr_agg_raw, 1)]
+  fmc_grid[, lfpr := lfpr_raw * scale_factor]
+
+  fmc_detailed <- fmc_grid[, .(year, age_group, sex = "female",
+                                marital_status, child_status,
+                                lfpr, type = "marital_children")]
+  fmc_aggregate <- fmc_grid[, .(lfpr = lfpr_agg[1L]),
+                              by = .(year, age_group, sex)]
+
+  # ============================================================================
+  # SECTION 4: Ages 45-54 female (marital, no children) — vectorized
+  # ============================================================================
+
+  f4554_specs <- list()
+  for (ag in c("45-49", "50-54")) {
+    coeffs <- lfpr_coefficients$female[[ag]]
+    if (is.null(coeffs) || coeffs$type != "marital") next
+    for (ms in marital_statuses) {
+      ms_coeffs <- coeffs[[ms]]
+      f4554_specs[[length(f4554_specs) + 1L]] <- data.table::data.table(
+        age_group = ag, sex = "female", marital_status = ms,
+        rl0 = ms_coeffs$ru_lags[1], rl1 = ms_coeffs$ru_lags[2], rl2 = ms_coeffs$ru_lags[3],
+        rl3 = ms_coeffs$ru_lags[4], rl4 = ms_coeffs$ru_lags[5], rl5 = ms_coeffs$ru_lags[6],
+        edscore_coeff = ms_coeffs$edscore_coeff %||% 0,
+        has_edscore = !is.null(ms_coeffs$edscore_coeff),
+        intercept = ms_coeffs$intercept
+      )
+    }
+  }
+  f4554_coeff_dt <- data.table::rbindlist(f4554_specs)
+
+  # Cross with years
+  f4554_grid <- f4554_coeff_dt[, .(year = projection_years), by = names(f4554_coeff_dt)]
+
+  # Merge RU lags
+  f4554_grid <- merge(f4554_grid, ru_grid[sex == "female"],
+                       by = c("age_group", "sex", "year"), all.x = TRUE, sort = FALSE)
+
+  # Merge RD
+  if (!is.null(rd)) {
+    f4554_grid <- merge(f4554_grid, rd[sex == "female", .(age_group, year, rd)],
+                         by = c("age_group", "year"), all.x = TRUE, sort = FALSE)
+    f4554_grid[is.na(rd), rd := 0]
+  } else {
+    f4554_grid[, rd := 0]
+  }
+
+  # Merge EDSCORE (for married_present 50-54 which has edscore_coeff)
+  if (!is.null(edscore)) {
+    f4554_grid <- merge(f4554_grid,
+                         edscore[sex == "female" & age_group %in% c("45-49", "50-54"),
+                                 .(age_group, year, edscore_val = edscore)],
+                         by = c("age_group", "year"), all.x = TRUE, sort = FALSE)
+    f4554_grid[is.na(edscore_val), edscore_val := 1]
+  } else {
+    f4554_grid[, edscore_val := 1]
+  }
+
+  # Compute
+  f4554_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
+                            rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
+  f4554_grid[, edscore_effect := fifelse(has_edscore, edscore_coeff * edscore_val, 0)]
+  f4554_grid[, lfpr_raw := (ru_effect + edscore_effect + intercept) / (1 + rd)]
+
+  # Population weights
+  if (!is.null(marital_pop)) {
+    f4554_marital_pop <- marital_pop[sex == "female" & year %in% projection_years &
+                                       age >= 45L & age <= 54L,
+      .(population = sum(population, na.rm = TRUE)),
+      by = .(year, lfpr_marital_status,
+             age_group = fcase(
+               age <= 49L, "45-49", age <= 54L, "50-54", default = NA_character_
+             ))][!is.na(age_group)]
+    f4554_grid <- merge(f4554_grid,
+                         f4554_marital_pop[, .(age_group, year,
+                                               marital_status = lfpr_marital_status,
+                                               population)],
+                         by = c("age_group", "year", "marital_status"),
+                         all.x = TRUE, sort = FALSE)
+    f4554_grid[is.na(population) | population <= 0, population := 1]
+  } else {
+    f4554_grid[, population := 1]
+  }
+
+  f4554_grid[, pop_total := sum(population), by = .(age_group, year)]
+  f4554_grid[, lfpr_agg := sum(lfpr_raw * population) / pop_total, by = .(age_group, year)]
+
+  if (!is.null(addfactors)) {
+    for (ag_name in names(addfactors)) {
+      af_female <- addfactors[[ag_name]]$female
+      if (!is.null(af_female)) {
+        f4554_grid[age_group == ag_name, lfpr_agg := lfpr_agg + af_female]
+      }
+    }
+  }
+
+  f4554_grid[, lfpr_agg_raw := sum(lfpr_raw * population) / pop_total, by = .(age_group, year)]
+  f4554_grid[, scale_factor := fifelse(lfpr_agg_raw > 0, lfpr_agg / lfpr_agg_raw, 1)]
+  f4554_grid[, lfpr := lfpr_raw * scale_factor]
+
+  f4554_detailed <- f4554_grid[, .(year, age_group, sex = "female",
+                                    marital_status, child_status = "all",
+                                    lfpr, type = "marital")]
+  f4554_aggregate <- f4554_grid[, .(lfpr = lfpr_agg[1L]),
+                                  by = .(year, age_group, sex)]
+
+  # ============================================================================
+  # SECTION 5: Ages 55-74 (older / retirement) — fully vectorized
+  # ============================================================================
+
+  older_specs <- list()
+  for (sex_name in c("male", "female")) {
+    sex_coeffs <- lfpr_coefficients[[sex_name]]
+    for (age_val in 55:74) {
+      ag <- as.character(age_val)
+      coeffs <- sex_coeffs[[ag]]
+      if (is.null(coeffs)) next
+      older_specs[[length(older_specs) + 1L]] <- data.table::data.table(
+        age = age_val, age_group = ag, sex = sex_name,
+        edscore_coeff = coeffs$edscore_coeff,
+        msshare_coeff = coeffs$msshare_coeff,
+        intercept_val = coeffs$intercept,
+        eq_type = coeffs$type,
+        rradj_coeff = coeffs$rradj_coeff %||% 0,
+        pot_et_coeff = coeffs$pot_et_coeff %||% 0,
+        is_retirement = (coeffs$type == "retirement")
+      )
+    }
+  }
+  older_coeff_dt <- data.table::rbindlist(older_specs)
+
+  # Cross with projection years
+  older_grid <- older_coeff_dt[, .(year = projection_years), by = names(older_coeff_dt)]
+
+  # Merge EDSCORE (uses age_group as character string like "55", "56", etc.)
+  if (!is.null(edscore)) {
+    older_grid <- merge(older_grid,
+                         edscore[, .(age_group, sex, year, edscore_val = edscore)],
+                         by = c("age_group", "sex", "year"), all.x = TRUE, sort = FALSE)
+    older_grid[is.na(edscore_val), edscore_val := 1]
+  } else {
+    older_grid[, edscore_val := 1]
+  }
+
+  # Merge MSSHARE (uses integer age)
+  if (!is.null(msshare)) {
+    older_grid <- merge(older_grid,
+                         msshare[, .(age, sex, year, msshare_val = msshare)],
+                         by = c("age", "sex", "year"), all.x = TRUE, sort = FALSE)
+    older_grid[is.na(msshare_val), msshare_val := 0.5]
+  } else {
+    older_grid[, msshare_val := 0.5]
+  }
+
+  # Merge RD: for ages 62+, use cohort RD at age 61 from year - (age - 61)
+  # For ages 55-61, use RD at current age and year
+  older_grid[, rd_age_group := fifelse(age >= 62L, "61", age_group)]
+  older_grid[, rd_year := fifelse(age >= 62L, year - (age - 61L), year)]
+  if (!is.null(rd)) {
+    older_grid <- merge(older_grid,
+                         rd[, .(rd_age_group = age_group, sex, rd_year = year, rd_val = rd)],
+                         by = c("rd_age_group", "sex", "rd_year"), all.x = TRUE, sort = FALSE)
+    older_grid[is.na(rd_val), rd_val := 0]
+  } else {
+    older_grid[, rd_val := 0]
+  }
+
+  # Merge RRADJ (ages 62-69, uses integer age)
+  if (!is.null(rradj)) {
+    older_grid <- merge(older_grid,
+                         rradj[, .(age, sex, year, rradj_val = rradj)],
+                         by = c("age", "sex", "year"), all.x = TRUE, sort = FALSE)
+    older_grid[is.na(rradj_val), rradj_val := 0]
+  } else {
+    older_grid[, rradj_val := 0]
+  }
+
+  # Merge POT_ET_TXRT (ages 62-69, uses integer age)
+  if (!is.null(pot_et_txrt)) {
+    older_grid <- merge(older_grid,
+                         pot_et_txrt[, .(age, year, pot_et_val = pot_et_txrt)],
+                         by = c("age", "year"), all.x = TRUE, sort = FALSE)
+    older_grid[is.na(pot_et_val), pot_et_val := 0]
+  } else {
+    older_grid[, pot_et_val := 0]
+  }
+
+  # Compute LFPR
+  older_grid[, lfpr := edscore_coeff * edscore_val +
+                        msshare_coeff * msshare_val +
+                        intercept_val]
+  older_grid[is_retirement == TRUE,
+              lfpr := lfpr + rradj_coeff * rradj_val + pot_et_coeff * pot_et_val]
+  older_grid[, lfpr := lfpr / (1 + rd_val)]
+
+  # Apply addfactors
+  if (!is.null(addfactors)) {
+    for (ag_name in names(addfactors)) {
+      for (sx in c("male", "female")) {
+        af_val <- addfactors[[ag_name]][[sx]]
+        if (!is.null(af_val)) {
+          older_grid[age_group == ag_name & sex == sx, lfpr := lfpr + af_val]
+        }
+      }
+    }
+  }
+
+  older_detailed <- older_grid[, .(year, age_group, sex,
+                                    marital_status = "all", child_status = "all",
+                                    lfpr, type = eq_type)]
+  older_aggregate <- older_grid[, .(year, age_group, sex, lfpr)]
+
+  # ============================================================================
+  # SECTION 6: Ages 75-100 (cohort decay) — year loop with vectorized ages
+  # ============================================================================
+  # This section must loop over years because each year depends on the prior year.
+  # However, within each year we use plain vector indexing, not data.table lookups.
+
+  # Build a lookup matrix for ages 55-100 x 2 sexes x all years
+  # Index: [year_idx, age - 54, sex_idx]  where sex_idx: male=1, female=2
+  # year range: base_year (for seed values) through 2100
+  all_years <- base_year:2100
+  n_all_years <- length(all_years)
+  n_ages_55_100 <- 46  # ages 55 through 100
+
+  # Initialize LFPR matrices: [year_offset, age_offset] where year_offset = year - base_year + 1
+  # and age_offset = age - 54
+  lfpr_mat_male <- matrix(0, nrow = n_all_years, ncol = n_ages_55_100)
+  lfpr_mat_female <- matrix(0, nrow = n_all_years, ncol = n_ages_55_100)
+
+  # Fill in ages 55-74 from the vectorized older_grid results using matrix indexing
+  for (sex_name in c("male", "female")) {
+    mat <- if (sex_name == "male") lfpr_mat_male else lfpr_mat_female
+    sub <- older_grid[sex == sex_name, .(year, age, lfpr)]
+    idx_mat <- cbind(sub$year - base_year + 1L, sub$age - 54L)
+    mat[idx_mat] <- sub$lfpr
+    if (sex_name == "male") lfpr_mat_male <- mat else lfpr_mat_female <- mat
+  }
+
+  # Also need seed values for base_year from historical data (for cohort decay of year base_year+1)
+  # historical_lfpr may contain age 74 at base_year for the first 75 computation
+  # The older_grid already contains projection years, but we need base_year values for
+  # the decay chain. Try to get from historical_lfpr if available.
+  if (is.data.table(historical_lfpr)) {
+    for (sex_name in c("male", "female")) {
+      mat <- if (sex_name == "male") lfpr_mat_male else lfpr_mat_female
+      # historical_lfpr uses 'value' column (from CPS data) and may have
+      # both single-year and group entries — use only single-year (has 'age' col)
+      hist_sub <- historical_lfpr[sex == sex_name & year == base_year &
+                                    !is.na(age) & age >= 55 & age <= 100,
+                                  .(age, lfpr_val = value)]
+      hist_sub <- unique(hist_sub, by = "age")
+      for (i in seq_len(nrow(hist_sub))) {
+        age_idx <- hist_sub$age[i] - 54L
+        mat[1L, age_idx] <- hist_sub$lfpr_val[i]
+      }
+      if (sex_name == "male") lfpr_mat_male <- mat else lfpr_mat_female <- mat
+    }
+  }
+
+  # Pre-build population matrix for 80+ aggregation: pop_mat[year_offset, age-79]
+  # where age-79 goes from 1 (age 80) to 21 (age 100)
+  # This avoids repeated data.table filtering inside the year loop
+  pop_80_mat_male <- matrix(0, nrow = n_all_years, ncol = 21L)
+  pop_80_mat_female <- matrix(0, nrow = n_all_years, ncol = 21L)
+  cni_80_plus <- cni_population[age >= 80L & age <= 100L & year %in% all_years,
+    .(population = sum(population, na.rm = TRUE)), by = .(year, age, sex)]
+  if (nrow(cni_80_plus) > 0) {
+    for (sx in c("male", "female")) {
+      pop_mat <- if (sx == "male") pop_80_mat_male else pop_80_mat_female
+      sub <- cni_80_plus[sex == sx]
+      if (nrow(sub) > 0) {
+        idx_mat <- cbind(sub$year - base_year + 1L, sub$age - 79L)
+        valid <- idx_mat[, 1] >= 1L & idx_mat[, 1] <= n_all_years &
+                 idx_mat[, 2] >= 1L & idx_mat[, 2] <= 21L
+        if (any(valid)) {
+          pop_mat[idx_mat[valid, , drop = FALSE]] <- sub$population[valid]
+        }
+      }
+      if (sx == "male") pop_80_mat_male <- pop_mat else pop_80_mat_female <- pop_mat
+    }
+  }
+
+  # Pre-compute decay power factors
+  decay_powers_80 <- decay_80_plus^(1:21)  # for ages 80-100 (years_from_79 = 1..21)
+
+  # Pre-allocate character age labels
+  ages_75_100_char <- as.character(75:100)
+  type_labels_75_100 <- fifelse(75:100 <= 79, "cohort_decay_75", "cohort_decay_80")
+
+  # Now loop over projection years for ages 75-100
+  decay_results <- vector("list", n_proj_years * 2L)
+  decay_agg_results <- vector("list", n_proj_years * 2L)
+  result_idx <- 0L
+
+  for (yr in projection_years) {
+    yr_idx <- yr - base_year + 1L
+    prev_yr_idx <- yr_idx - 1L
+
+    for (sex_name in c("male", "female")) {
+      mat <- if (sex_name == "male") lfpr_mat_male else lfpr_mat_female
+      decay_factor_75 <- decay_75_79[[sex_name]]
+
+      # Ages 75-79: prior year's (age-1) value * decay_factor
+      # age 75 -> prior age 74 (idx 20), ..., age 79 -> prior age 78 (idx 24)
+      for (age_idx in 21:25) {  # 75-54=21 through 79-54=25
+        mat[yr_idx, age_idx] <- mat[prev_yr_idx, age_idx - 1L] * decay_factor_75
+      }
+
+      # Ages 80-84: PM79 from (years_from_79) years ago * decay^years_from_79
+      age79_idx <- 25L  # 79 - 54
+      for (yf79 in 1:5) {  # ages 80-84
+        src_yr_idx <- yr_idx - yf79
+        base_val <- if (src_yr_idx >= 1L) mat[src_yr_idx, age79_idx] else 0
+        mat[yr_idx, 25L + yf79] <- base_val * decay_powers_80[yf79]
+      }
+
+      # Ages 85-94: 2-year moving average of PM79 * decay^years_from_79
+      for (yf79 in 6:15) {  # ages 85-94
+        lag1 <- yr_idx - yf79
+        lag2 <- lag1 - 1L
+        val1 <- if (lag1 >= 1L) mat[lag1, age79_idx] else 0
+        val2 <- if (lag2 >= 1L) mat[lag2, age79_idx] else 0
+        mat[yr_idx, 25L + yf79] <- ((val1 + val2) / 2) * decay_powers_80[yf79]
+      }
+
+      # Ages 95-100: chain from prior age at same year
+      for (age_idx in 41:46) {  # 95-54=41 through 100-54=46
+        mat[yr_idx, age_idx] <- mat[yr_idx, age_idx - 1L] * decay_80_plus
+      }
+
+      # Write back
+      if (sex_name == "male") lfpr_mat_male <- mat else lfpr_mat_female <- mat
+
+      # Collect results for ages 75-100
+      lfpr_vals <- mat[yr_idx, 21:46]  # ages 75-100
+
+      result_idx <- result_idx + 1L
+      decay_results[[result_idx]] <- data.table::data.table(
+        year = yr,
+        age_group = ages_75_100_char,
+        sex = sex_name,
+        marital_status = "all",
+        child_status = "all",
+        lfpr = lfpr_vals,
+        type = type_labels_75_100
+      )
+
+      # 80+ aggregate using pre-built population matrix
+      pop_mat <- if (sex_name == "male") pop_80_mat_male else pop_80_mat_female
+      pop_80_vals <- pop_mat[yr_idx, ]  # 21 values for ages 80-100
+      lfpr_80_vals <- mat[yr_idx, 26:46]  # ages 80-100 = indices 26..46
+      total_pop_80 <- sum(pop_80_vals)
+      lfpr_80o <- if (total_pop_80 > 0) sum(lfpr_80_vals * pop_80_vals) / total_pop_80 else 0
+
+      # Per-age aggregate entries plus 80+ aggregate
+      decay_agg_results[[result_idx]] <- data.table::data.table(
+        year = c(rep(yr, 26L), yr),
+        age_group = c(ages_75_100_char, "80+"),
+        sex = sex_name,
+        lfpr = c(lfpr_vals, lfpr_80o)
+      )
+    }
+  }
+
+  decay_detailed <- data.table::rbindlist(decay_results[seq_len(result_idx)])
+  decay_aggregate <- data.table::rbindlist(decay_agg_results[seq_len(result_idx)])
+
+  # ============================================================================
+  # Combine all sections
+  # ============================================================================
+
+  # Young ages also go into aggregate (one row per age_group x sex x year)
+  young_aggregate <- young_detailed[, .(year, age_group, sex, lfpr)]
+
+  detailed <- data.table::rbindlist(list(
+    young_detailed, male_detailed, fmc_detailed, f4554_detailed,
+    older_detailed, decay_detailed
+  ), fill = TRUE)
+
+  aggregate <- data.table::rbindlist(list(
+    young_aggregate, male_aggregate, fmc_aggregate, f4554_aggregate,
+    older_aggregate, decay_aggregate
+  ), fill = TRUE)
 
   # Clamp LFPR to [0, 1]
   detailed[lfpr < 0, lfpr := 0]
