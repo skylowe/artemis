@@ -333,33 +333,31 @@ compute_edscore <- function(education_data, projection_years) {
 #' LFPR estimates. For ages 16-19, the proportion enters the equation directly
 #' as RF1617CU6 / RF1819CU6.
 #'
-#' Historical proportions come from CPS ASEC microdata. Projection years are
-#' derived from the demography pipeline's `projected_children_fate` output
-#' (Input #3: number of children by age of child and age of mother), calibrated
-#' to the CPS base-year level. This ensures the trajectory reflects projected
-#' fertility changes (e.g., TFR 1.6 → 1.9) rather than a static assumption.
+#' Historical proportions come from CPS ASEC microdata. Projection years use
+#' `projected_mothers_child_under6` from the demography pipeline (Phase 8D),
+#' which computes Poisson-converted proportions from the children_fate arrays
+#' at single-year mother age resolution. A 3-year linear blend smooths the
+#' CPS→demography handoff at the transition.
 #'
 #' @param cps_labor_data CPS ASEC labor force data from IPUMS
-#' @param projected_children_fate Demography pipeline children fate projection
-#'   (data.table with year, child_age, parent_sex, parent_age_group, fate, count)
-#' @param projected_population SS area population from demography pipeline
-#'   (data.table with year, age, sex, population)
+#' @param projected_mothers_child_under6 Demography pipeline output: proportion
+#'   of females with at least one child under 6, by year and LFPR age group
+#'   (data.table with year, age_group, proportion)
 #' @param config_employment Employment config section
 #'
 #' @return data.table with columns: age_group, year, proportion
 #'
 #' @export
 construct_children_proportions <- function(cps_labor_data,
-                                            projected_children_fate,
-                                            projected_population,
+                                            projected_mothers_child_under6,
                                             config_employment) {
   checkmate::assert_data_table(cps_labor_data)
-  checkmate::assert_data_table(projected_children_fate)
-  checkmate::assert_data_table(projected_population)
+  checkmate::assert_data_table(projected_mothers_child_under6)
+  checkmate::assert_names(names(projected_mothers_child_under6),
+                          must.include = c("year", "age_group", "proportion"))
 
-  cli::cli_alert_info("Computing children-under-6 proportions from CPS + demography projections")
+  cli::cli_alert_info("Computing children-under-6 proportions from CPS + demography")
 
-  base_year <- config_employment$base_year
   end_year <- config_employment$end_year
   if (is.null(end_year)) cli::cli_abort("economics.employment.end_year not set in config")
 
@@ -399,91 +397,89 @@ construct_children_proportions <- function(cps_labor_data,
 
   cli::cli_alert_info("CPS historical proportions: {min(historical$year)}-{last_cps_year}")
 
-  # ── 2. Projection: scale CPS by children_fate trajectory ───────────
-  # children_fate gives number of children (aged 0-5) by mother age group.
-  # Compute children-per-woman ratio from demography, then scale CPS proportions
-  # by the change in this ratio relative to the base year.
+  # ── 2. Projection from demography pipeline ─────────────────────────
+  # projected_mothers_child_under6 provides Poisson-converted proportions
+  # from Phase 8D children_fate arrays at single-year mother age resolution.
+  # Use these directly for projection years after the CPS→demography blend.
 
-  # Map LFPR fine age groups to children_fate broad groups
-  lfpr_to_cf <- data.table::data.table(
-    age_group = c("16-17", "18-19", "20-24", "25-29", "30-34", "35-39", "40-44"),
-    cf_age_group = c("14-24", "14-24", "14-24", "25-34", "25-34", "35-44", "35-44")
+  demog <- projected_mothers_child_under6[age_group %in% target_age_groups]
+  demog_years <- sort(unique(demog$year))
+  first_demog_year <- min(demog_years)
+
+  if (length(demog_years) == 0) {
+    cli::cli_abort("projected_mothers_child_under6 has no data for target age groups")
+  }
+
+  cli::cli_alert_info(
+    "Demography projections: {first_demog_year}-{max(demog_years)}, {length(target_age_groups)} age groups"
   )
 
-  # Sum children under 6 by mother broad age group and year
-  mothers_c6u <- projected_children_fate[
-    parent_sex == "mother" &
-      child_age <= 5 &
-      fate %in% c("both_alive", "only_mother_alive"),
-    .(children_under6 = sum(count)),
-    by = .(year, parent_age_group)
-  ]
+  # ── 3. Blend CPS→demography at transition ─────────────────────────
+  # Use a 3-year linear blend over the overlap period to avoid a jump.
+  # Years <= last_cps_year: 100% CPS
+  # Years > last_cps_year + 3: 100% demography
+  # Transition years: linear interpolation between CPS last value and demography
 
-  if (nrow(mothers_c6u) == 0) {
-    cli::cli_abort("No children-under-6 data in projected_children_fate for mothers")
+  blend_years <- 3L
+  transition_start <- last_cps_year + 1L
+  transition_end <- last_cps_year + blend_years
+
+  # CPS endpoint proportions (average of last 2 years for stability)
+  cps_endpoint <- historical[year >= last_cps_year - 1,
+                              .(cps_prop = mean(proportion)),
+                              by = age_group]
+
+  missing_cps_groups <- setdiff(target_age_groups, cps_endpoint$age_group)
+  if (length(missing_cps_groups) > 0) {
+    cli::cli_abort(c(
+      "CPS data missing child-under-6 proportions for age groups: {paste(missing_cps_groups, collapse = ', ')}",
+      "i" = "All 7 LFPR age groups (16-17 through 40-44) must have CPS data"
+    ))
   }
 
-  # Female population by broad age group from projected_population
-  # Map single ages to broad age groups
-  fem_pop <- projected_population[sex == "female" & age >= 14 & age <= 44]
-  fem_pop[, cf_age_group := data.table::fcase(
-    age <= 24, "14-24",
-    age <= 34, "25-34",
-    age <= 44, "35-44"
-  )]
-  fem_pop_agg <- fem_pop[, .(female_pop = sum(population)), by = .(year, cf_age_group)]
-
-  # Children-per-woman ratio by broad age group and year
-  cpw <- merge(mothers_c6u, fem_pop_agg,
-                by.x = c("year", "parent_age_group"),
-                by.y = c("year", "cf_age_group"))
-  cpw[, ratio := children_under6 / female_pop]
-
-  # Base-year ratio for calibration
-  base_cpw <- cpw[year == base_year, .(parent_age_group, base_ratio = ratio)]
-  if (nrow(base_cpw) == 0) {
-    cli::cli_abort("No children_fate data for base year {base_year}")
+  # Verify demography covers all projection years through end_year
+  max_demog_year <- max(demog_years)
+  if (max_demog_year < end_year) {
+    cli::cli_abort(c(
+      "Demography projections end at {max_demog_year} but economics needs through {end_year}",
+      "i" = "projected_mothers_child_under6 must cover the full projection period"
+    ))
   }
 
-  cpw <- merge(cpw, base_cpw, by = "parent_age_group")
-  cpw[, scale_factor := fifelse(base_ratio > 0, ratio / base_ratio, 1)]
-
-  # CPS base-year proportions (average of last 3 years for stability)
-  base_props <- historical[year >= last_cps_year - 2,
-                            .(base_proportion = mean(proportion)),
-                            by = age_group]
-
-  # Generate projected proportions
-  projection_years <- seq(last_cps_year + 1L, end_year)
-  if (length(projection_years) > 0) {
-    proj_grid <- data.table::CJ(year = projection_years, age_group = target_age_groups)
-    proj_grid <- merge(proj_grid, lfpr_to_cf, by = "age_group")
-    proj_grid <- merge(proj_grid, base_props, by = "age_group")
-    proj_grid <- merge(proj_grid,
-                        cpw[, .(year, parent_age_group, scale_factor)],
-                        by.x = c("year", "cf_age_group"),
-                        by.y = c("year", "parent_age_group"),
-                        all.x = TRUE)
-
-    # For years beyond children_fate range, use last available scale factor
-    if (any(is.na(proj_grid$scale_factor))) {
-      last_cf_year <- max(cpw$year)
-      n_missing <- sum(is.na(proj_grid$scale_factor))
-      cli::cli_abort(c(
-        "Missing children_fate data for {n_missing} projection cells",
-        "i" = "children_fate covers through {last_cf_year} but projection needs through {end_year}"
-      ))
-    }
-
-    # Scale CPS base proportions by demography trajectory, capped at [0, 1]
-    proj_grid[, proportion := pmin(1, pmax(0, base_proportion * scale_factor))]
-    projected <- proj_grid[, .(year, age_group, proportion)]
-
-    result <- data.table::rbindlist(list(historical, projected))
-  } else {
-    result <- historical
+  # Verify demography covers all target age groups
+  missing_demog_groups <- setdiff(target_age_groups, unique(demog$age_group))
+  if (length(missing_demog_groups) > 0) {
+    cli::cli_abort(c(
+      "Demography data missing age groups: {paste(missing_demog_groups, collapse = ', ')}",
+      "i" = "projected_mothers_child_under6 must provide all 7 LFPR age groups"
+    ))
   }
 
+  # Build projection: blend then pure demography
+  proj_years <- seq(transition_start, end_year)
+  proj_years <- proj_years[proj_years %in% demog_years]
+
+  if (length(proj_years) == 0) {
+    cli::cli_abort(c(
+      "No overlap between projection years and demography data",
+      "i" = "Projection starts at {transition_start} but demography covers {first_demog_year}-{max_demog_year}"
+    ))
+  }
+
+  projected <- demog[year %in% proj_years, .(year, age_group, demog_prop = proportion)]
+  projected <- merge(projected, cps_endpoint, by = "age_group")
+
+  # Verify merge produced no NAs
+  if (any(is.na(projected$cps_prop)) || any(is.na(projected$demog_prop))) {
+    cli::cli_abort("NA values after merging CPS and demography proportions — data alignment issue")
+  }
+
+  # Blending weight: 0 at transition_start, 1 at transition_end+1
+  projected[, blend_weight := pmin(1, pmax(0, (year - last_cps_year) / (blend_years + 1)))]
+  projected[, proportion := cps_prop * (1 - blend_weight) + demog_prop * blend_weight]
+  projected <- projected[, .(year, age_group, proportion)]
+
+  result <- data.table::rbindlist(list(historical, projected))
   data.table::setorder(result, year, age_group)
 
   n_hist <- nrow(historical)
@@ -812,7 +808,8 @@ construct_pot_et_txrt <- function(benefit_params, config_employment) {
 #' @param projected_population From demography pipeline
 #' @param projected_cni_population From demography pipeline (Phase 8E)
 #' @param projected_marital_population From demography pipeline (Phase 8C)
-#' @param projected_children_fate From demography pipeline (Phase 8D)
+#' @param projected_mothers_child_under6 From demography pipeline (Phase 8D):
+#'   proportion of females with at least one child under 6, by year and age group
 #' @param o_population_stock OP components from demography pipeline
 #' @param military_population Armed forces for projection
 #' @param tr_economic_assumptions TR V.B1/V.B2 data
@@ -838,7 +835,7 @@ construct_pot_et_txrt <- function(benefit_params, config_employment) {
 build_employment_inputs <- function(projected_population,
                                      projected_cni_population,
                                      projected_marital_population,
-                                     projected_children_fate,
+                                     projected_mothers_child_under6,
                                      o_population_stock,
                                      military_population,
                                      tr_economic_assumptions,
@@ -919,7 +916,7 @@ build_employment_inputs <- function(projected_population,
   # 7. Children under 6 proportions
   cli::cli_h2("Children Under 6 Proportions")
   children_proportions <- construct_children_proportions(
-    cps_labor_data, projected_children_fate, projected_population, config_employment
+    cps_labor_data, projected_mothers_child_under6, config_employment
   )
 
   # 8. RTP

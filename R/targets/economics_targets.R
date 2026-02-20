@@ -102,7 +102,7 @@ create_economics_targets <- function() {
         projected_population = projected_population,
         projected_cni_population = projected_cni_population,
         projected_marital_population = projected_marital_population,
-        projected_children_fate = projected_children_fate,
+        projected_mothers_child_under6 = projected_mothers_child_under6,
         o_population_stock = o_population_stock,
         military_population = armed_forces_for_projection,
         tr_economic_assumptions = tr_economic_assumptions,
