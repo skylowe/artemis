@@ -353,13 +353,29 @@ process_cps_labor_force_data <- function(dt, years) {
 
   # ── 5. Educational attainment proportions (Input #25) ───────────
   cli::cli_alert("Computing educational attainment distributions...")
-  edu_data <- dt[AGE >= 25, .(
+
+  # 5a. 5-year group proportions (ages 25-54, where LFPR uses 5-year groups)
+  edu_5yr <- dt[AGE >= 25 & AGE <= 54, .(
     population = sum(wt)
   ), by = .(year, age_group, sex, education_level)]
+  edu_5yr_totals <- edu_5yr[, .(total = sum(population)), by = .(year, age_group, sex)]
+  edu_5yr <- merge(edu_5yr, edu_5yr_totals, by = c("year", "age_group", "sex"))
+  edu_5yr[, proportion := population / total]
 
-  edu_totals <- edu_data[, .(total = sum(population)), by = .(year, age_group, sex)]
-  edu_data <- merge(edu_data, edu_totals, by = c("year", "age_group", "sex"))
-  edu_data[, proportion := population / total]
+  # 5b. Single-year-of-age proportions (ages 50+, where LFPR uses single-year)
+  # This matches the TR2025 specification of per-age EDSCORE (EDSCOREM55, etc.)
+  edu_single <- dt[AGE >= 50, .(
+    population = sum(wt)
+  ), by = .(year, age = AGE, sex, education_level)]
+  edu_single_totals <- edu_single[, .(total = sum(population)), by = .(year, age, sex)]
+  edu_single <- merge(edu_single, edu_single_totals, by = c("year", "age", "sex"))
+  edu_single[, proportion := population / total]
+  edu_single[, age_group := as.character(age)]
+
+  edu_data <- data.table::rbindlist(list(
+    edu_5yr[, .(year, age_group, sex, education_level, proportion)],
+    edu_single[, .(year, age_group, sex, education_level, proportion)]
+  ), use.names = TRUE)
 
   results$education <- data.table::data.table(
     year = edu_data$year,

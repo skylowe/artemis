@@ -308,39 +308,46 @@ compute_edscore <- function(education_data, projection_years) {
   # target age group in a future year, use the EDSCORE from the age group that
   # cohort occupied at the last historical year. This captures the rising
   # education trend as more-educated young cohorts age into 55+.
+  #
+  # Historical data has two resolutions:
+  # - Single-year ages 50+ (from CPS microdata tabulated by individual AGE)
+  # - 5-year groups 25-54 (from CPS tabulated by age group)
+  # For cohort tracking, use single-year when source age >= 50, else 5-year.
   last_hist_year <- max(historical$year)
   last_values <- historical[year == last_hist_year]
 
-  # Age group midpoints for cohort tracking
-  ag_midpoints <- data.table::data.table(
-    age_group = c("25-29", "30-34", "35-39", "40-44", "45-49", "50-54",
-                  "55-59", "60-64", "65-69", "70-74", "75+"),
-    midpoint = c(27L, 32L, 37L, 42L, 47L, 52L, 57L, 62L, 67L, 72L, 77L)
-  )
-
+  # Build projection grid for all target age_groups
   proj_grid <- data.table::CJ(
     age_group = unique(last_values$age_group),
     sex = unique(last_values$sex),
     year = projection_years
   )
-  proj_grid <- merge(proj_grid, ag_midpoints, by = "age_group", all.x = TRUE)
+
+  # Determine the target age (midpoint for 5-year groups, exact for single-year)
+  proj_grid[, is_single_year := grepl("^\\d+$", age_group)]
+  proj_grid[is_single_year == TRUE, target_age := as.integer(age_group)]
+  proj_grid[is_single_year == FALSE, target_age := data.table::fcase(
+    age_group == "25-29", 27L, age_group == "30-34", 32L,
+    age_group == "35-39", 37L, age_group == "40-44", 42L,
+    age_group == "45-49", 47L, age_group == "50-54", 52L,
+    default = 77L  # 75+
+  )]
 
   # Where was this cohort at the last historical year?
-  proj_grid[, source_midpoint := midpoint - (year - last_hist_year)]
+  proj_grid[, source_age := target_age - (year - last_hist_year)]
+  proj_grid[source_age < 25L, source_age := 25L]  # Clamp to youngest available
 
-  # Map source midpoint to the age group it falls in (clamp to youngest available)
-  proj_grid[, source_age_group := data.table::fcase(
-    source_midpoint < 30L, "25-29",
-    source_midpoint < 35L, "30-34",
-    source_midpoint < 40L, "35-39",
-    source_midpoint < 45L, "40-44",
-    source_midpoint < 50L, "45-49",
-    source_midpoint < 55L, "50-54",
-    source_midpoint < 60L, "55-59",
-    source_midpoint < 65L, "60-64",
-    source_midpoint < 70L, "65-69",
-    source_midpoint < 75L, "70-74",
-    default = "75+"
+  # Source age_group: use single-year if >= 50, otherwise map to 5-year group
+  proj_grid[, source_age_group := data.table::fifelse(
+    source_age >= 50L, as.character(source_age),
+    data.table::fcase(
+      source_age < 30L, "25-29",
+      source_age < 35L, "30-34",
+      source_age < 40L, "35-39",
+      source_age < 45L, "40-44",
+      source_age < 50L, "45-49",
+      default = "50-54"
+    )
   )]
 
   # Look up source cohort's EDSCORE from the last historical year
