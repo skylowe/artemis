@@ -683,8 +683,12 @@ load_di_age_profile <- function(config) {
 
 #' Load AWI historical data
 #'
+#' @description
+#' Loads Average Wage Index from SSA CSV file. Parses comma-formatted
+#' numbers and percentage strings.
+#'
 #' @param config Full ARTEMIS config
-#' @return data.table with year and awi columns
+#' @return data.table with columns: year (integer), awi (numeric)
 #' @export
 load_awi_historical <- function(config) {
   tr_dir <- get_tr_data_dir(config)
@@ -698,7 +702,35 @@ load_awi_historical <- function(config) {
   }
 
   dt <- data.table::fread(file_path)
-  cli::cli_alert_success("Loaded AWI historical: {nrow(dt)} rows ({min(dt$year, na.rm = TRUE)}-{max(dt$year, na.rm = TRUE)})")
+  data.table::setnames(dt, tolower(gsub(" ", "_", names(dt))))
+
+  if (!"year" %in% names(dt)) {
+    cli::cli_abort(c(
+      "AWI CSV missing 'Year' column",
+      "i" = "Found columns: {.val {names(dt)}}"
+    ))
+  }
+  if (!"awi" %in% names(dt)) {
+    cli::cli_abort(c(
+      "AWI CSV missing 'AWI' column",
+      "i" = "Found columns: {.val {names(dt)}}"
+    ))
+  }
+
+  # Parse comma-formatted numbers (e.g., "2,799.16" -> 2799.16)
+  dt[, awi := as.numeric(gsub(",", "", awi))]
+
+  if (any(is.na(dt$awi))) {
+    n_na <- sum(is.na(dt$awi))
+    cli::cli_abort("AWI CSV has {n_na} unparseable values in AWI column")
+  }
+
+  # Keep only year and awi columns
+  dt <- dt[, .(year, awi)]
+
+  cli::cli_alert_success(
+    "Loaded AWI historical: {nrow(dt)} rows ({min(dt$year)}-{max(dt$year)})"
+  )
 
   dt
 }
