@@ -1,0 +1,69 @@
+# Scaled Factors for Hypothetical Earnings Examples
+# =============================================================================
+# Source: Actuarial Note 2025.3, Table 6 (Final Scaled Factors)
+# Authors: Kyle Burkhalter, FSA, and Karen Rose, ASA
+# Office of the Chief Actuary, Social Security Administration, June 2025
+#
+# Scaled factors express earnings at each age as a fraction of the Average
+# Wage Index (AWI). Career-average earnings for each worker type are:
+#   Very Low: 25% of AWI
+#   Low:      45% of AWI
+#   Medium:  100% of AWI
+#   High:    160% of AWI
+#
+# Annual earnings = scaled_factor × AWI(year), where year = birth_year + age.
+# Ages 62-64 use preliminary adjusted factors (declining from age 61 at the
+# ultimate AWI growth rate of 3.56%) rather than raw CWHS factors, because
+# raw factors at 62-64 are biased upward by healthier/higher-wage workers
+# who delay claiming past 62.
+#
+# Used by construct_rradj() for RRADJ computation and available for
+# other PIA-related calculations.
+# =============================================================================
+
+# Ages 21-64, medium-scaled worker (100% of AWI career average)
+medium:
+  21: 0.277
+  22: 0.341
+  23: 0.436
+  24: 0.521
+  25: 0.587
+  26: 0.645
+  27: 0.699
+  28: 0.749
+  29: 0.792
+  30: 0.831
+  31: 0.866
+  32: 0.897
+  33: 0.924
+  34: 0.949
+  35: 0.971
+  36: 0.990
+  37: 1.006
+  38: 1.021
+  39: 1.034
+  40: 1.046
+  41: 1.056
+  42: 1.064
+  43: 1.072
+  44: 1.080
+  45: 1.085
+  46: 1.090
+  47: 1.093
+  48: 1.094
+  49: 1.094
+  50: 1.094
+  51: 1.092
+  52: 1.086
+  53: 1.080
+  54: 1.071
+  55: 1.060
+  56: 1.040
+  57: 1.017
+  58: 0.991
+  59: 0.962
+  60: 0.924
+  61: 0.873
+  62: 0.843
+  63: 0.814
+  64: 0.786

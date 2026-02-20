@@ -694,34 +694,156 @@ construct_disability_ratio <- function(di_prevalence, di_age_profile, config_emp
 #' Construct replacement rate adjustment
 #'
 #' @description
-#' RRADJ represents the change in PIA replacement rate at ages 62-69
-#' due to NRA increases. Constructed from V.C7 benefit amounts and AWI.
+#' RRADJ measures the change in the PIA replacement rate at claiming ages 62-69
+#' due to NRA increasing from 66 to 67. For each cohort, it compares the
+#' benefit adjustment factor (ERR/DRC) at the actual NRA against a fixed NRA
+#' of 66, scaled by the medium worker's base replacement rate from V.C7.
 #'
-#' @param benefit_amounts TR2025 V.C7 benefit amounts
-#' @param awi_levels AWI level path from VI.G6
+#' Formula: RRADJ(a, y) = base_RR × [adj(a, actual_NRA) - adj(a, NRA=66)]
+#'
+#' Where:
+#' - base_RR = V.C7 medium worker pct_earnings_nra / 100 (PIA / career-avg)
+#' - adj(a, NRA) = benefit adjustment factor at claiming age a given NRA
+#'   (ERR if a < NRA, DRC if a > NRA, 1.0 if a = NRA)
+#'
+#' RRADJ is ≤0 for cohorts with NRA > 66 (more ERR / less DRC at every claiming
+#' age), zero for NRA = 66 cohorts, and transitions smoothly for 1955-1959 cohorts.
+#'
+#' @param benefit_amounts TR2025 V.C7 benefit amounts (data.table with year,
+#'   earnings_level, pct_earnings_nra)
+#' @param awi_levels AWI level path from VI.G6 (unused, retained for interface)
 #' @param config_employment Employment config section
 #'
 #' @return data.table with columns: year, age, sex, rradj
 #'
+#' @references
+#' - Actuarial Note 2025.3 (scaled worker methodology)
+#' - SSA NRA schedule: born ≤1937 NRA=65, 1938-42 65+2mo/yr, 1943-54 NRA=66,
+#'   1955-59 66+2mo/yr, ≥1960 NRA=67
+#' - ERR: 5/9% per month for first 36 months before NRA, 5/12% per month beyond
+#' - DRC (birth 1943+): 8% per year after NRA
+#'
 #' @export
 construct_rradj <- function(benefit_amounts, awi_levels, config_employment) {
   checkmate::assert_data_table(benefit_amounts)
+  checkmate::assert_names(names(benefit_amounts),
+                          must.include = c("year", "earnings_level", "pct_earnings_nra"))
 
   cli::cli_alert_info("Constructing RRADJ (replacement rate adjustment)")
 
-  # RRADJ = change in replacement rate due to NRA shifting from 66 to 67
-  # For now, construct from V.C7 medium-scaled worker PIA / AWI
-  years <- sort(unique(benefit_amounts$year))
+  base_year <- config_employment$base_year
+  end_year <- config_employment$end_year
+  if (is.null(base_year)) cli::cli_abort("economics.employment.base_year not set in config")
+  if (is.null(end_year)) cli::cli_abort("economics.employment.end_year not set in config")
+
   ages <- 62:69
   sexes <- c("male", "female")
+  projection_years <- base_year:end_year
 
-  result <- data.table::CJ(year = years, age = ages, sex = sexes)
-  # Initial implementation: RRADJ is small and declining as NRA transition completes
-  # NRA reached 67 for cohorts born 1960+ (turning 67 in 2027)
-  result[, rradj := fifelse(year <= 2027, 0.01, 0)]
+  # ── 1. Extract medium worker base replacement rates from V.C7 ──────
+  # V.C7 year = year attaining age 65. For claiming age a in year y:
+  # birth_year = y - a, v_c7_year = birth_year + 65
+  medium_rr <- benefit_amounts[
+    earnings_level == "medium",
+    .(v_c7_year = year, base_rr = pct_earnings_nra / 100)
+  ]
 
-  cli::cli_alert_success("Constructed RRADJ for {nrow(result)} cells")
+  if (nrow(medium_rr) == 0) {
+    cli::cli_abort("No medium earnings level data in V.C7 — cannot compute RRADJ")
+  }
+
+  # ── 2. Build year × age grid and look up base RR ──────────────────
+  result <- data.table::CJ(year = projection_years, age = ages, sex = sexes)
+  result[, birth_year := year - age]
+  result[, v_c7_year := birth_year + 65L]
+
+  result <- merge(result, medium_rr, by = "v_c7_year", all.x = TRUE)
+
+  # V.C7 may not extend far enough for youngest cohorts at the end of
+  # the projection window (e.g., age 62 in 2100 → V.C7 year 2103).
+  # In steady state the replacement rate is constant (AWI and bend points
+  # grow at the same rate), so use the last available V.C7 value.
+  # Error if the gap exceeds 5 years (indicates a real data problem).
+  missing_rr <- sum(is.na(result$base_rr))
+  if (missing_rr > 0) {
+    missing_range <- range(result[is.na(base_rr), v_c7_year])
+    vc7_max <- max(medium_rr$v_c7_year)
+    gap_years <- missing_range[2] - vc7_max
+
+    if (gap_years > 5) {
+      cli::cli_abort(c(
+        "V.C7 missing medium worker data for {missing_rr} cohort-year combinations",
+        "x" = "Needed V.C7 years through {missing_range[2]}, but data ends at {vc7_max} (gap of {gap_years} years)"
+      ))
+    }
+
+    last_rr <- medium_rr[v_c7_year == vc7_max, base_rr]
+    result[is.na(base_rr), base_rr := last_rr]
+    cli::cli_alert_warning(
+      "Extended V.C7 medium replacement rate ({round(last_rr * 100, 1)}%) to {missing_rr} cells beyond V.C7 year {vc7_max} (steady-state extrapolation, gap = {gap_years} years)"
+    )
+  }
+
+  # ── 3. Compute NRA and benefit adjustment factors ──────────────────
+  result[, nra := compute_nra(birth_year)]
+
+  # Benefit adjustment at actual NRA vs fixed NRA=66
+  result[, adj_actual := compute_benefit_adjustment(age, nra)]
+  result[, adj_nra66 := compute_benefit_adjustment(age, 66)]
+
+  # ── 4. RRADJ = base_RR × (adj_actual - adj_nra66) ─────────────────
+  result[, rradj := base_rr * (adj_actual - adj_nra66)]
+
+  # Clean up intermediate columns
+  result[, c("birth_year", "v_c7_year", "base_rr", "nra", "adj_actual", "adj_nra66") := NULL]
+  data.table::setorder(result, year, sex, age)
+
+  # Log summary
+  nonzero <- result[rradj != 0]
+  if (nrow(nonzero) > 0) {
+    cli::cli_alert_info(
+      "RRADJ range: {round(min(nonzero$rradj), 4)} to {round(max(nonzero$rradj), 4)} (nonzero for NRA > 66 cohorts)"
+    )
+  }
+
+  cli::cli_alert_success("Constructed RRADJ for {nrow(result)} cells ({min(projection_years)}-{max(projection_years)})")
   result
+}
+
+#' Compute benefit adjustment factor for early/delayed retirement
+#'
+#' @description
+#' Returns the multiplicative factor applied to PIA based on claiming age
+#' relative to NRA:
+#' - Before NRA: Early Retirement Reduction (ERR)
+#'   - First 36 months: 5/9 of 1% per month
+#'   - Additional months: 5/12 of 1% per month
+#' - After NRA: Delayed Retirement Credit (DRC, birth 1943+)
+#'   - 8% per year (2/3% per month)
+#' - At NRA: factor = 1.0 (no adjustment)
+#'
+#' @param claiming_age Numeric vector: age at which benefits are claimed
+#' @param nra Numeric vector: Normal Retirement Age (fractional years)
+#'
+#' @return Numeric vector of adjustment factors (< 1 for ERR, > 1 for DRC)
+#' @keywords internal
+compute_benefit_adjustment <- function(claiming_age, nra) {
+  # Months between claiming and NRA (negative = before NRA)
+  months_from_nra <- round((claiming_age - nra) * 12)
+
+  months_early <- pmax(0L, -months_from_nra)
+  months_late <- pmax(0L, months_from_nra)
+
+  # ERR: 5/9% per month for first 36 months, 5/12% per month beyond
+  err <- fifelse(months_early <= 36,
+    months_early * 5 / 900,
+    36 * 5 / 900 + (months_early - 36) * 5 / 1200
+  )
+
+  # DRC: 8% per year (2/3% per month) for birth year 1943+
+  drc <- months_late * 2 / 300
+
+  1 - err + drc
 }
 
 #' Compute Normal Retirement Age for a given birth year
