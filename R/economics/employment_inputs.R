@@ -1036,12 +1036,11 @@ build_employment_inputs <- function(projected_population,
     # Reshape: child_status column holds education_level in education rows
     cps_edu_reshaped <- data.table::data.table(
       year = cps_education$year,
-      age = NA_integer_,  # age_group will be mapped
+      age_group = cps_education$age_group,
       sex = cps_education$sex,
       education_level = cps_education$child_status,
       proportion = cps_education$value
     )
-    data.table::setnames(cps_edu_reshaped, "age", "age", skip_absent = TRUE)
     proj_years <- (config_employment$base_year + 1):config_employment$end_year
     edscore <- compute_edscore(cps_edu_reshaped, projection_years = proj_years)
   } else {

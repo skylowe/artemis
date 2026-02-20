@@ -1001,11 +1001,19 @@ project_lfpr <- function(unemployment_rates,
   # Cross with projection years
   older_grid <- older_coeff_dt[, .(year = projection_years), by = names(older_coeff_dt)]
 
-  # Merge EDSCORE (uses age_group as character string like "55", "56", etc.)
+  # Merge EDSCORE: CPS education data uses 5-year groups (55-59, 60-64, etc.)
+  # while older_grid uses single-year ages (55, 56, ...). Map to 5-year groups.
+  older_grid[, edscore_age_group := fcase(
+    age <= 59L, "55-59",
+    age <= 64L, "60-64",
+    age <= 69L, "65-69",
+    age <= 74L, "70-74",
+    default = "75+"
+  )]
   if (!is.null(edscore)) {
     older_grid <- merge(older_grid,
-                         edscore[, .(age_group, sex, year, edscore_val = edscore)],
-                         by = c("age_group", "sex", "year"), all.x = TRUE, sort = FALSE)
+                         edscore[, .(edscore_age_group = age_group, sex, year, edscore_val = edscore)],
+                         by = c("edscore_age_group", "sex", "year"), all.x = TRUE, sort = FALSE)
     older_grid[is.na(edscore_val), edscore_val := 1]
   } else {
     older_grid[, edscore_val := 1]
