@@ -51,17 +51,13 @@ create_economics_targets <- function() {
       cue = targets::tar_cue(mode = "thorough")
     ),
 
-    # BLS CPS labor force data by age/sex
+    # CPS ASEC labor force data via IPUMS (Inputs #24, #25, #26/#27, #29)
+    # Provides: unemployment rates, LFPRs, labor force levels by
+    # 14 age groups × sex, single-year-of-age 55-79, marital status,
+    # children under 6, and educational attainment — all from one extract
     targets::tar_target(
-      bls_cps_labor_force,
-      fetch_cps_labor_force_by_age_sex(config_assumptions),
-      cue = targets::tar_cue(mode = "thorough")
-    ),
-
-    # CPS educational attainment
-    targets::tar_target(
-      cps_educational_attainment,
-      fetch_cps_educational_attainment(config_assumptions),
+      cps_labor_force,
+      fetch_cps_labor_force(config_assumptions),
       cue = targets::tar_cue(mode = "thorough")
     ),
 
@@ -97,7 +93,7 @@ create_economics_targets <- function() {
         tr2025_economic_assumptions = tr2025_economic_assumptions,
         tr2025_di_prevalence = tr2025_di_prevalence,
         tr2025_benefit_params = tr2025_benefit_params,
-        cps_education = cps_educational_attainment,
+        cps_labor_data = cps_labor_force,
         config_employment = config_economics$employment
       )
     ),
@@ -111,11 +107,11 @@ create_economics_targets <- function() {
       unemployment_projection,
       project_unemployment_rates(
         rtp_quarterly = employment_inputs$rtp_quarterly,
-        base_year_labor_force = bls_cps_labor_force[
+        base_year_labor_force = cps_labor_force[
           year == config_economics$employment$base_year & concept == "labor_force",
           .(age_group, sex, labor_force = value)
         ],
-        historical_ru = bls_cps_labor_force[
+        historical_ru = cps_labor_force[
           concept == "unemployment_rate",
           .(year, quarter = 1L, age_group, sex, rate = value)
         ],
@@ -136,7 +132,7 @@ create_economics_targets <- function() {
         cni_population = employment_inputs$quarterly_cni_pop,
         employment_inputs = employment_inputs,
         lfpr_coefficients = lfpr_coefficients,
-        historical_lfpr = bls_cps_labor_force[concept == "lfpr"],
+        historical_lfpr = cps_labor_force[concept == "lfpr"],
         config_employment = config_economics$employment
       )
     ),

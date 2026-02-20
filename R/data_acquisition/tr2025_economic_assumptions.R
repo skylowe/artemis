@@ -172,14 +172,26 @@ load_tr2025_vb2 <- function(config, years_filter = NULL) {
 #' Load TR2025 Table V.C5 (DI Prevalence)
 #'
 #' @description
-#' Loads disability beneficiary counts, insured population, and prevalence rates.
+#' Loads disability beneficiary counts and prevalence rates from V.C5.
+#' The sheet has 7 columns after the year:
+#'   1. Disabled-worker beneficiaries (thousands)
+#'   2. Auxiliary: Spouse (thousands)
+#'   3. Auxiliary: Child (thousands)
+#'   4. Total beneficiaries (thousands)
+#'   5. Gross prevalence rate (per 1,000 insured)
+#'   6. Age-sex adjusted prevalence rate (per 1,000 insured)
+#'
+#' Contains historical (1975-2024) then three alternatives (intermediate,
+#' low-cost, high-cost) each projecting 2025-2100.
 #'
 #' @param config List with metadata section
+#' @param alternative Character: "intermediate" (default), "low", or "high"
 #'
-#' @return data.table with columns: year, variable, value
+#' @return data.table with columns: year, dw_beneficiaries, spouse, child,
+#'   total_beneficiaries, gross_prevalence_rate, age_sex_adj_prevalence_rate
 #'
 #' @export
-load_tr2025_vc5 <- function(config) {
+load_tr2025_vc5 <- function(config, alternative = "intermediate") {
   tr_dir <- get_tr_data_dir(config)
   file_path <- file.path(tr_dir, "SingleYearTRTables_TR2025.xlsx")
 
@@ -187,26 +199,68 @@ load_tr2025_vc5 <- function(config) {
     cli::cli_abort("TR2025 SingleYear tables not found: {.file {file_path}}")
   }
 
-  cli::cli_alert_info("Loading TR2025 V.C5 (DI prevalence)")
+  cli::cli_alert_info("Loading TR2025 V.C5 (DI prevalence, {alternative})")
 
-  raw <- readxl::read_excel(file_path, sheet = "V.C5", skip = 2)
+  # Read raw data — skip 9 header rows, no column names
+  raw <- readxl::read_excel(file_path, sheet = "V.C5", skip = 9, col_names = FALSE)
   dt <- data.table::as.data.table(raw)
 
-  year_col <- names(dt)[1]
-  data.table::setnames(dt, year_col, "year")
-  dt[, year := suppressWarnings(as.integer(year))]
-  dt <- dt[!is.na(year)]
+  # Assign proper column names
+  col_names <- c("year_raw", "dw_beneficiaries", "spouse", "child",
+                 "total_beneficiaries", "gross_prevalence_rate",
+                 "age_sex_adj_prevalence_rate")
+  if (ncol(dt) >= 7) {
+    data.table::setnames(dt, names(dt)[1:7], col_names)
+  } else {
+    cli::cli_abort("V.C5 has {ncol(dt)} columns, expected at least 7")
+  }
 
-  var_cols <- names(dt)[names(dt) != "year"]
+  # Parse year and find section boundaries
+  dt[, year := suppressWarnings(as.integer(year_raw))]
 
-  result <- data.table::melt(dt, id.vars = "year",
-                              measure.vars = var_cols,
-                              variable.name = "variable",
-                              value.name = "value")
-  result[, value := suppressWarnings(as.numeric(value))]
-  result <- result[!is.na(value)]
+  # Identify section boundaries from non-numeric year_raw values
+  section_rows <- which(is.na(dt$year) & !is.na(dt$year_raw))
+  section_labels <- dt$year_raw[section_rows]
 
-  cli::cli_alert_success("Loaded V.C5: {nrow(result)} rows")
+  # Historical data: rows before first section header
+  first_section <- if (length(section_rows) > 0) section_rows[1] else nrow(dt) + 1
+  historical <- dt[1:(first_section - 1)][!is.na(year)]
+
+  # Find the requested alternative section
+  if (alternative == "intermediate") {
+    section_idx <- grep("Intermediate", section_labels, ignore.case = TRUE)
+  } else if (alternative == "low") {
+    section_idx <- grep("Low", section_labels, ignore.case = TRUE)
+  } else if (alternative == "high") {
+    section_idx <- grep("High", section_labels, ignore.case = TRUE)
+  } else {
+    cli::cli_abort("Invalid alternative: {alternative}. Use 'intermediate', 'low', or 'high'.")
+  }
+
+  projected <- data.table::data.table()
+  if (length(section_idx) > 0) {
+    start_row <- section_rows[section_idx[1]] + 1
+    end_row <- if (section_idx[1] < length(section_rows)) {
+      section_rows[section_idx[1] + 1] - 1
+    } else {
+      nrow(dt)
+    }
+    projected <- dt[start_row:end_row][!is.na(year)]
+  }
+
+  result <- data.table::rbindlist(list(historical, projected))
+  result[, year_raw := NULL]
+
+  # Convert all value columns to numeric
+  value_cols <- setdiff(names(result), "year")
+  for (col in value_cols) {
+    result[, (col) := suppressWarnings(as.numeric(get(col)))]
+  }
+  result <- result[!is.na(year)]
+
+  cli::cli_alert_success(
+    "Loaded V.C5: {nrow(result)} rows ({min(result$year)}-{max(result$year)}), {alternative} alternative"
+  )
 
   result
 }

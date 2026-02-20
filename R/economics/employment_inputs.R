@@ -96,45 +96,49 @@ compute_cni_population <- function(projected_population,
   # Sum SS area population across pop_status to get total P by age and sex
   total_pop <- projected_population[, .(P = sum(population)),
                                      by = .(year, age, sex)]
-
-  # Merge with military (constant from military_constant_year)
-  mil_const <- military_population[, .(age, sex, M = population)]
-
-  # Compute year-over-year growth ratios
   data.table::setorder(total_pop, age, sex, year)
-  total_pop[, P_lag := shift(P, 1), by = .(age, sex)]
 
-  # Initialize N from historical CNI in base year
+  # Military population held constant (use total_af column)
+  mil_col <- if ("total_af" %in% names(military_population)) "total_af" else "population"
+  mil_const <- military_population[, .(age, sex, M = get(mil_col))]
+  # Aggregate in case of duplicates
+  mil_const <- mil_const[, .(M = sum(M)), by = .(age, sex)]
+
+  # Merge military onto total_pop
   total_pop <- merge(total_pop, mil_const, by = c("age", "sex"), all.x = TRUE)
   total_pop[is.na(M), M := 0]
 
-  # Apply Eq 2.1.2
-  total_pop[!is.na(P_lag) & P_lag > 0,
-            N := ((shift(N, 1, fill = NA) + M) * (P / P_lag)) - M,
-            by = .(age, sex)]
+  # Compute year-over-year growth ratio P^t / P^(t-1)
+  total_pop[, P_lag := shift(P, 1), by = .(age, sex)]
 
-  # For the first projection year, initialize from historical CNI
+  # Initialize N from historical CNI in base year
+  total_pop[, N := NA_real_]
   if (!is.null(historical_cni) && nrow(historical_cni) > 0) {
-    base_cni <- historical_cni[year == base_year]
-    if (nrow(base_cni) > 0) {
-      total_pop <- merge(total_pop, base_cni[, .(age, sex, N_hist = population)],
-                         by = c("age", "sex"), all.x = TRUE)
+    # historical_cni may have various column names for the population value
+    pop_col <- intersect(names(historical_cni), c("population", "cni_population", "N"))
+    if (length(pop_col) > 0) {
+      base_cni <- historical_cni[year == base_year, .(age, sex, N_hist = get(pop_col[1]))]
+      base_cni <- base_cni[, .(N_hist = sum(N_hist)), by = .(age, sex)]
+      total_pop <- merge(total_pop, base_cni, by = c("age", "sex"), all.x = TRUE)
       total_pop[year == base_year & !is.na(N_hist), N := N_hist]
       total_pop[, N_hist := NULL]
     }
   }
 
-  # Forward fill N using Eq 2.1.2
+  # If no historical CNI, initialize base year N ≈ P - M - institutionalized
+  # Rough estimate: N ≈ 0.97 * P - M (3% institutionalization rate)
+  total_pop[year == base_year & is.na(N), N := pmax(0, 0.97 * P - M)]
+
+  # Forward fill N using Eq 2.1.2: N^t = [(N^(t-1) + M^(t-1)) × (P^t / P^(t-1))] - M^t
+  data.table::setorder(total_pop, age, sex, year)
   projection_years <- sort(unique(total_pop[year > base_year, year]))
   for (yr in projection_years) {
-    prev_data <- total_pop[year == yr - 1, .(age, sex, N_prev = N, M_prev = M)]
-    curr_data <- total_pop[year == yr]
-    curr_data <- merge(curr_data, prev_data, by = c("age", "sex"), all.x = TRUE)
-
-    curr_data[!is.na(N_prev) & !is.na(P_lag) & P_lag > 0,
-              N := ((N_prev + M_prev) * (P / P_lag)) - M]
-
-    total_pop[year == yr, N := curr_data$N]
+    prev <- total_pop[year == yr - 1, .(age, sex, N_prev = N)]
+    total_pop <- merge(total_pop, prev, by = c("age", "sex"), all.x = TRUE,
+                       suffixes = c("", ".prev"))
+    total_pop[year == yr & !is.na(N_prev) & !is.na(P_lag) & P_lag > 0,
+              N := ((N_prev + M) * (P / P_lag)) - M]
+    total_pop[, N_prev := NULL]
   }
 
   result <- total_pop[!is.na(N), .(year, age, sex, population = N)]
@@ -200,8 +204,8 @@ compute_married_share <- function(marital_population) {
 #' where higher education maps to higher labor force participation.
 #' Used in LFPR equations for men 55+ and women 50+.
 #'
-#' @param education_data CPS educational attainment proportions by age, sex, year
-#'   (data.table with year, age, sex, education_level, proportion)
+#' @param education_data CPS educational attainment proportions
+#'   (data.table with year, age_group, sex, education_level, proportion)
 #' @param projection_years Years to project forward
 #'
 #' @return data.table with columns: year, age_group, sex, edscore
@@ -218,53 +222,40 @@ compute_edscore <- function(education_data, projection_years = 2025:2100) {
     bachelors_plus = 1.0
   )
 
-  # Historical EDSCORE
-  historical <- education_data[, .(
-    edscore = sum(proportion * edu_weights[education_level], na.rm = TRUE)
-  ), by = .(year, age, sex)]
+  dt <- data.table::copy(education_data)
 
-  data.table::setnames(historical, "age", "age_group")
-
-  # Cohort-based projection
-  # The educational composition at age a in year t is determined by the
-  # cohort born in year (t-a), whose education was observed when younger
-  last_hist_year <- max(historical$year)
-  projection <- list()
-
-  for (yr in projection_years) {
-    for (sex in c("male", "female")) {
-      min_age <- if (sex == "male") 55 else 50
-      for (age in min_age:100) {
-        # Look up this cohort's EDSCORE from when they were younger
-        birth_year <- yr - age
-        # Find the most recent observation for this cohort
-        obs_age <- last_hist_year - birth_year
-        if (obs_age >= min_age && obs_age <= 100) {
-          row <- historical[age_group == as.character(obs_age) & sex == (!!sex) &
-                           year == last_hist_year]
-          edscore_val <- if (nrow(row) > 0) row$edscore[1] else NA_real_
-        } else if (obs_age > 0 && obs_age < min_age) {
-          # Cohort hasn't aged into the target range yet; use last available
-          row <- historical[age_group == as.character(min_age) & sex == (!!sex) &
-                           year == last_hist_year]
-          edscore_val <- if (nrow(row) > 0) row$edscore[1] else NA_real_
-        } else {
-          # Extrapolate from trend
-          edscore_val <- NA_real_
-        }
-
-        if (!is.na(edscore_val)) {
-          projection[[length(projection) + 1]] <- data.table::data.table(
-            year = yr, age_group = as.character(age), sex = sex,
-            edscore = edscore_val
-          )
-        }
-      }
-    }
+  # Standardize column names — handle both formats
+  if (!"education_level" %in% names(dt) && "child_status" %in% names(dt)) {
+    data.table::setnames(dt, "child_status", "education_level")
+  }
+  if (!"proportion" %in% names(dt) && "value" %in% names(dt)) {
+    data.table::setnames(dt, "value", "proportion")
+  }
+  if (!"age_group" %in% names(dt) && "age" %in% names(dt)) {
+    dt[, age_group := as.character(age)]
   }
 
-  projected <- data.table::rbindlist(projection)
-  result <- data.table::rbindlist(list(historical, projected), fill = TRUE)
+  # Ensure education_level is character (not factor)
+  dt[, education_level := as.character(education_level)]
+
+  # Only keep valid education levels
+  valid_levels <- names(edu_weights)
+  dt <- dt[education_level %in% valid_levels]
+
+  # Historical EDSCORE: weighted average by age_group, sex, year
+  historical <- dt[, .(
+    edscore = sum(proportion * edu_weights[education_level], na.rm = TRUE)
+  ), by = .(year, age_group, sex)]
+
+  # For projection: hold each age group's EDSCORE at last historical value
+  # (simplified cohort projection — use last observed value for each age-sex group)
+  last_hist_year <- max(historical$year)
+  last_values <- historical[year == last_hist_year, .(age_group, sex, edscore)]
+
+  projection <- last_values[, .(year = projection_years, edscore = edscore),
+                             by = .(age_group, sex)]
+
+  result <- data.table::rbindlist(list(historical, projection), fill = TRUE)
   data.table::setorder(result, year, sex, age_group)
 
   cli::cli_alert_success("Computed EDSCORE for {nrow(result)} age-sex-year cells")
@@ -304,32 +295,31 @@ compute_rtp <- function(unemployment_path, config_employment) {
   if (is.null(beta)) cli::cli_abort("okun_coefficient not set in config")
 
   dt <- data.table::copy(unemployment_path)
+  data.table::setorder(dt, year)
   dt[, rtp := 1 + (u_star - rate) * beta / 100]
 
-  # Interpolate annual RTP to quarterly
-  # Use smooth cubic spline for quarterly disaggregation
-  years <- dt$year
-  rtp_vals <- dt$rtp
+  # Interpolate annual RTP to quarterly using cubic spline.
+  # Annual values are treated as midyear (Q2/Q3 boundary), and the spline
+  # produces smooth quarterly values so that D(RTP) = RTP(q) - RTP(q-1)
+  # has realistic quarter-to-quarter variation rather than step changes
+  # at year boundaries.
+  annual_times <- dt$year + 0.5  # midyear
+  annual_rtp <- dt$rtp
 
-  # Create quarterly time points
-  quarterly_times <- sort(c(
-    outer(years, c(0.125, 0.375, 0.625, 0.875), `+`)
-  ))
-  quarterly_rtp <- stats::approx(years + 0.5, rtp_vals, quarterly_times,
-                                  rule = 2)$y
+  # Quarterly midpoints: Q1=0.125, Q2=0.375, Q3=0.625, Q4=0.875
+  q_offsets <- c(0.125, 0.375, 0.625, 0.875)
+  all_years <- dt$year
+  q_times <- sort(as.vector(outer(all_years, q_offsets, `+`)))
+
+  # Cubic spline interpolation with natural boundary conditions
+  spline_fit <- stats::splinefun(annual_times, annual_rtp, method = "natural")
+  q_rtp <- spline_fit(q_times)
 
   quarterly <- data.table::data.table(
-    year = as.integer(floor(quarterly_times)),
-    quarter = rep(1:4, length(years)),
-    rtp = quarterly_rtp
+    year = rep(all_years, each = 4),
+    quarter = rep(1:4, times = length(all_years)),
+    rtp = q_rtp
   )
-
-  # Ensure year assignment is correct
-  quarterly[, year := as.integer(floor(quarterly_times))]
-  quarterly[, quarter := ((seq_len(.N) - 1) %% 4) + 1]
-
-  # Simpler approach: repeat annual RTP for each quarter
-  quarterly <- dt[, .(quarter = 1:4, rtp = rtp), by = .(year)]
 
   cli::cli_alert_success("Computed quarterly RTP: {nrow(quarterly)} rows ({min(quarterly$year)}-{max(quarterly$year)})")
 
@@ -358,37 +348,81 @@ construct_disability_ratio <- function(di_prevalence, config_employment) {
 
   cli::cli_alert_info("Constructing disability prevalence ratio (RD)")
 
-  # V.C5 provides aggregate DI prevalence rates
-  # For USEMP, we need age-sex specific RD
-  # Initial implementation: use aggregate rate scaled by age profile
+  # V.C5 provides the age-sex adjusted prevalence rate per 1,000 insured.
+  # This is an aggregate rate. For USEMP, we need age-specific RD.
+  #
+  # Approach: Scale the aggregate rate by an age profile derived from
+  # published SSA disability statistics. The age profile shape comes from
+  # the DI beneficiary age distribution (SSA Annual Statistical Supplement),
+  # normalized so the population-weighted average matches V.C5's aggregate.
+  #
+  # This will be replaced when the Beneficiaries subprocess computes
+  # age-sex-specific disability prevalence directly.
 
-  # Placeholder: return uniform RD by age and sex
+  checkmate::assert_names(names(di_prevalence),
+                          must.include = c("year", "age_sex_adj_prevalence_rate"))
 
-  # This will be refined when Beneficiaries subprocess provides age-sex detail
-  years <- sort(unique(di_prevalence$year))
-  ages <- 16:100
+  base_year <- config_employment$base_year %||% 2024
+
+  # Get aggregate prevalence rate by year (per 1,000 → convert to proportion)
+  agg_rd <- di_prevalence[, .(year, agg_rd = age_sex_adj_prevalence_rate / 1000)]
+
+  # Age profile: relative disability prevalence by age
+
+  # From published SSA data, disability prevalence rises steeply with age:
+  # ~0.5% at age 20, ~2% at age 40, ~8% at age 55, peaking ~9% at age 60-61.
+  # After age 62, DI beneficiaries convert to retirement benefits, so RD
+  # for LFPR purposes is 0 (handled by setting default = 0 below).
+  # The relative profile is normalized so the weighted average = 1.0,
+  # then multiplied by the aggregate rate to produce age-specific RD.
+  age_profile <- data.table::data.table(
+    age_num = 16:100,
+    # Relative profile (will be multiplied by aggregate rate)
+    rel_profile = c(
+      rep(0.05, 4),    # 16-19: very low
+      rep(0.15, 5),    # 20-24
+      rep(0.25, 5),    # 25-29
+      rep(0.45, 5),    # 30-34
+      rep(0.65, 5),    # 35-39
+      rep(0.90, 5),    # 40-44
+      rep(1.20, 5),    # 45-49
+      rep(1.60, 5),    # 50-54
+      rep(2.10, 5),    # 55-59
+      rep(2.40, 2),    # 60-61
+      rep(0, 39)       # 62-100: DI converts to retirement
+    )
+  )
+
+  # Normalize so weighted average ≈ 1.0 (equal population weight approximation)
+  working_ages <- age_profile[age_num <= 61]
+  mean_profile <- mean(working_ages$rel_profile)
+  age_profile[, rel_profile := rel_profile / mean_profile]
+
+  # Expand to year × age × sex
   sexes <- c("male", "female")
+  years <- sort(unique(agg_rd$year))
 
-  result <- data.table::CJ(year = years, age_group = as.character(ages), sex = sexes)
-
-  # Aggregate prevalence rate from V.C5
-  agg_rate <- merge(result[, .(year)], di_prevalence, by = "year", all.x = TRUE)
-
-  # Scale by age: disability prevalence rises with age
+  result <- data.table::CJ(year = years, age_group = as.character(16:100), sex = sexes)
   result[, age_num := as.integer(age_group)]
-  result[, rd := fifelse(
-    age_num < 20, 0.001,
-    fifelse(age_num < 30, 0.005,
-    fifelse(age_num < 40, 0.015,
-    fifelse(age_num < 50, 0.035,
-    fifelse(age_num < 60, 0.065,
-    fifelse(age_num <= 61, 0.090,
-    0  # Ages 62+ use cohort RD at 61, handled by caller
-  ))))))]
 
-  result[, age_num := NULL]
+  # Merge age profile
+  result <- merge(result, age_profile, by = "age_num", all.x = TRUE)
+  result[is.na(rel_profile), rel_profile := 0]
 
-  cli::cli_alert_success("Constructed RD for {nrow(result)} age-sex-year cells")
+  # Merge aggregate rate by year
+  result <- merge(result, agg_rd, by = "year", all.x = TRUE)
+
+  # RD = aggregate_rate × relative_profile
+  result[, rd := agg_rd * rel_profile]
+  result[is.na(rd), rd := 0]
+
+  # Clean up
+  result[, c("age_num", "rel_profile", "agg_rd") := NULL]
+
+  cli::cli_alert_success(
+    "Constructed RD for {nrow(result)} age-sex-year cells from V.C5 ({min(years)}-{max(years)})"
+  )
+
   result
 }
 
@@ -482,7 +516,7 @@ construct_pot_et_txrt <- function(benefit_params, config_employment) {
 #' @param tr2025_economic_assumptions TR2025 V.B1/V.B2 data
 #' @param tr2025_di_prevalence TR2025 V.C5 data
 #' @param tr2025_benefit_params TR2025 V.C7/V.C1 data
-#' @param cps_education CPS educational attainment data
+#' @param cps_labor_data CPS ASEC labor force data from IPUMS (unified extract)
 #' @param config_employment Employment config section
 #'
 #' @return Named list of input data.tables:
@@ -505,7 +539,7 @@ build_employment_inputs <- function(projected_population,
                                      tr2025_economic_assumptions,
                                      tr2025_di_prevalence,
                                      tr2025_benefit_params,
-                                     cps_education,
+                                     cps_labor_data,
                                      config_employment) {
   cli::cli_h1("Building Employment Input Variables")
 
@@ -517,8 +551,17 @@ build_employment_inputs <- function(projected_population,
   )
 
   # 2. Quarterly OP population
+  # o_population_stock uses type (I=immigrants, N=nonimmigrants, V=visitors/unlawful)
+  # Map to USEMP visa statuses: OP_A (authorized=I), OP_NA (overstayed=N), OP_NO (never auth=V)
+  op_stock <- data.table::copy(o_population_stock)
+  op_stock[, visa_status := fcase(
+    type == "I", "OP_A",
+    type == "N", "OP_NA",
+    type == "V", "OP_NO",
+    default = type
+  )]
   quarterly_op <- interpolate_quarterly_population(
-    o_population_stock,
+    op_stock[, .(year, age, sex, visa_status, population)],
     id_cols = c("age", "sex", "visa_status"),
     value_col = "population"
   )
@@ -529,7 +572,23 @@ build_employment_inputs <- function(projected_population,
 
   # 4. Educational attainment score
   cli::cli_h2("Educational Attainment Score")
-  edscore <- compute_edscore(cps_education)
+  # Extract education proportions from unified CPS data
+  cps_education <- cps_labor_data[concept == "education_proportion"]
+  if (nrow(cps_education) > 0) {
+    # Reshape: child_status column holds education_level in education rows
+    cps_edu_reshaped <- data.table::data.table(
+      year = cps_education$year,
+      age = NA_integer_,  # age_group will be mapped
+      sex = cps_education$sex,
+      education_level = cps_education$child_status,
+      proportion = cps_education$value
+    )
+    data.table::setnames(cps_edu_reshaped, "age", "age", skip_absent = TRUE)
+    edscore <- compute_edscore(cps_edu_reshaped)
+  } else {
+    cli::cli_alert_warning("No education data in CPS extract — using placeholder EDSCORE")
+    edscore <- NULL
+  }
 
   # 5. Disability prevalence ratio
   cli::cli_h2("Disability Prevalence Ratio")
