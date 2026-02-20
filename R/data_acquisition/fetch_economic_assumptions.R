@@ -346,6 +346,115 @@ fetch_fred_interest_rates <- function(config,
 }
 
 # =============================================================================
+# FRED Quarterly GDP (for RTP)
+# =============================================================================
+
+#' Fetch quarterly RTP (Real GDP / Potential GDP) from FRED
+#'
+#' @description
+#' Fetches quarterly Real GDP (GDPC1) and Real Potential GDP (GDPPOT) from FRED,
+#' then computes RTP = GDPC1 / GDPPOT. This provides historical quarterly RTP
+#' needed for the D(RTP) distributed lags in the unemployment rate equations.
+#'
+#' @param config Full ARTEMIS config
+#' @param start_year First year (default 2015, only need a few years of lags)
+#' @param end_year Last year (default: base_year from config)
+#'
+#' @return data.table with columns: year, quarter, rtp
+#'
+#' @export
+fetch_fred_quarterly_rtp <- function(config, start_year = 2015, end_year = NULL) {
+  emp_config <- config$economics$employment
+  if (is.null(emp_config)) {
+    cli::cli_abort("config$economics$employment is missing")
+  }
+  if (is.null(end_year)) end_year <- emp_config$base_year
+
+  fred_key <- Sys.getenv("FRED_API_KEY")
+  if (fred_key == "") {
+    cli::cli_abort(c(
+      "FRED_API_KEY not found in .Renviron",
+      "i" = "Required for fetching GDP data from FRED",
+      "i" = "Register at https://fred.stlouisfed.org/docs/api/api_key.html"
+    ))
+  }
+
+  cli::cli_alert_info("Fetching FRED quarterly GDP for RTP ({start_year}-{end_year})")
+
+  cache_dir <- here::here("data/cache/fred")
+  if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
+
+  cache_file <- file.path(cache_dir, sprintf("rtp_quarterly_%d_%d.rds", start_year, end_year))
+  if (file.exists(cache_file)) {
+    cli::cli_alert_success("Loading cached FRED quarterly RTP")
+    return(readRDS(cache_file))
+  }
+
+  # Helper to fetch a single FRED quarterly series
+  fetch_fred_quarterly <- function(series_id) {
+    resp <- httr2::request("https://api.stlouisfed.org/fred/series/observations") |>
+      httr2::req_url_query(
+        series_id = series_id,
+        api_key = fred_key,
+        file_type = "json",
+        observation_start = paste0(start_year, "-01-01"),
+        observation_end = paste0(end_year, "-12-31"),
+        frequency = "q"
+      ) |>
+      httr2::req_timeout(30) |>
+      httr2::req_retry(max_tries = 3) |>
+      httr2::req_perform()
+
+    json <- httr2::resp_body_json(resp)
+
+    rows <- list()
+    for (obs in json$observations) {
+      val <- suppressWarnings(as.numeric(obs$value))
+      if (!is.na(val)) {
+        date <- as.Date(obs$date)
+        rows[[length(rows) + 1L]] <- data.table::data.table(
+          year = as.integer(format(date, "%Y")),
+          quarter = as.integer((as.integer(format(date, "%m")) - 1L) %/% 3L + 1L),
+          value = val
+        )
+      }
+    }
+
+    if (length(rows) == 0L) {
+      cli::cli_abort("FRED API returned no data for {series_id} ({start_year}-{end_year})")
+    }
+
+    data.table::rbindlist(rows)
+  }
+
+  # Fetch both series
+  gdpc1 <- fetch_fred_quarterly("GDPC1")    # Real GDP
+  gdppot <- fetch_fred_quarterly("GDPPOT")  # Potential GDP
+
+  data.table::setnames(gdpc1, "value", "real_gdp")
+  data.table::setnames(gdppot, "value", "potential_gdp")
+
+  # Merge and compute RTP
+  rtp_dt <- merge(gdpc1, gdppot, by = c("year", "quarter"))
+
+  if (nrow(rtp_dt) == 0L) {
+    cli::cli_abort("No overlapping quarters between GDPC1 and GDPPOT")
+  }
+
+  rtp_dt[, rtp := real_gdp / potential_gdp]
+  result <- rtp_dt[, .(year, quarter, rtp)]
+  data.table::setorder(result, year, quarter)
+
+  saveRDS(result, cache_file)
+
+  cli::cli_alert_success(
+    "Fetched quarterly RTP from FRED: {nrow(result)} quarters ({min(result$year)}Q{min(result[year == min(year)]$quarter)}-{max(result$year)}Q{max(result[year == max(year)]$quarter)})"
+  )
+
+  result
+}
+
+# =============================================================================
 # Verification: API vs TR2025 Tables
 # =============================================================================
 

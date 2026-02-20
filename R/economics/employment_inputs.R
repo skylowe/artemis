@@ -495,24 +495,31 @@ construct_children_proportions <- function(cps_labor_data,
 # RTP (Ratio of Real to Potential GDP)
 # =============================================================================
 
-#' Compute RTP from unemployment rate path
+#' Compute RTP from historical GDP data and projected unemployment rate path
 #'
 #' @description
-#' Derives the ratio of real GDP to potential GDP from the published
-#' unemployment rate using Okun's Law:
-#'   RTP = 1 + (u* - u) × beta / 100
+#' Builds a continuous quarterly RTP (Real GDP / Potential GDP) series by
+#' splicing historical RTP from FRED (GDPC1/GDPPOT) with projected RTP
+#' derived from Okun's Law. This ensures D(RTP) lags are available for
+#' Q1 of the first projection year, matching the SSA methodology.
+#'
+#' Projected RTP uses Okun's Law:
+#'   RTP = 1 + (u* - u) * beta / 100
 #'
 #' where u* = natural rate (ultimate unemployment rate), u = actual,
 #' and beta = Okun coefficient (~2).
 #'
 #' @param unemployment_path Annual unemployment rate path (data.table with year, rate)
 #' @param config_employment Employment config section
+#' @param historical_rtp Quarterly historical RTP from FRED (data.table with year, quarter, rtp).
+#'   If NULL, only projected RTP is returned (Q1 of first year will have NA D(RTP)).
 #'
 #' @return data.table with columns: year, quarter, rtp
 #'
-#' @references Economics overview documentation
+#' @references Economics overview documentation, Section 2.1.c
 #' @export
-compute_rtp <- function(unemployment_path, config_employment) {
+compute_rtp <- function(unemployment_path, config_employment,
+                        historical_rtp = NULL) {
   checkmate::assert_data_table(unemployment_path)
   checkmate::assert_list(config_employment)
 
@@ -522,6 +529,7 @@ compute_rtp <- function(unemployment_path, config_employment) {
   if (is.null(u_star)) cli::cli_abort("ultimate_unemployment_rate not set in config")
   if (is.null(beta)) cli::cli_abort("okun_coefficient not set in config")
 
+  # --- Projected RTP from Okun's Law ---
   dt <- data.table::copy(unemployment_path)
   data.table::setorder(dt, year)
   dt[, rtp := 1 + (u_star - rate) * beta / 100]
@@ -543,15 +551,35 @@ compute_rtp <- function(unemployment_path, config_employment) {
   spline_fit <- stats::splinefun(annual_times, annual_rtp, method = "natural")
   q_rtp <- spline_fit(q_times)
 
-  quarterly <- data.table::data.table(
+  projected <- data.table::data.table(
     year = rep(all_years, each = 4),
     quarter = rep(1:4, times = length(all_years)),
     rtp = q_rtp
   )
 
-  cli::cli_alert_success("Computed quarterly RTP: {nrow(quarterly)} rows ({min(quarterly$year)}-{max(quarterly$year)})")
+  # --- Splice with historical RTP ---
+  if (!is.null(historical_rtp) && nrow(historical_rtp) > 0) {
+    checkmate::assert_data_table(historical_rtp)
+    hist <- data.table::copy(historical_rtp[, .(year, quarter, rtp)])
 
-  quarterly
+    # Keep only historical quarters that precede the projected period
+    first_proj_year <- min(projected$year)
+    hist <- hist[year < first_proj_year]
+
+    if (nrow(hist) > 0) {
+      quarterly <- data.table::rbindlist(list(hist, projected), use.names = TRUE)
+      data.table::setorder(quarterly, year, quarter)
+
+      cli::cli_alert_success(
+        "Spliced quarterly RTP: {nrow(hist)} historical + {nrow(projected)} projected = {nrow(quarterly)} total ({min(quarterly$year)}Q{min(quarterly[year == min(year)]$quarter)}-{max(quarterly$year)}Q{max(quarterly[year == max(year)]$quarter)})"
+      )
+      return(quarterly)
+    }
+  }
+
+  cli::cli_alert_success("Computed quarterly RTP: {nrow(projected)} rows ({min(projected$year)}-{max(projected$year)})")
+
+  projected
 }
 
 # =============================================================================
@@ -966,6 +994,7 @@ build_employment_inputs <- function(projected_population,
                                      tr_benefit_params,
                                      di_age_profile,
                                      cps_labor_data,
+                                     historical_rtp = NULL,
                                      config_employment) {
   cli::cli_h1("Building Employment Input Variables")
 
@@ -1048,7 +1077,8 @@ build_employment_inputs <- function(projected_population,
     variable == "unemployment_rate",
     .(year, rate = value)
   ])
-  rtp_quarterly <- compute_rtp(unemployment_path, config_employment)
+  rtp_quarterly <- compute_rtp(unemployment_path, config_employment,
+                               historical_rtp = historical_rtp)
 
   cli::cli_alert_success("All employment inputs constructed")
 

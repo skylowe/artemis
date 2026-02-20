@@ -91,6 +91,14 @@ create_economics_targets <- function() {
       cue = targets::tar_cue(mode = "thorough")
     ),
 
+    # Historical quarterly RTP from FRED (GDPC1/GDPPOT)
+    # Provides D(RTP) lags for Q1 of first projection year
+    targets::tar_target(
+      historical_rtp,
+      fetch_fred_quarterly_rtp(config_assumptions),
+      cue = targets::tar_cue(mode = "thorough")
+    ),
+
     # ══════════════════════════════════════════════════════════════════
     # INPUT VARIABLE CONSTRUCTION
     # ══════════════════════════════════════════════════════════════════
@@ -111,6 +119,7 @@ create_economics_targets <- function() {
         tr_benefit_params = tr_benefit_params,
         di_age_profile = di_age_profile,
         cps_labor_data = cps_labor_force,
+        historical_rtp = historical_rtp,
         config_employment = config_economics$employment
       )
     ),
