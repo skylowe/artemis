@@ -268,7 +268,7 @@ compute_married_share <- function(marital_population) {
 #' @return data.table with columns: year, age_group, sex, edscore
 #'
 #' @export
-compute_edscore <- function(education_data, projection_years = 2025:2100) {
+compute_edscore <- function(education_data, projection_years) {
   checkmate::assert_data_table(education_data)
 
   # Education level weights (higher weight = higher participation differential)
@@ -539,7 +539,10 @@ construct_pot_et_txrt <- function(benefit_params, config_employment) {
   # and $1 for every $3 in the year of reaching NRA
   # Effective marginal tax rate depends on benefit amount relative to earnings
 
-  years <- 2025:2100
+  base_year <- config_employment$base_year
+  end_year <- config_employment$end_year
+  if (is.null(end_year)) cli::cli_abort("economics.employment.end_year not set in config")
+  years <- (base_year + 1):end_year
   ages <- 62:69
   result <- data.table::CJ(year = years, age = ages)
 
@@ -644,7 +647,8 @@ build_employment_inputs <- function(projected_population,
       proportion = cps_education$value
     )
     data.table::setnames(cps_edu_reshaped, "age", "age", skip_absent = TRUE)
-    edscore <- compute_edscore(cps_edu_reshaped)
+    proj_years <- (config_employment$base_year + 1):config_employment$end_year
+    edscore <- compute_edscore(cps_edu_reshaped, projection_years = proj_years)
   } else {
     cli::cli_abort(c(
       "No education data found in CPS extract (concept == 'education_proportion' has 0 rows).",

@@ -1066,6 +1066,8 @@ economics:
 
     # Base year for projections (last year with complete historical data)
     base_year: 2024
+    # End year for projections (derived from metadata.projection_period.end_year if null)
+    end_year: null
     # Historical data start year for model estimation context
     historical_start_year: 1968
 

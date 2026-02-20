@@ -282,7 +282,11 @@ project_lfpr <- function(unemployment_rates,
   checkmate::assert_list(config_employment)
 
   base_year <- config_employment$base_year
-  projection_years <- (base_year + 1):2100
+  end_year <- config_employment$end_year
+  if (is.null(end_year)) {
+    cli::cli_abort("economics.employment.end_year not set in config")
+  }
+  projection_years <- (base_year + 1):end_year
   n_proj_years <- length(projection_years)
 
   # Extract input components
@@ -834,8 +838,8 @@ project_lfpr <- function(unemployment_rates,
 
   # Build a lookup matrix for ages 55-100 x 2 sexes x all years
   # Index: [year_idx, age - 54, sex_idx]  where sex_idx: male=1, female=2
-  # year range: base_year (for seed values) through 2100
-  all_years <- base_year:2100
+  # year range: base_year (for seed values) through end_year
+  all_years <- base_year:end_year
   n_all_years <- length(all_years)
   n_ages_55_100 <- 46  # ages 55 through 100
 

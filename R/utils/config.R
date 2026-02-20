@@ -223,6 +223,12 @@ derive_config_defaults <- function(config) {
       ds$population_estimates$end_year %||% (tr_year - 1L)
   }
 
+  # Economics
+  if (!is.null(config$economics) && !is.null(config$economics$employment)) {
+    config$economics$employment$end_year <-
+      config$economics$employment$end_year %||% proj_end
+  }
+
   # TR file paths
   if (!is.null(config$projected_population)) {
     config$projected_population$tr_historical_population_file <-
