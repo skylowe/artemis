@@ -1311,7 +1311,9 @@ project_labor_force_employment <- function(lfpr_projection,
   ru_q <- unemployment_projection$actual
 
   # Aggregate quarterly CNI population from single-year ages to LFPR age groups
+  # Filter to working-age population (16+) — ages 0-15 are not in the labor force
   cni_pop <- data.table::copy(quarterly_cni_pop)
+  cni_pop <- cni_pop[age >= 16]
   cni_pop[, age_group := fcase(
     age <= 17, "16-17", age <= 19, "18-19", age <= 24, "20-24",
     age <= 29, "25-29", age <= 34, "30-34", age <= 39, "35-39",
@@ -1319,18 +1321,14 @@ project_labor_force_employment <- function(lfpr_projection,
     age <= 59, "55-59", age <= 64, "60-64", age <= 69, "65-69",
     age <= 74, "70-74", default = "75+"
   )]
-  # Also create single-year age groups for ages 55+ (used by LFPR)
+  # Single-year age groups for ages 55+ (LFPR uses single-year resolution)
   cni_single <- cni_pop[age >= 55, .(population = sum(population)),
                         by = .(year, quarter, age_group = as.character(age), sex)]
-  # Aggregate 5-year groups
-  cni_grouped <- cni_pop[, .(population = sum(population)),
+  # 5-year groups for ages 16-54 (55+ uses single-year from above)
+  cni_grouped <- cni_pop[age <= 54, .(population = sum(population)),
                          by = .(year, quarter, age_group, sex)]
-  # Create 80+ aggregate from single-year ages (LFPR outputs both single-year and 80+)
-  cni_80plus <- cni_pop[age >= 80, .(population = sum(population)),
-                        by = .(year, quarter, sex)]
-  cni_80plus[, age_group := "80+"]
-  # Combine all
-  cni_by_group <- data.table::rbindlist(list(cni_grouped, cni_single, cni_80plus),
+  # Combine (no 80+ aggregate — single-year ages already cover each age individually)
+  cni_by_group <- data.table::rbindlist(list(cni_grouped, cni_single),
                                          use.names = TRUE)
 
   # Map single-year LFPR ages (55-100, 80+) to UR 5-year groups for the merge
@@ -1354,6 +1352,10 @@ project_labor_force_employment <- function(lfpr_projection,
                    by.x = c("year", "quarter", "ur_age_group", "sex"),
                    by.y = c("year", "quarter", "age_group", "sex"),
                    all.x = TRUE, suffixes = c("", "_ru"))
+
+  # Drop LFPR rows with no matching population (e.g., "80+" aggregate when
+  # single-year ages 80-99 already cover those ages individually)
+  lf_data <- lf_data[!is.na(population)]
 
   # LC = LFPR × N (Eq 2.1.5)
   lf_data[, labor_force := lfpr * population]
