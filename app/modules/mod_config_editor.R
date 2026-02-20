@@ -336,11 +336,25 @@ mod_config_editor_ui <- function(id) {
         helpText("Multipliers on base departure rate schedule. 1.0 = baseline."),
 
         sliderInput(ns("dr_n_pre_2015"), "N pre-2015", min = 0.10, max = 3.00, value = 1.20, step = 0.05),
+        helpText(class = "small text-muted mt-0",
+          "Never-authorized (entered without inspection) departure rate before 2015 Executive Actions."),
         sliderInput(ns("dr_n_post_2015"), "N post-2015", min = 0.10, max = 3.00, value = 0.80, step = 0.05),
+        helpText(class = "small text-muted mt-0",
+          "Never-authorized departure rate after 2015 Executive Actions (lower enforcement)."),
         sliderInput(ns("dr_n_recent"), "N recent arrival", min = 0.10, max = 3.00, value = 2.00, step = 0.05),
+        helpText(class = "small text-muted mt-0",
+          "Extra multiplier for never-authorized who arrived within the last 5 years.",
+          "TR2025: recent arrivals depart at twice the rate of established residents."),
         sliderInput(ns("dr_ni_initial"), "NI initial", min = 0.10, max = 3.00, value = 0.70, step = 0.05),
+        helpText(class = "small text-muted mt-0",
+          "Nonimmigrant overstayer (legal visa holders who overstayed) departure rate",
+          "at 2015. Transitions linearly to 1.0 by 2025."),
         sliderInput(ns("dr_v_pre_2015"), "V pre-2015", min = 0.10, max = 3.00, value = 1.10, step = 0.05),
+        helpText(class = "small text-muted mt-0",
+          "Visa overstayer departure rate before 2015."),
         sliderInput(ns("dr_v_post_2015"), "V post-2015", min = 0.10, max = 3.00, value = 0.85, step = 0.05),
+        helpText(class = "small text-muted mt-0",
+          "Visa overstayer departure rate after 2015 (lower due to reduced enforcement)."),
 
         hr(),
         sliderInput(
@@ -349,7 +363,11 @@ mod_config_editor_ui <- function(id) {
           min = 0.00, max = 1.00,
           value = 0.50,
           step = 0.05
-        )
+        ),
+        helpText(class = "small text-muted mt-0",
+          "Departure rate reduction factor for DACA-eligible individuals (ages 15-40).",
+          "0.5 = DACA recipients depart at half the normal rate. Applied to",
+          "never-authorized and visa overstayer categories.")
       ),
 
       # --- LPR Elderly Immigration ---
