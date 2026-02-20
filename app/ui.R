@@ -232,21 +232,7 @@ ui <- page_navbar(
     title = "Help",
     icon = icon("question-circle"),
     nav_item(
-      tags$a(
-        icon("book"), "Documentation",
-        href = "https://github.com/skylerlee/artemis",
-        target = "_blank"
-      )
-    ),
-    nav_item(
-      tags$a(
-        icon("file-alt"), "TR2025 Methodology",
-        href = "#",
-        onclick = "Shiny.setInputValue('show_methodology', Math.random())"
-      )
-    ),
-    nav_item(
-      actionLink("show_about", label = tagList(icon("info-circle"), " About OASDI"))
+      actionLink("show_about", label = tagList(icon("info-circle"), " About"))
     )
   )
 )

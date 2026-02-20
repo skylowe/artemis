@@ -369,27 +369,46 @@ server <- function(input, output, session) {
     showModal(modalDialog(
       title = "About ARTEMIS",
       tagList(
-        h4("ARTEMIS - OASDI Projection Model"),
-        p("R-based replication of the SSA Office of the Chief Actuary's",
-          "long-range OASDI projection model."),
-        hr(),
-        tags$dl(
-          tags$dt("Version"),
-          tags$dd("1.0.0 (Development)"),
-          tags$dt("Trustees Report"),
-          tags$dd(paste0("TR", .baseline_config$metadata$trustees_report_year %||% 2025,
-                        " Intermediate Assumptions")),
-          tags$dt("Projection Period"),
-          tags$dd(paste0(MIN_YEAR, "-", MAX_YEAR))
+        h4("ARTEMIS"),
+        p(
+          "ARTEMIS is an open-source replication of the Social Security Administration's",
+          "Office of the Chief Actuary (OCACT) long-range demographic projection model.",
+          "It projects the U.S. Social Security area population by age, sex, and marital status",
+          "using the component method: starting from a base population, it applies age-specific",
+          "birth rates, death rates, and net immigration each year to produce annual population",
+          "estimates through the end of the projection period."
+        ),
+        p(
+          "The model implements all eight demographic subprocesses described in OCACT's",
+          "methodology documentation: fertility, mortality, LPR immigration, historical population,",
+          "other (non-LPR) immigration, marriage, divorce, and projected population.",
+          "Each subprocess can be configured independently through the assumptions panel,",
+          "allowing scenario analysis and sensitivity testing against the official Trustees Report projections."
         ),
         hr(),
-        p(
-          "Data sources: SSA/OCACT, Census Bureau, NCHS, DHS, CBO",
-          class = "text-muted small"
+        h5("Data Sources"),
+        tags$ul(
+          class = "small",
+          tags$li(tags$strong("SSA/OCACT:"), " Trustees Report population projections (V.A2 immigration totals,",
+                  " historical death probabilities, official Dec 31 population by age/sex/marital status)"),
+          tags$li(tags$strong("National Center for Health Statistics (NCHS):"), " Birth certificate microdata",
+                  " (births by age of mother, birth rates), death certificate data (deaths by age/sex/cause),",
+                  " provisional vital statistics for recent years"),
+          tags$li(tags$strong("Census Bureau:"), " Population estimates (intercensal and postcensal),",
+                  " American Community Survey (ACS) PUMS microdata (marital status, foreign-born populations,",
+                  " same-sex households), Current Population Survey (CPS) marital status data"),
+          tags$li(tags$strong("Human Mortality Database (HMD):"), " Life tables for ages 85+ calibration",
+                  " (Kannisto elderly mortality model)"),
+          tags$li(tags$strong("Department of Homeland Security (DHS):"), " Yearbook of Immigration Statistics",
+                  " (LPR admissions, adjustments of status by age/sex/country, emigration estimates)"),
+          tags$li(tags$strong("Congressional Budget Office (CBO):"), " Immigration projections",
+                  " used for LPR assumption calibration"),
+          tags$li(tags$strong("CDC WONDER:"), " Provisional mortality data for recent years",
+                  " (bridged-race population denominators)")
         )
       ),
       footer = modalButton("Close"),
-      size = "m"
+      size = "l"
     ))
   })
 }
