@@ -13,6 +13,7 @@
 #   - create_historical_population_targets() Historical population (Section 1.4)
 #   - create_marriage_divorce_targets()     Marriage/Divorce (Sections 1.6, 1.7)
 #   - create_projected_population_targets() Projected population (Section 1.8)
+#   - create_economics_targets()            US Employment subprocess (Section 2.1)
 #   - create_validation_targets()           Cross-cutting validation
 #
 # =============================================================================
@@ -33,6 +34,7 @@ tar_source()
 tar_source("R/utils")
 tar_source("R/data_acquisition")
 tar_source("R/demography")
+tar_source("R/economics")
 tar_source("R/validation")
 tar_source("R/targets")
 
@@ -83,6 +85,9 @@ evalq(c(
 
   # Population projection (Phase 8)
   create_projected_population_targets(),
+
+  # Economics subprocesses
+  create_economics_targets(),
 
   # Cross-cutting validation
   create_validation_targets()

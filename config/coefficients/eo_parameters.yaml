@@ -1,0 +1,97 @@
+# Employed OP (EO) and At-Any-Time Employed OP (TEO) Parameters
+# =============================================================================
+# Employment ratios, earnings recording splits, and TEO conversion weights
+# for temporary/unlawfully present population (OP).
+#
+# Source: economics_equations_1_USEmployment.md, Eqs 2.1.7-2.1.19
+# =============================================================================
+
+# ── EO_A: Authorized Temporary Employment-to-Population Ratios ───
+# EO_A is further disaggregated by visa type. Each visa subcategory has
+# a different employment-to-population ratio and OASDI coverage rate.
+#
+# Note: These ratios are SSA internal estimates. ARTEMIS approximates them
+# from available data sources. This is a known methodology deviation (#5).
+eo_a_ratios:
+  # Visa subcategory employment rates (proportion of OP_A who are employed)
+  # Based on available literature and ACS estimates
+  h1b_workers:
+    employment_rate: 0.95
+    oasdi_coverage: 1.0
+    mef_posting_rate: 0.95
+  h2a_agricultural:
+    employment_rate: 0.90
+    oasdi_coverage: 1.0
+    mef_posting_rate: 0.90
+  h2b_nonagricultural:
+    employment_rate: 0.90
+    oasdi_coverage: 1.0
+    mef_posting_rate: 0.90
+  l1_intracompany:
+    employment_rate: 0.95
+    oasdi_coverage: 1.0
+    mef_posting_rate: 0.95
+  j1_exchange_workers:
+    employment_rate: 0.80
+    oasdi_coverage: 0.0  # Exempt from OASDI
+    mef_posting_rate: 0.80
+  f1_students:
+    employment_rate: 0.30  # OPT/CPT only
+    oasdi_coverage: 0.0  # Exempt while on student visa
+    mef_posting_rate: 0.30
+  other_temporary:
+    employment_rate: 0.50
+    oasdi_coverage: 0.5
+    mef_posting_rate: 0.50
+
+# ── EO_NA and EO_NO: Use civilian E/N ratio (Eqs 2.1.8, 2.1.9) ──
+# No separate parameters needed — these use the same employment-to-
+# population ratio as the civilian population of the same age and sex.
+
+# ── Earnings Recording Status Splits (Eqs 2.1.11-2.1.14) ─────────
+# For EO_NA (overstayed authorization):
+eo_na_splits:
+  mef_posting_rate: 0.40   # Fraction with properly posted earnings
+  esf_posting_rate: 0.35   # Fraction with suspense file earnings
+  # Underground = 1 - mef - esf = 0.25
+  oasdi_coverage_of_mef: 0.95  # Fraction of MEF earnings that are covered
+
+# For EO_NO (never authorized):
+eo_no_splits:
+  # Workers who began working 2001 or earlier
+  pre_2002:
+    mef_posting_rate: 0.50
+    esf_posting_rate: 0.30
+    oasdi_coverage_of_mef: 0.90
+  # Workers who began working 2002 or later
+  post_2001:
+    mef_posting_rate: 0.30
+    esf_posting_rate: 0.40
+    oasdi_coverage_of_mef: 0.80
+
+# ── TEO Conversion Weights (Eqs 2.1.15-2.1.19) ──────────────────
+# Ratio of at-any-time employment to average weekly employment.
+# TEO_{component} = EO_{component} × conversion_weight
+#
+# Historical source: CPS data on duration of employment spells.
+# For authorized temporary workers, weights account for partial
+# presence in arrival/departure years.
+teo_conversion_weights:
+  # By broad age group and sex
+  male:
+    "16-19": 1.45
+    "20-24": 1.35
+    "25-54": 1.25
+    "55-64": 1.20
+    "65+":   1.15
+  female:
+    "16-19": 1.50
+    "20-24": 1.40
+    "25-54": 1.30
+    "55-64": 1.25
+    "65+":   1.20
+  # For authorized temporary workers (higher due to partial-year presence)
+  authorized_temporary:
+    arrival_year_factor: 1.50
+    departure_year_factor: 1.50
+    full_year_factor: 1.25

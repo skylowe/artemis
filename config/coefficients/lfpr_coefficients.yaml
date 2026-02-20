@@ -1,0 +1,602 @@
+# Labor Force Participation Rate (LFPR) Regression Coefficients
+# =============================================================================
+# 153 coefficient sets organized by sex, age group, and marital/child status
+#
+# Equation types:
+#   "young"            - Ages 16-19: RU lags + time trend + intercept(s)
+#   "marital"          - Ages 20-54 male, 45-54 female: RU lags by marital status
+#   "marital_children" - Ages 20-44 female: RU lags by marital status x children
+#   "older"            - Ages 55-74: EDSCORE + MSSHARE + intercept
+#   "retirement"       - Ages 62-69: older + RRADJ + POT_ET_TXRT
+#   "cohort_decay_75"  - Ages 75-79: prior cohort x decay factor
+#   "cohort_decay_80"  - Ages 80-100: decay from age 79 value
+#
+# All equations divide final result by (1 + RD_{age,sex})
+#
+# Source: economics_equations_1_USEmployment.md, Sections 7.1-7.2
+# Ref: Eq 2.1.4 (Labor Force Participation Rates)
+# =============================================================================
+
+male:
+  # ── Ages 16-19 ──────────────────────────────────────────────────
+  "16-17":
+    type: "young"
+    ru_lags: [-0.00134, -0.00167, -0.00132, -0.00065, 0.00003, 0.00035]
+    trend_coeff: -0.01009
+    # Two-part intercept: trend_offset + base_intercept
+    # PM1617_P = [RU_terms + trend_coeff*TR + trend_offset + base_intercept] / (1+RD)
+    trend_offset: 0.49638
+    intercept: 0.98199
+
+  "18-19":
+    type: "young"
+    ru_lags: [-0.00068, -0.00092, -0.00083, -0.00056, -0.00025, -0.00002]
+    trend_coeff: -0.00780
+    trend_offset: 0.47128
+    intercept: 0.97741
+
+  # ── Ages 20-54, Never Married ───────────────────────────────────
+  "20-24":
+    type: "marital"
+    never_married:
+      ru_lags: [-0.00053, -0.00074, -0.00071, -0.00054, -0.00030, -0.00010]
+      trend_coeff: -0.00310
+      intercept: 1.12658
+    married_present:
+      ru_lags: [-0.00053, -0.00074, -0.00071, -0.00054, -0.00030, -0.00010]
+      trend_coeff: -0.00141
+      intercept: 1.10245
+    married_absent:
+      ru_lags: [-0.00053, -0.00074, -0.00071, -0.00054, -0.00030, -0.00010]
+      trend_coeff: -0.00441
+      intercept: 1.33014
+
+  "25-29":
+    type: "marital"
+    never_married:
+      ru_lags: [-0.00031, -0.00053, -0.00066, -0.00068, -0.00058, -0.00036]
+      trend_coeff: -0.00091
+      intercept: 0.99893
+    married_present:
+      ru_lags: [-0.00031, -0.00053, -0.00066, -0.00068, -0.00058, -0.00036]
+      trend_coeff: -0.00048
+      intercept: 1.02497
+    married_absent:
+      ru_lags: [-0.00031, -0.00053, -0.00066, -0.00068, -0.00058, -0.00036]
+      trend_coeff: -0.00061
+      intercept: 0.98620
+
+  "30-34":
+    type: "marital"
+    never_married:
+      ru_lags: [-0.00001, -0.00018, -0.00040, -0.00058, -0.00064, -0.00047]
+      intercept: 0.89877
+    married_present:
+      ru_lags: [-0.00001, -0.00018, -0.00040, -0.00058, -0.00064, -0.00047]
+      intercept: 0.97980
+    married_absent:
+      ru_lags: [-0.00001, -0.00018, -0.00040, -0.00058, -0.00064, -0.00047]
+      intercept: 0.93031
+
+  "35-39":
+    type: "marital"
+    never_married:
+      ru_lags: [0.00048, 0.00037, -0.00007, -0.00058, -0.00091, -0.00080]
+      intercept: 0.87015
+    married_present:
+      ru_lags: [0.00048, 0.00037, -0.00007, -0.00058, -0.00091, -0.00080]
+      intercept: 0.98104
+    married_absent:
+      ru_lags: [0.00048, 0.00037, -0.00007, -0.00058, -0.00091, -0.00080]
+      intercept: 0.92144
+
+  "40-44":
+    type: "marital"
+    never_married:
+      ru_lags: [-0.00018, -0.00026, -0.00027, -0.00022, -0.00014, -0.00006]
+      intercept: 0.83848
+    married_present:
+      ru_lags: [-0.00018, -0.00026, -0.00027, -0.00022, -0.00014, -0.00006]
+      intercept: 0.98178
+    married_absent:
+      ru_lags: [-0.00018, -0.00026, -0.00027, -0.00022, -0.00014, -0.00006]
+      intercept: 0.90958
+
+  "45-49":
+    type: "marital"
+    never_married:
+      ru_lags: [0.00004, -0.00011, -0.00036, -0.00059, -0.00068, -0.00052]
+      intercept: 0.80657
+    married_present:
+      ru_lags: [0.00004, -0.00011, -0.00036, -0.00059, -0.00068, -0.00052]
+      intercept: 0.98395
+    married_absent:
+      ru_lags: [0.00004, -0.00011, -0.00036, -0.00059, -0.00068, -0.00052]
+      intercept: 0.88963
+
+  "50-54":
+    type: "marital"
+    never_married:
+      ru_lags: [0.00115, 0.00089, -0.00017, -0.00141, -0.00220, -0.00194]
+      intercept: 0.77113
+    married_present:
+      ru_lags: [0.00115, 0.00089, -0.00017, -0.00141, -0.00220, -0.00194]
+      intercept: 0.97763
+    married_absent:
+      ru_lags: [0.00115, 0.00089, -0.00017, -0.00141, -0.00220, -0.00194]
+      intercept: 0.85714
+
+  # ── Ages 55-61 (older, no retirement variables) ─────────────────
+  "55":
+    type: "older"
+    edscore_coeff: 0.00197
+    msshare_coeff: -0.09058
+    intercept: 0.95174
+
+  "56":
+    type: "older"
+    edscore_coeff: -0.01821
+    msshare_coeff: -0.10617
+    intercept: 0.98672
+
+  "57":
+    type: "older"
+    edscore_coeff: -0.01861
+    msshare_coeff: -0.21015
+    intercept: 1.05211
+
+  "58":
+    type: "older"
+    edscore_coeff: 0.01509
+    msshare_coeff: -0.22982
+    intercept: 0.99265
+
+  "59":
+    type: "older"
+    edscore_coeff: 0.00952
+    msshare_coeff: -0.30748
+    intercept: 1.04218
+
+  "60":
+    type: "older"
+    edscore_coeff: 0.03704
+    msshare_coeff: -0.32468
+    intercept: 0.96171
+
+  "61":
+    type: "older"
+    edscore_coeff: 0.00718
+    msshare_coeff: -0.44317
+    intercept: 1.07617
+
+  # ── Ages 62-69 (retirement variables) ───────────────────────────
+  "62":
+    type: "retirement"
+    rradj_coeff: -0.60
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.10092
+    msshare_coeff: -0.55927
+    intercept: 1.09868
+
+  "63":
+    type: "retirement"
+    rradj_coeff: -0.55
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.06427
+    msshare_coeff: -0.95029
+    intercept: 1.39001
+
+  "64":
+    type: "retirement"
+    rradj_coeff: -0.50
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.05462
+    msshare_coeff: -1.01565
+    intercept: 1.40427
+
+  "65":
+    type: "retirement"
+    rradj_coeff: -0.45
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.14092
+    msshare_coeff: -0.56959
+    intercept: 0.83637
+
+  "66":
+    type: "retirement"
+    rradj_coeff: -0.40
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.08401
+    msshare_coeff: -0.71602
+    intercept: 0.99009
+
+  "67":
+    type: "retirement"
+    rradj_coeff: -0.35
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.09458
+    msshare_coeff: -0.80679
+    intercept: 0.98465
+
+  "68":
+    type: "retirement"
+    rradj_coeff: -0.30
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.11230
+    msshare_coeff: -0.91881
+    intercept: 0.99375
+
+  "69":
+    type: "retirement"
+    rradj_coeff: -0.30
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.09610
+    msshare_coeff: -0.83697
+    intercept: 0.93415
+
+  # ── Ages 70-74 (older, no retirement variables) ─────────────────
+  "70":
+    type: "older"
+    edscore_coeff: 0.09997
+    msshare_coeff: -0.22828
+    intercept: 0.28131
+
+  "71":
+    type: "older"
+    edscore_coeff: 0.12351
+    msshare_coeff: 0.13152
+    intercept: -0.04761
+
+  "72":
+    type: "older"
+    edscore_coeff: 0.13620
+    msshare_coeff: -0.19020
+    intercept: 0.15703
+
+  "73":
+    type: "older"
+    edscore_coeff: 0.13710
+    msshare_coeff: 0.26157
+    intercept: -0.20437
+
+  "74":
+    type: "older"
+    edscore_coeff: 0.13464
+    msshare_coeff: 0.42963
+    intercept: -0.34404
+
+  # ── Ages 75-79 (cohort decay) ───────────────────────────────────
+  # PM75_P = PM74(-4) * 0.92   (4-quarter lag = 1-year lag)
+  # PM76_P = PM75(-4) * 0.92
+  # etc.
+  # Decay factor from config: economics.employment.lfpr_decay_75_79.male = 0.92
+
+  # ── Ages 80-100 (cohort decay from age 79) ──────────────────────
+  # PM80_P  = PM79(-4)  * 0.965 ^ 1
+  # PM81_P  = PM79(-8)  * 0.965 ^ 2
+  # ...
+  # PM84_P  = PM79(-20) * 0.965 ^ 5
+  # PM85_P  = MOVAVG(8, PM79(-24)) * 0.965 ^ 6   (8-quarter moving avg)
+  # ...
+  # PM94_P  = MOVAVG(8, PM79(-60)) * 0.965 ^ 15
+  # PM95-100_P: chain from PM94 with 0.965 each year
+  # Decay factor from config: economics.employment.lfpr_decay_80_plus = 0.965
+
+# =============================================================================
+female:
+  # ── Ages 16-19 ──────────────────────────────────────────────────
+  "16-17":
+    type: "young"
+    ru_lags: [-0.00214, -0.00256, -0.00184, -0.00062, 0.00050, 0.00091]
+    # Female 16-17 also has a child-under-6 proportion coefficient
+    child_under6_coeff: -0.33769
+    child_under6_offset: 0.01223
+    trend_coeff: -0.00981
+    trend_offset: 0.50143
+    intercept: 0.98698
+
+  "18-19":
+    type: "young"
+    ru_lags: [-0.00118, -0.00145, -0.00112, -0.00050, 0.00010, 0.00037]
+    child_under6_coeff: -0.42102
+    child_under6_offset: -0.01160
+    trend_coeff: -0.00829
+    trend_offset: 0.55840
+    intercept: 0.98042
+
+  # ── Ages 20-44, by marital status x children ────────────────────
+  "20-24":
+    type: "marital_children"
+    never_married_child_under6:
+      ru_lags: [-0.00006, -0.00026, -0.00050, -0.00070, -0.00075, -0.00055]
+      intercept: 0.69322
+    never_married_no_child:
+      ru_lags: [-0.00006, -0.00026, -0.00050, -0.00070, -0.00075, -0.00055]
+      trend_coeff: -0.00297
+      intercept: 1.07188
+    married_present_child_under6:
+      ru_lags: [-0.00006, -0.00026, -0.00050, -0.00070, -0.00075, -0.00055]
+      intercept: 0.53561
+    married_present_no_child:
+      ru_lags: [-0.00006, -0.00026, -0.00050, -0.00070, -0.00075, -0.00055]
+      trend_coeff: -0.00175
+      intercept: 0.98277
+    married_absent_child_under6:
+      ru_lags: [-0.00006, -0.00026, -0.00050, -0.00070, -0.00075, -0.00055]
+      intercept: 0.73283
+    married_absent_no_child:
+      ru_lags: [-0.00006, -0.00026, -0.00050, -0.00070, -0.00075, -0.00055]
+      trend_coeff: -0.00223
+      intercept: 0.97444
+
+  "25-29":
+    type: "marital_children"
+    never_married_child_under6:
+      ru_lags: [0.00056, 0.00034, -0.00030, -0.00101, -0.00143, -0.00121]
+      intercept: 0.72672
+    never_married_no_child:
+      ru_lags: [0.00056, 0.00034, -0.00030, -0.00101, -0.00143, -0.00121]
+      trend_coeff: -0.00077
+      intercept: 0.94654
+    married_present_child_under6:
+      ru_lags: [0.00056, 0.00034, -0.00030, -0.00101, -0.00143, -0.00121]
+      intercept: 0.61916
+    married_present_no_child:
+      ru_lags: [0.00056, 0.00034, -0.00030, -0.00101, -0.00143, -0.00121]
+      trend_coeff: -0.00050
+      intercept: 0.88519
+    married_absent_child_under6:
+      ru_lags: [0.00056, 0.00034, -0.00030, -0.00101, -0.00143, -0.00121]
+      intercept: 0.76433
+    married_absent_no_child:
+      ru_lags: [0.00056, 0.00034, -0.00030, -0.00101, -0.00143, -0.00121]
+      trend_coeff: 0.00025
+      intercept: 0.79370
+
+  "30-34":
+    type: "marital_children"
+    never_married_child_under6:
+      ru_lags: [0.00078, 0.00075, 0.00024, -0.00042, -0.00090, -0.00087]
+      intercept: 0.72034
+    never_married_no_child:
+      ru_lags: [0.00078, 0.00075, 0.00024, -0.00042, -0.00090, -0.00087]
+      intercept: 0.84866
+    married_present_child_under6:
+      ru_lags: [0.00078, 0.00075, 0.00024, -0.00042, -0.00090, -0.00087]
+      intercept: 0.65485
+    married_present_no_child:
+      ru_lags: [0.00078, 0.00075, 0.00024, -0.00042, -0.00090, -0.00087]
+      intercept: 0.80007
+    married_absent_child_under6:
+      ru_lags: [0.00078, 0.00075, 0.00024, -0.00042, -0.00090, -0.00087]
+      intercept: 0.77183
+    married_absent_no_child:
+      ru_lags: [0.00078, 0.00075, 0.00024, -0.00042, -0.00090, -0.00087]
+      intercept: 0.83788
+
+  "35-39":
+    type: "marital_children"
+    never_married_child_under6:
+      ru_lags: [0.00040, 0.00032, -0.00004, -0.00046, -0.00074, -0.00066]
+      intercept: 0.72644
+    never_married_no_child:
+      ru_lags: [0.00040, 0.00032, -0.00004, -0.00046, -0.00074, -0.00066]
+      intercept: 0.83195
+    married_present_child_under6:
+      ru_lags: [0.00040, 0.00032, -0.00004, -0.00046, -0.00074, -0.00066]
+      intercept: 0.66673
+    married_present_no_child:
+      ru_lags: [0.00040, 0.00032, -0.00004, -0.00046, -0.00074, -0.00066]
+      intercept: 0.79025
+    married_absent_child_under6:
+      ru_lags: [0.00040, 0.00032, -0.00004, -0.00046, -0.00074, -0.00066]
+      intercept: 0.77156
+    married_absent_no_child:
+      ru_lags: [0.00040, 0.00032, -0.00004, -0.00046, -0.00074, -0.00066]
+      intercept: 0.84820
+
+  "40-44":
+    type: "marital_children"
+    never_married_child_under6:
+      ru_lags: [0.00113, 0.00097, 0.00007, -0.00102, -0.00176, -0.00160]
+      intercept: 0.71893
+    never_married_no_child:
+      ru_lags: [0.00113, 0.00097, 0.00007, -0.00102, -0.00176, -0.00160]
+      intercept: 0.82513
+    married_present_child_under6:
+      ru_lags: [0.00113, 0.00097, 0.00007, -0.00102, -0.00176, -0.00160]
+      intercept: 0.67612
+    married_present_no_child:
+      ru_lags: [0.00113, 0.00097, 0.00007, -0.00102, -0.00176, -0.00160]
+      intercept: 0.81064
+    married_absent_child_under6:
+      ru_lags: [0.00113, 0.00097, 0.00007, -0.00102, -0.00176, -0.00160]
+      intercept: 0.76058
+    married_absent_no_child:
+      ru_lags: [0.00113, 0.00097, 0.00007, -0.00102, -0.00176, -0.00160]
+      intercept: 0.85568
+
+  # ── Ages 45-54, by marital status (no children disaggregation) ──
+  "45-49":
+    type: "marital"
+    never_married:
+      ru_lags: [0.00155, 0.00133, 0.00007, -0.00145, -0.00247, -0.00224]
+      intercept: 0.80950
+    married_present:
+      ru_lags: [0.00155, 0.00133, 0.00007, -0.00145, -0.00247, -0.00224]
+      intercept: 0.81276
+    married_absent:
+      ru_lags: [0.00155, 0.00133, 0.00007, -0.00145, -0.00247, -0.00224]
+      intercept: 0.84789
+
+  "50-54":
+    type: "marital"
+    never_married:
+      ru_lags: [0.00093, 0.00074, -0.00008, -0.00104, -0.00168, -0.00149]
+      intercept: 0.78085
+    married_present:
+      ru_lags: [0.00093, 0.00074, -0.00008, -0.00104, -0.00168, -0.00149]
+      # Female 50-54 MS has EDSCORE coefficient
+      edscore_coeff: 0.16476
+      intercept: 0.48809
+    married_absent:
+      ru_lags: [0.00093, 0.00074, -0.00008, -0.00104, -0.00168, -0.00149]
+      intercept: 0.81452
+
+  # ── Ages 55-61 (older, no retirement variables) ─────────────────
+  "55":
+    type: "older"
+    edscore_coeff: 0.18398
+    msshare_coeff: 0.24605
+    intercept: 0.26185
+
+  "56":
+    type: "older"
+    edscore_coeff: 0.20704
+    msshare_coeff: -0.12398
+    intercept: 0.44930
+
+  "57":
+    type: "older"
+    edscore_coeff: 0.18422
+    msshare_coeff: -0.08766
+    intercept: 0.45094
+
+  "58":
+    type: "older"
+    edscore_coeff: 0.19406
+    msshare_coeff: -0.06963
+    intercept: 0.40382
+
+  "59":
+    type: "older"
+    edscore_coeff: 0.21112
+    msshare_coeff: 0.10742
+    intercept: 0.24105
+
+  "60":
+    type: "older"
+    edscore_coeff: 0.20633
+    msshare_coeff: -0.41539
+    intercept: 0.54178
+
+  "61":
+    type: "older"
+    edscore_coeff: 0.19349
+    msshare_coeff: -0.66676
+    intercept: 0.68556
+
+  # ── Ages 62-69 (retirement variables) ───────────────────────────
+  "62":
+    type: "retirement"
+    rradj_coeff: -0.5100
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.21249
+    msshare_coeff: 0.01966
+    intercept: 0.32876
+
+  "63":
+    type: "retirement"
+    rradj_coeff: -0.4675
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.21116
+    msshare_coeff: 0.02896
+    intercept: 0.26792
+
+  "64":
+    type: "retirement"
+    rradj_coeff: -0.4250
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.20467
+    msshare_coeff: -0.32725
+    intercept: 0.44786
+
+  "65":
+    type: "retirement"
+    rradj_coeff: -0.3825
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.20002
+    msshare_coeff: -0.05830
+    intercept: 0.22187
+
+  "66":
+    type: "retirement"
+    rradj_coeff: -0.3400
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.17479
+    msshare_coeff: 0.22954
+    intercept: 0.04361
+
+  "67":
+    type: "retirement"
+    rradj_coeff: -0.2975
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.17673
+    msshare_coeff: -0.43942
+    intercept: 0.38490
+
+  "68":
+    type: "retirement"
+    rradj_coeff: -0.2550
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.15513
+    msshare_coeff: 0.35232
+    intercept: -0.07497
+
+  "69":
+    type: "retirement"
+    rradj_coeff: -0.2550
+    pot_et_coeff: -0.02
+    edscore_coeff: 0.11603
+    msshare_coeff: 0.87528
+    intercept: -0.32696
+
+  # ── Ages 70-74 (older, no retirement variables) ─────────────────
+  "70":
+    type: "older"
+    edscore_coeff: 0.09629
+    msshare_coeff: 0.54302
+    intercept: -0.25141
+
+  "71":
+    type: "older"
+    edscore_coeff: 0.11053
+    msshare_coeff: 0.16137
+    intercept: -0.08070
+
+  "72":
+    type: "older"
+    edscore_coeff: 0.09151
+    msshare_coeff: 0.25854
+    intercept: -0.11711
+
+  "73":
+    type: "older"
+    edscore_coeff: 0.08611
+    msshare_coeff: 0.28099
+    intercept: -0.12804
+
+  "74":
+    type: "older"
+    edscore_coeff: 0.11821
+    msshare_coeff: -0.01277
+    intercept: -0.04121
+
+  # ── Ages 75-79 (cohort decay) ───────────────────────────────────
+  # PF75_P = PF74(-4) * 0.90   (4-quarter lag = 1-year lag)
+  # Decay factor from config: economics.employment.lfpr_decay_75_79.female = 0.90
+
+  # ── Ages 80-100 (cohort decay from age 79) ──────────────────────
+  # Same structure as male: PF80_P = PF79(-4) * 0.965^1, etc.
+  # Decay factor from config: economics.employment.lfpr_decay_80_plus = 0.965
+
+# =============================================================================
+# Full-Employment LFPR Differentials (Section 10)
+# =============================================================================
+# These use the SAME RU lag coefficients as the corresponding LFPR equations
+# but compute the difference between full-employment RU and actual RU:
+#   DP_{a,s}_FE = sum(ru_lags[k] * RU_{a,s}_FE(t-k)) - sum(ru_lags[k] * RU_{a,s}(t-k))
+#
+# Only applies to ages 16-54 (both sexes) where LFPR equations use RU lags.
+# Ages 55+ do not have RU lag terms in their LFPR equations.
+# The RU lag coefficients are already stored above in the respective age group entries.

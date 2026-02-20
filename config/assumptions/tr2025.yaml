@@ -1053,3 +1053,60 @@ historical_population:
   # Per TR2025 documentation: "2020 data is assumed to be the same as 2010
   # until the data is available to OCACT."
   armed_forces_territories_2020_equals_2010: true
+
+# =============================================================================
+# ECONOMICS PROCESS
+# =============================================================================
+
+economics:
+  employment:
+    # Data source for historical economic assumptions
+    # "api" = fetch from BLS/BEA/FRED (default); "tr2025" = use SingleYear tables for all
+    assumptions_data_source: "api"
+
+    # Base year for projections (last year with complete historical data)
+    base_year: 2024
+    # Historical data start year for model estimation context
+    historical_start_year: 1968
+
+    # Quarterly frequency flag
+    quarterly: true
+
+    # Ultimate unemployment rate (from Trustees intermediate assumptions)
+    # Ref: Table V.B2 in SingleYearTRTables_TR2025.xlsx
+    ultimate_unemployment_rate: 5.5
+    ultimate_unemployment_year: 2034
+
+    # Okun's Law coefficient for RTP construction
+    # RTP = 1 + (u* - u) * okun_coefficient / 100
+    # Ref: Economics overview documentation
+    okun_coefficient: 2.0
+
+    # Military population held constant at this year's level (Eq 2.1.1)
+    military_constant_year: 2021
+
+    # LFPR age decay factors
+    # Ages 75-79: multiply prior cohort LFPR by this factor (4-year lag)
+    lfpr_decay_75_79:
+      male: 0.92
+      female: 0.90
+    # Ages 80+: multiply by this factor per year of age
+    lfpr_decay_80_plus: 0.965
+
+    # Addfactors: manual adjustments to LFPR equations
+    # Default to null (zero); override per age-sex group as needed
+    # Format: { "age_group": { "male": value, "female": value } }
+    addfactors: null
+
+    # EO (Employed OP) configuration
+    employed_op:
+      enabled: true
+      # Conversion weight method for TEO
+      teo_method: "age_sex_ratio"
+
+    # Exogenous inputs from Beneficiaries subprocess (TR2025 data)
+    # To be replaced with computed values when Beneficiaries is implemented
+    exogenous:
+      disability_prevalence_source: "tr2025"  # "tr2025" or "computed"
+      pia_replacement_source: "tr2025"        # "tr2025" or "computed"
+      nra_source: "tr2025"                    # "tr2025" or "computed"

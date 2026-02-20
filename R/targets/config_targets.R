@@ -150,6 +150,11 @@ create_config_targets <- function() {
                         config_assumptions$projected_population$population_status,
                         format = format_config),
 
+    # ── Economics config gate ──────────────────────────────────────
+    # Subprocess 2.1: US Employment
+    targets::tar_target(config_economics, config_assumptions$economics,
+                        format = format_config),
+
     # Cross-cutting sections
     targets::tar_target(config_metadata, config_assumptions$metadata,
                         format = format_config),
