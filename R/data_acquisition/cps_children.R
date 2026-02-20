@@ -392,3 +392,312 @@ load_cps_children_per_couple <- function(cache_dir = here::here("data/cache/ipum
   data
 }
 
+# =============================================================================
+# CHILDREN BY PARENT AGES (Gap 1b: Historical initialization)
+# =============================================================================
+
+#' Fetch CPS children by parent ages (1994-2022)
+#'
+#' @description
+#' Downloads March CPS (ASEC) microdata from IPUMS CPS with MOMLOC/POPLOC
+#' variables to construct the historical distribution of children by
+#' child_age × mother_age × father_age.
+#'
+#' This distribution is used to initialize Phase 8D children-by-parent-fate
+#' arrays instead of reconstructing from couples_grid × birth_rate.
+#'
+#' TR2025 Documentation Reference (Eq 1.8.6):
+#' "The HISTORICAL POPULATION subprocess provides the historical number of
+#' children (ages 0-18), number of women (ages 14-49), and the number of
+#' married couples by single year of age of husband crossed with single year
+#' of age of wife."
+#'
+#' Note: MOMLOC/POPLOC are available in CPS from 1994 onward.
+#'
+#' @param years Integer vector of years (1994-2022). Default is all available years.
+#' @param cache_dir Character: directory for caching IPUMS extracts
+#' @param wait_for_extract Logical: if TRUE, wait for extract completion.
+#' @param timeout_hours Numeric: maximum hours to wait for extract (default: 4)
+#'
+#' @return data.table with columns: child_age, mother_age, father_age, proportion
+#'   Proportions are pooled across all years and normalized within each child_age.
+#'
+#' @export
+fetch_cps_children_by_parent_ages <- function(
+    years = 1994:2022,
+    cache_dir = here::here("data/cache/ipums_cps"),
+    wait_for_extract = TRUE,
+    timeout_hours = 4
+) {
+  checkmate::assert_integerish(years, lower = 1994, upper = 2022, min.len = 1)
+
+  if (!requireNamespace("ipumsr", quietly = TRUE)) {
+    cli::cli_abort("Package {.pkg ipumsr} is required. Install with: renv::install('ipumsr')")
+  }
+
+  api_key <- Sys.getenv("IPUMS_API_KEY")
+  if (nchar(api_key) == 0) {
+    cli::cli_abort(c(
+      "IPUMS API key not found.",
+      "i" = "Set IPUMS_API_KEY in .Renviron file",
+      "i" = "Get a key at: https://account.ipums.org/api_keys"
+    ))
+  }
+
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+
+  # Check for cached processed data (filename includes year range)
+  cache_file <- file.path(
+    cache_dir,
+    sprintf("cps_children_by_parent_ages_%d_%d.rds", min(years), max(years))
+  )
+  if (file.exists(cache_file)) {
+    cli::cli_alert_success("Loading cached CPS children-by-parent-ages data")
+    return(readRDS(cache_file))
+  }
+
+  # Get sample IDs for CPS March supplements
+  sample_ids <- get_cps_march_sample_ids_children(years)
+
+  cli::cli_alert_info("IPUMS CPS extract required for {length(years)} years (1994-2022)")
+  cli::cli_alert_info("Variables: AGE, SEX, RELATE, MOMLOC, POPLOC, ASECWT")
+
+  # Define the extract with MOMLOC/POPLOC for parent linkage
+  extract <- ipumsr::define_extract_micro(
+    collection = "cps",
+    description = "ARTEMIS: CPS children by parent ages 1994-2022 (Phase 8D initialization)",
+    samples = sample_ids,
+    variables = c("YEAR", "AGE", "SEX", "RELATE", "MOMLOC", "POPLOC",
+                  "ASECWT", "SERIAL", "PERNUM")
+  )
+
+  cli::cli_alert("Submitting IPUMS CPS extract request...")
+  submitted <- ipumsr::submit_extract(extract)
+  extract_id <- submitted$number
+  cli::cli_alert_success("Extract submitted with ID: {extract_id}")
+
+  pending_file <- file.path(cache_dir, "pending_cps_parent_ages_extract.rds")
+  saveRDS(
+    list(extract_id = extract_id, submitted_at = Sys.time(), years = years),
+    pending_file
+  )
+
+  if (!wait_for_extract) {
+    cli::cli_alert_info("Extract processing in background. Use fetch_cps_parent_ages_extract() to download later.")
+    return(invisible(list(extract_id = extract_id, collection = "cps")))
+  }
+
+  cli::cli_alert("Waiting for IPUMS CPS extract to complete...")
+  timeout_secs <- timeout_hours * 3600
+  ready <- ipumsr::wait_for_extract(submitted, timeout = timeout_secs, verbose = TRUE)
+
+  if (!ipumsr::is_extract_ready(ready)) {
+    cli::cli_abort(c(
+      "IPUMS CPS extract timed out after {timeout_hours} hours",
+      "i" = "Extract ID: {extract_id}",
+      "i" = "Check status at: https://cps.ipums.org/cps-action/extract_requests"
+    ))
+  }
+
+  download_and_process_cps_parent_ages(extract_id, years, cache_dir)
+}
+
+#' Download and process CPS children-by-parent-ages extract
+#'
+#' @keywords internal
+download_and_process_cps_parent_ages <- function(extract_id, years, cache_dir) {
+  cli::cli_alert("Downloading IPUMS CPS extract...")
+
+  extract_str <- paste0("cps:", extract_id)
+  extract_info <- ipumsr::get_extract_info(extract_str)
+  extract_path <- file.path(cache_dir, sprintf("cps_parent_ages_extract_%d", extract_id))
+  dir.create(extract_path, showWarnings = FALSE)
+
+  downloaded <- ipumsr::download_extract(extract_info, download_dir = extract_path)
+
+  cli::cli_alert("Reading IPUMS CPS microdata...")
+  data <- ipumsr::read_ipums_micro(downloaded)
+
+  cli::cli_alert("Processing children by parent ages...")
+  result <- process_cps_children_by_parent_ages(data, years)
+
+  cache_file <- file.path(
+    cache_dir,
+    sprintf("cps_children_by_parent_ages_%d_%d.rds", min(years), max(years))
+  )
+  saveRDS(result, cache_file)
+  cli::cli_alert_success("Cached CPS children-by-parent-ages data: {nrow(result)} rows")
+
+  pending_file <- file.path(cache_dir, "pending_cps_parent_ages_extract.rds")
+  if (file.exists(pending_file)) file.remove(pending_file)
+
+  result
+}
+
+#' Process CPS microdata to children by parent ages distribution
+#'
+#' @description
+#' Links children (age 0-18) to their mothers and fathers within each household
+#' using MOMLOC/POPLOC pointer variables. Produces a pooled distribution of
+#' children by child_age × mother_age × father_age, normalized within each
+#' child_age.
+#'
+#' Only children with both parents identified (MOMLOC > 0 AND POPLOC > 0) are
+#' included. This is appropriate because the distribution is used to initialize
+#' the 4D children-by-parent-fate array, which indexes by both father_age and
+#' mother_age. Children in single-parent households are accounted for through
+#' the orphanhood/fate redistribution step.
+#'
+#' @param data IPUMS CPS microdata tibble
+#' @param years Years to process
+#' @return data.table with columns: child_age, mother_age, father_age, proportion
+#' @keywords internal
+process_cps_children_by_parent_ages <- function(data, years) {
+  dt <- data.table::as.data.table(data)
+
+  # Standardize column names (IPUMS may use upper or lower case)
+  if ("YEAR" %in% names(dt)) dt[, year := as.integer(YEAR)]
+  dt <- dt[year %in% years]
+
+  # Ensure integer types for linkage variables
+  dt[, pernum := as.integer(PERNUM)]
+  dt[, serial := as.integer(SERIAL)]
+  dt[, momloc := as.integer(MOMLOC)]
+  dt[, poploc := as.integer(POPLOC)]
+  dt[, age := as.integer(AGE)]
+
+  # Weight variable — require ASECWT for ASEC supplements
+  if ("ASECWT" %in% names(dt)) {
+    dt[, weight := as.numeric(ASECWT)]
+  } else {
+    cli::cli_abort(c(
+      "ASECWT weight variable not found in CPS data",
+      "i" = "Ensure the IPUMS extract includes ASECWT (ASEC person weight)"
+    ))
+  }
+
+  # Identify children: age 0-18 with both parents identified in household
+  children <- dt[age <= 18 & momloc > 0 & poploc > 0]
+
+  if (nrow(children) == 0) {
+    cli::cli_abort("No children with both MOMLOC > 0 and POPLOC > 0 found in CPS data")
+  }
+
+  # Create lookup table for parent ages: (year, serial, pernum) -> age
+  person_lookup <- unique(dt[, .(year, serial, pernum, parent_age = age)])
+
+  # Look up mother's age via join on (year, serial, momloc = pernum)
+  children[person_lookup, mother_age := i.parent_age,
+           on = .(year, serial, momloc = pernum)]
+
+  # Look up father's age via join on (year, serial, poploc = pernum)
+  children[person_lookup, father_age := i.parent_age,
+           on = .(year, serial, poploc = pernum)]
+
+  # Keep only rows where both parent ages were successfully resolved
+  children <- children[!is.na(mother_age) & !is.na(father_age)]
+
+  # Filter impossible parent ages (minimum childbearing age = 14)
+  n_before <- nrow(children)
+  children <- children[mother_age >= 14 & father_age >= 14]
+  n_filtered <- n_before - nrow(children)
+  if (n_filtered > 0) {
+    cli::cli_alert_info("Filtered {n_filtered} rows with parent age < 14")
+  }
+
+  cli::cli_alert_info(
+    "Linked {format(nrow(children), big.mark=',')} children to both parents across {length(unique(children$year))} years"
+  )
+
+  # Pool across all years and aggregate weighted counts
+  pooled <- children[, .(
+    count = sum(weight, na.rm = TRUE)
+  ), by = .(child_age = age, mother_age, father_age)]
+
+  # Normalize within each child_age to get proportional distribution
+  pooled[, total := sum(count), by = child_age]
+  pooled[, proportion := count / total]
+  pooled[, c("count", "total") := NULL]
+
+  # Sort for clean output
+  data.table::setorder(pooled, child_age, mother_age, father_age)
+
+  cli::cli_alert_success(
+    "Distribution: {nrow(pooled)} non-zero cells across {length(unique(pooled$child_age))} child ages"
+  )
+
+  # Log sample proportions for validation
+  sample_age <- 5L
+  sample <- pooled[child_age == sample_age]
+  if (nrow(sample) > 0) {
+    peak <- sample[which.max(proportion)]
+    cli::cli_alert_info(
+      "Child age {sample_age} peak: mother={peak$mother_age}, father={peak$father_age}, prop={round(peak$proportion, 4)}"
+    )
+  }
+
+  pooled
+}
+
+#' Fetch a previously submitted CPS parent-ages extract
+#'
+#' @param extract_id Integer: the extract ID
+#' @param years Integer vector of years (must match the submitted extract)
+#' @param cache_dir Character: directory for caching downloads
+#' @return data.table with children-by-parent-ages distribution
+#' @export
+fetch_cps_parent_ages_extract <- function(extract_id,
+                                           years = 1994:2022,
+                                           cache_dir = here::here("data/cache/ipums_cps")) {
+  if (!requireNamespace("ipumsr", quietly = TRUE)) {
+    cli::cli_abort("Package {.pkg ipumsr} is required")
+  }
+
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+
+  # Try to recover years from pending extract info
+  pending_file <- file.path(cache_dir, "pending_cps_parent_ages_extract.rds")
+  if (file.exists(pending_file)) {
+    pending <- readRDS(pending_file)
+    if (!is.null(pending$years)) years <- pending$years
+  }
+
+  extract_str <- paste0("cps:", extract_id)
+  extract_info <- ipumsr::get_extract_info(extract_str)
+
+  if (!ipumsr::is_extract_ready(extract_info)) {
+    cli::cli_alert_warning("Extract {extract_id} is not ready yet")
+    return(invisible(NULL))
+  }
+
+  download_and_process_cps_parent_ages(extract_id, years, cache_dir)
+}
+
+#' Load cached CPS children-by-parent-ages distribution
+#'
+#' @description
+#' Loads the cached distribution without making an API request.
+#'
+#' @param cache_dir Character: directory with cached data
+#' @param start_year Integer: first year of CPS data (default: 1994, when MOMLOC/POPLOC available)
+#' @param end_year Integer: last year of CPS data (default: 2022, should match starting_year)
+#' @return data.table with child_age, mother_age, father_age, proportion;
+#'   or NULL if not cached
+#' @export
+load_cps_children_by_parent_ages <- function(
+    cache_dir = here::here("data/cache/ipums_cps"),
+    start_year = 1994L,
+    end_year = 2022L
+) {
+  cache_file <- file.path(
+    cache_dir,
+    sprintf("cps_children_by_parent_ages_%d_%d.rds", start_year, end_year)
+  )
+
+  if (!file.exists(cache_file)) {
+    return(NULL)
+  }
+
+  readRDS(cache_file)
+}
+

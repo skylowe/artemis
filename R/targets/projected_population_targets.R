@@ -247,6 +247,29 @@ create_projected_population_targets <- function() {
     # PHASE 8D: CHILDREN BY PARENT FATE
     # ==========================================================================
 
+    # Historical children-by-parent-ages from CPS (MOMLOC/POPLOC linkage)
+    # Used to initialize Phase 8D arrays with empirical parent-age distribution
+    # instead of reconstructing from couples_grid × birth_rate
+    # MOMLOC/POPLOC available from 1994; upper bound derived from starting_year
+    targets::tar_target(
+      historical_children_by_parent_ages,
+      {
+        end_yr <- config_projected_pop$starting_year
+        cache_file <- here::here(sprintf(
+          "data/cache/ipums_cps/cps_children_by_parent_ages_1994_%d.rds", end_yr
+        ))
+        load_cached_rds(
+          cache_file = cache_file,
+          on_missing = "abort",
+          abort_message = c(
+            "CPS children-by-parent-ages data not found at {.path {cache_file}}",
+            "i" = "Run: fetch_cps_children_by_parent_ages(years = 1994:{end_yr})"
+          )
+        )
+      },
+      cue = targets::tar_cue(mode = "thorough")
+    ),
+
     targets::tar_target(
       children_fate_projection,
       {
@@ -264,6 +287,7 @@ create_projected_population_targets <- function() {
           max_child_age = config_projected_pop$ages$children_max,
           min_parent_age = config_projected_pop$ages$marriage_min,
           max_parent_age = config_projected_pop$ages$max_age,
+          historical_children_dist = historical_children_by_parent_ages,
           verbose = TRUE
         )
       }
@@ -278,6 +302,18 @@ create_projected_population_targets <- function() {
                               max_child_age = config_projected_pop$ages$children_max,
                               tolerance = config_projected_pop$validation$children_fate_tolerance,
                               orphan_rate_upper_bound = config_projected_pop$validation$orphan_rate_upper_bound)
+    ),
+
+    # Proportion of women with at least one child under 6 by 5-year age group
+    # (Phase 8D extension: Input #3 from Demography to Economics)
+    # Uses Poisson approximation on children_fate arrays + female population
+    targets::tar_target(
+      projected_mothers_child_under6,
+      compute_mothers_with_young_children(
+        children_fate_result = children_fate_projection,
+        projected_population = projected_population,
+        min_parent_age = config_projected_pop$ages$marriage_min
+      )
     ),
 
     # ==========================================================================

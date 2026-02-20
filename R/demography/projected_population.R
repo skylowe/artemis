@@ -3225,13 +3225,23 @@ get_rate_grid_for_year <- function(rates_list, year, min_age = 14, max_age = 100
 #'
 #' @export
 initialize_children_by_parents <- function(population_start,
-                                            couples_grid,
-                                            birth_rates,
                                             qx_male,
                                             qx_female,
+                                            historical_children_dist,
                                             min_parent_age = 14,
                                             max_parent_age = 100,
                                             max_child_age = 18) {
+
+  # Validate historical CPS distribution is provided
+  if (missing(historical_children_dist) || is.null(historical_children_dist)) {
+    cli::cli_abort(c(
+      "historical_children_dist is required for Phase 8D initialization",
+      "i" = "Run {.fn fetch_cps_children_by_parent_ages} to download CPS data from IPUMS"
+    ))
+  }
+  if (!data.table::is.data.table(historical_children_dist) || nrow(historical_children_dist) == 0) {
+    cli::cli_abort("historical_children_dist must be a non-empty data.table")
+  }
 
   n_child_ages <- max_child_age + 1  # 0-18 = 19 ages
   n_parent_ages <- max_parent_age - min_parent_age + 1  # 87 ages
@@ -3268,48 +3278,43 @@ initialize_children_by_parents <- function(population_start,
     }
   }
 
-  couples_total <- sum(couples_grid, na.rm = TRUE)
-  if (couples_total == 0) {
-    cli::cli_abort("Couples grid is empty — cannot initialize children by parent ages without married couples data")
-  }
-
   # =========================================================================
-  # VECTORIZED distribution of children to parent ages
+  # Distribute children to parent ages using CPS historical distribution
   # =========================================================================
 
-  # Pre-compute valid parent age masks for each child age
-  # father_ages and mother_ages as vectors (current ages)
+  # Parent age vectors (used here and in orphanhood calculation below)
   father_ages <- min_parent_age:max_parent_age
   mother_ages <- min_parent_age:max_parent_age
 
-  # Create outer products for age constraints
-  # father_age_mat[f, m] = father_ages[f] for all m
-  # mother_age_mat[f, m] = mother_ages[m] for all f
-  father_age_mat <- matrix(father_ages, nrow = n_parent_ages, ncol = n_parent_ages, byrow = FALSE)
-  mother_age_mat <- matrix(mother_ages, nrow = n_parent_ages, ncol = n_parent_ages, byrow = TRUE)
+  cli::cli_alert_info("Initializing children by parent ages from CPS historical distribution")
 
-  # Ensure couples_grid is the right size
-  couples_use <- matrix(0, nrow = n_parent_ages, ncol = n_parent_ages)
-  couple_rows <- min(nrow(couples_grid), n_parent_ages)
-  couple_cols <- min(ncol(couples_grid), n_parent_ages)
-  couples_use[1:couple_rows, 1:couple_cols] <- couples_grid[1:couple_rows, 1:couple_cols]
+  # Verify CPS data covers all child ages 0-max_child_age
+  cps_child_ages <- sort(unique(historical_children_dist$child_age))
+  missing_ages <- setdiff(0:max_child_age, cps_child_ages)
+  if (length(missing_ages) > 0) {
+    cli::cli_abort(c(
+      "CPS historical distribution missing data for child ages: {paste(missing_ages, collapse = ', ')}",
+      "i" = "Re-run {.fn fetch_cps_children_by_parent_ages} to regenerate the data"
+    ))
+  }
 
   for (c_age in 0:max_child_age) {
     total_at_age <- total_by_age_vec[c_age + 1]
     if (total_at_age == 0) next
 
-    # Ages at birth
-    father_age_at_birth <- father_age_mat - c_age
-    mother_age_at_birth <- mother_age_mat - c_age
+    hist_slice <- historical_children_dist[child_age == c_age]
 
-    # Valid mask: mother 14-49 at birth, father >= 14 at birth
-    valid_mask <- (mother_age_at_birth >= 14) & (mother_age_at_birth <= 49) &
-                  (father_age_at_birth >= 14)
+    # Fill distribution matrix from CPS proportions
+    temp_dist <- matrix(0, nrow = n_parent_ages, ncol = n_parent_ages)
+    f_idx <- hist_slice$father_age - min_parent_age + 1L
+    m_idx <- hist_slice$mother_age - min_parent_age + 1L
+    valid <- f_idx >= 1L & f_idx <= n_parent_ages &
+             m_idx >= 1L & m_idx <= n_parent_ages
+    for (i in which(valid)) {
+      temp_dist[f_idx[i], m_idx[i]] <- hist_slice$proportion[i]
+    }
 
-    # Apply mask to couples grid
-    temp_dist <- couples_use * valid_mask
-
-    # Normalize and assign
+    # Normalize to match Phase 8B population total for this child age
     temp_total <- sum(temp_dist, na.rm = TRUE)
     if (temp_total > 0) {
       temp_dist <- temp_dist * total_at_age / temp_total
@@ -4032,6 +4037,7 @@ project_children_fate <- function(phase8b_result,
                                    max_child_age = 18,
                                    min_parent_age = 14,
                                    max_parent_age = 100,
+                                   historical_children_dist = NULL,
                                    verbose = TRUE) {
 
   if (verbose) {
@@ -4102,10 +4108,9 @@ project_children_fate <- function(phase8b_result,
 
   init_result <- initialize_children_by_parents(
     population_start = start_pop,
-    couples_grid = start_couples,
-    birth_rates = br_by_age,
     qx_male = qx_male,
     qx_female = qx_female,
+    historical_children_dist = historical_children_dist,
     min_parent_age = min_parent_age,
     max_parent_age = max_parent_age,
     max_child_age = max_child_age
@@ -4284,6 +4289,140 @@ project_children_fate <- function(phase8b_result,
       n_years = length(projection_years) + 1
     )
   )
+}
+
+# =============================================================================
+# Mothers with Young Children (Phase 8D Extension for Economics Input #3)
+# =============================================================================
+
+#' Compute proportion of women with at least one child under 6
+#'
+#' @description
+#' Converts Phase 8D children-by-parent-fate arrays into the proportion of
+#' women with at least one own child under 6, by 5-year age group. This is
+#' Input #3 from Demography to Economics per TR documentation ("Number of
+#' children by age of child and age of mother").
+#'
+#' Uses Poisson approximation to convert children counts to mothers counts:
+#'   P(at least 1 child) = 1 - exp(-lambda)
+#' where lambda = children_under_6 / female_population for each age group.
+#'
+#' The Poisson model assumes children are distributed independently across
+#' women. While births are clustered in practice (mothers tend to have
+#' multiple children), the approximation is reasonable for 5-year age groups
+#' where lambda is typically 0.1-0.7.
+#'
+#' @param children_fate_result Full output from project_children_fate()
+#'   (list with children_arrays, metadata)
+#' @param projected_population SS area population from Phase 8B
+#'   (data.table with year, age, sex, population)
+#' @param min_parent_age Integer minimum parent age (default: 14, from metadata)
+#'
+#' @return data.table with columns: year, age_group, proportion
+#'   age_group values: "16-17", "18-19", "20-24", "25-29", "30-34", "35-39", "40-44"
+#'
+#' @export
+compute_mothers_with_young_children <- function(children_fate_result,
+                                                 projected_population,
+                                                 min_parent_age = 14) {
+  checkmate::assert_list(children_fate_result, names = "named")
+  checkmate::assert_names(names(children_fate_result),
+                          must.include = c("children_arrays", "metadata"))
+  checkmate::assert_data_table(projected_population)
+
+  arrays <- children_fate_result$children_arrays
+  meta <- children_fate_result$metadata
+
+  if (length(arrays) == 0) {
+    cli::cli_abort("children_fate_result$children_arrays is empty — cannot compute mothers proportions")
+  }
+
+  cli::cli_alert_info("Computing mothers-with-child-under-6 proportions from Phase 8D arrays")
+
+  # LFPR age groups for female children-under-6 equations (Eqs 7.1-7.2)
+  lfpr_age_groups <- list(
+    "16-17" = 16:17,
+    "18-19" = 18:19,
+    "20-24" = 20:24,
+    "25-29" = 25:29,
+    "30-34" = 30:34,
+    "35-39" = 35:39,
+    "40-44" = 40:44
+  )
+
+  # Fates where mother is alive: both_alive (1) and only_mother_alive (3)
+  mother_alive_fates <- c(1, 3)
+
+  min_pa <- meta$min_parent_age %||% min_parent_age
+
+  # Pre-compute female population lookup by year and single-year age
+  fem_pop <- projected_population[sex == "female" & age >= 16 & age <= 44]
+  fem_pop_lookup <- fem_pop[, .(population = sum(population)), by = .(year, age)]
+  data.table::setkey(fem_pop_lookup, year, age)
+
+  results <- vector("list", length(arrays) * length(lfpr_age_groups))
+  result_idx <- 0L
+
+  for (yr_str in names(arrays)) {
+    arr <- arrays[[yr_str]]
+    yr <- as.integer(yr_str)
+
+    # arr dimensions: [child_age, father_age, mother_age, fate]
+    # child_age indices 1-6 correspond to ages 0-5
+    max_child_idx <- min(6L, dim(arr)[1])
+
+    # Sum children under 6 with mother alive, by mother's single-year age
+    # apply over dim 3 (mother_age) sums across child_ages, father_ages, and selected fates
+    children_by_mother_age <- apply(
+      arr[1:max_child_idx, , , mother_alive_fates, drop = FALSE],
+      3, sum, na.rm = TRUE
+    )
+
+    for (grp_name in names(lfpr_age_groups)) {
+      grp_ages <- lfpr_age_groups[[grp_name]]
+      grp_indices <- grp_ages - min_pa + 1L
+      grp_indices <- grp_indices[grp_indices >= 1L & grp_indices <= dim(arr)[3]]
+
+      if (length(grp_indices) == 0) next
+
+      n_children <- sum(children_by_mother_age[grp_indices])
+
+      # Female population for this age group and year
+      fem_grp <- fem_pop_lookup[.(yr, grp_ages), nomatch = NULL]
+      fem_total <- sum(fem_grp$population)
+
+      if (is.na(fem_total) || fem_total <= 0) {
+        prop <- 0
+      } else {
+        lambda <- n_children / fem_total
+        prop <- 1 - exp(-lambda)
+      }
+
+      result_idx <- result_idx + 1L
+      results[[result_idx]] <- data.table::data.table(
+        year = yr,
+        age_group = grp_name,
+        proportion = prop
+      )
+    }
+  }
+
+  result <- data.table::rbindlist(results[seq_len(result_idx)])
+  data.table::setorder(result, year, age_group)
+
+  # Log summary statistics for validation
+  sample_years <- unique(result$year)
+  sample_year <- sample_years[min(3, length(sample_years))]
+  sample <- result[year == sample_year]
+  cli::cli_alert_info(
+    "Sample year {sample_year}: proportions range {round(min(sample$proportion), 3)}-{round(max(sample$proportion), 3)}"
+  )
+
+  cli::cli_alert_success(
+    "Computed mothers-with-child-under-6: {nrow(result)} rows, {length(unique(result$year))} years, {length(lfpr_age_groups)} age groups"
+  )
+
+  result
 }
 
 #' Project mean children per married couple (Phase 8D.7)
