@@ -490,6 +490,197 @@ load_tr_benefit_params <- function(config) {
   vc7
 }
 
+# =============================================================================
+# DI Age Profile from Published SSA Data
+# =============================================================================
+
+#' Load disability prevalence age profile from published SSA data
+#'
+#' @description
+#' Computes age-sex-specific disability prevalence rates from:
+#' - DI Annual Statistical Report Table 4 (disabled worker beneficiaries by age and sex)
+#' - SSA Annual Statistical Supplement Table 4.C5 (SS area population and % fully insured)
+#'
+#' The resulting rates serve as the age shape for distributing V.C5's aggregate
+#' prevalence rate across LFPR age groups. This will be replaced when the
+#' Beneficiaries subprocess computes age-sex-specific DI prevalence directly.
+#'
+#' @param config Full ARTEMIS config (uses trustees_report_year to find files)
+#'
+#' @return data.table with columns: age_group, sex, prevalence_rate (per 1,000 insured)
+#'
+#' @export
+load_di_age_profile <- function(config) {
+  tr_year <- config$metadata$trustees_report_year
+  yy <- sprintf("%02d", (tr_year - 1) %% 100)
+
+  supplemental_dir <- here::here("data/raw/SSA_supplemental")
+  di_file <- file.path(supplemental_dir, paste0("di_asr", yy, ".xlsx"))
+  supp_file <- file.path(supplemental_dir, paste0("supplement", yy, ".xlsx"))
+
+  if (!file.exists(di_file)) {
+    cli::cli_abort(c(
+      "DI Annual Statistical Report not found",
+      "x" = "Expected: {.file {di_file}}",
+      "i" = "Place SSA supplemental data files in {.path {supplemental_dir}}"
+    ))
+  }
+  if (!file.exists(supp_file)) {
+    cli::cli_abort(c(
+      "SSA Annual Statistical Supplement not found",
+      "x" = "Expected: {.file {supp_file}}",
+      "i" = "Place SSA supplemental data files in {.path {supplemental_dir}}"
+    ))
+  }
+
+  cli::cli_alert_info(
+    "Loading DI age profile from di_asr{yy}.xlsx Table 4 and supplement{yy}.xlsx Table 4.C5"
+  )
+
+  # Helper: find the row where a label appears (scanning all columns)
+  find_section_row <- function(dt, label) {
+    for (j in seq_len(ncol(dt))) {
+      matches <- which(trimws(as.character(dt[[j]])) == label)
+      if (length(matches) > 0) return(matches[1])
+    }
+    cli::cli_abort("Could not find '{label}' section label in Excel sheet")
+  }
+
+  # ── 1. Parse disabled worker beneficiaries from DI ASR Table 4 ─────
+  # Structure (skip=4): section label → subtotal → 10 age groups
+  # Col 1 = age label, Col 6 = disabled workers count
+  raw_di <- data.table::as.data.table(
+    readxl::read_excel(di_file, sheet = "Table 4", skip = 4, col_names = FALSE)
+  )
+
+  men_row <- find_section_row(raw_di, "Men")
+  women_row <- find_section_row(raw_di, "Women")
+
+  parse_di_data <- function(dt, start, n = 10) {
+    rows <- dt[(start + 2):(start + 1 + n)]
+    data.table::data.table(
+      age_label = gsub("\u2013", "-", trimws(as.character(rows[[1]]))),
+      workers = suppressWarnings(as.numeric(rows[[6]]))
+    )
+  }
+
+  men_di <- parse_di_data(raw_di, men_row)[, sex := "male"]
+  women_di <- parse_di_data(raw_di, women_row)[, sex := "female"]
+  di_data <- data.table::rbindlist(list(men_di, women_di))
+
+  # Remove footnote markers (e.g., "65-FRA a" → "65-FRA")
+  di_data[, age_label := gsub("\\s+[a-z]$", "", age_label)]
+
+  # Drop 65-FRA: ages 62+ use cohort RD at age 61, not current rates
+  di_data <- di_data[!grepl("65", age_label)]
+
+  # ── 2. Parse SS area population + % insured from Supplement 4.C5 ───
+  # Structure (skip=4): section label → subtotal → 14 age groups
+  # Paired columns per year: (population in thousands, % fully insured)
+  raw_supp <- data.table::as.data.table(
+    readxl::read_excel(supp_file, sheet = "4.C5", skip = 4, col_names = FALSE)
+  )
+
+  # Read header row to find year columns dynamically
+  header_row <- data.table::as.data.table(
+    readxl::read_excel(supp_file, sheet = "4.C5", skip = 2, n_max = 1, col_names = FALSE)
+  )
+  header_years <- suppressWarnings(as.integer(as.character(header_row[1, ])))
+  year_cols <- which(!is.na(header_years))
+
+  if (length(year_cols) == 0) {
+    cli::cli_abort("Could not find year columns in Supplement Table 4.C5 header")
+  }
+
+  # Use most recent year
+  latest_idx <- which.max(header_years[year_cols])
+  pop_col <- year_cols[latest_idx]
+  pct_col <- year_cols[latest_idx] + 1
+  data_year <- header_years[pop_col]
+
+  cli::cli_alert_info("Using {data_year} population data from Table 4.C5")
+
+  male_row <- find_section_row(raw_supp, "Male")
+  female_row <- find_section_row(raw_supp, "Female")
+
+  parse_supp_data <- function(dt, start, n = 14) {
+    rows <- dt[(start + 2):(start + 1 + n)]
+    pct_raw <- as.character(rows[[pct_col]])
+    pct_clean <- gsub("^a\\s+", "", pct_raw)
+    pct_clean <- gsub("\\(L\\)", "0", pct_clean)
+
+    data.table::data.table(
+      age_label = gsub("\u2013", "-", trimws(as.character(rows[[1]]))),
+      population = suppressWarnings(as.numeric(rows[[pop_col]])) * 1000,
+      pct_insured = suppressWarnings(as.numeric(pct_clean))
+    )
+  }
+
+  male_pop <- parse_supp_data(raw_supp, male_row)[, sex := "male"]
+  female_pop <- parse_supp_data(raw_supp, female_row)[, sex := "female"]
+  pop_data <- data.table::rbindlist(list(male_pop, female_pop))
+
+  # ── 3. Align supplement age groups to DI age groups ────────────────
+  # DI "Under 25" = Supplement "15-19" + "20-24" (Under 15 not DI-eligible)
+  # DI "25-29" through "60-64" = direct match
+  pop_data[, di_age_group := data.table::fcase(
+    age_label %in% c("15-19", "20-24"), "Under 25",
+    age_label %in% c("25-29", "30-34", "35-39", "40-44",
+                      "45-49", "50-54", "55-59", "60-64"), age_label,
+    default = NA_character_
+  )]
+
+  # Validate parsed data before aggregation
+  matched_pop <- pop_data[!is.na(di_age_group)]
+  na_pop <- sum(is.na(matched_pop$population))
+  na_pct <- sum(is.na(matched_pop$pct_insured))
+  if (na_pop > 0 || na_pct > 0) {
+    cli::cli_abort(c(
+      "Missing values in Supplement Table 4.C5 data",
+      "x" = "{na_pop} NA population values, {na_pct} NA insured-percentage values",
+      "i" = "Check that {.file {supp_file}} Table 4.C5 has complete data for ages 15-64"
+    ))
+  }
+
+  na_workers <- sum(is.na(di_data$workers))
+  if (na_workers > 0) {
+    cli::cli_abort(c(
+      "Missing values in DI ASR Table 4 worker counts",
+      "x" = "{na_workers} age groups have NA disabled-worker counts",
+      "i" = "Check that {.file {di_file}} Table 4 has complete data"
+    ))
+  }
+
+  pop_agg <- matched_pop[, .(
+    insured_pop = sum(population * pct_insured / 100)
+  ), by = .(di_age_group, sex)]
+
+  # ── 4. Compute prevalence rates and map to LFPR age groups ────────
+  di_data[, di_age_group := age_label]
+  rates <- merge(di_data, pop_agg, by = c("di_age_group", "sex"))
+  rates[, prevalence_rate := workers / insured_pop * 1000]
+
+  # Map DI groups to LFPR equation age groups
+  # Under 25 applies equally to 16-17, 18-19, and 20-24
+  lfpr_map <- data.table::data.table(
+    di_age_group = c(rep("Under 25", 3), "25-29", "30-34", "35-39",
+                      "40-44", "45-49", "50-54", "55-59", "60-64"),
+    age_group = c("16-17", "18-19", "20-24", "25-29", "30-34", "35-39",
+                   "40-44", "45-49", "50-54", "55-59", "60-61")
+  )
+
+  result <- merge(lfpr_map, rates[, .(di_age_group, sex, prevalence_rate)],
+                   by = "di_age_group", allow.cartesian = TRUE)
+  result[, di_age_group := NULL]
+  data.table::setorder(result, sex, age_group)
+
+  cli::cli_alert_success(
+    "Computed DI age profile: {nrow(result)} groups, rates {round(min(result$prevalence_rate), 1)}-{round(max(result$prevalence_rate), 1)} per 1,000 insured"
+  )
+
+  result[, .(age_group, sex, prevalence_rate)]
+}
+
 #' Load AWI historical data
 #'
 #' @param config Full ARTEMIS config

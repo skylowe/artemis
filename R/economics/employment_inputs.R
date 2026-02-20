@@ -390,94 +390,127 @@ compute_rtp <- function(unemployment_path, config_employment) {
 #' Construct disability prevalence ratio by age and sex
 #'
 #' @description
-#' Constructs RD from TR2025 V.C5 disability prevalence data.
-#' For ages 62-74, uses the cohort's RD at age 61.
+#' Constructs age-sex-specific RD by combining:
+#' - Published DI age profile (from DI ASR + SSA Supplement) as the shape
+#' - V.C5 aggregate prevalence rate for year-to-year scaling
 #'
-#' @param di_prevalence TR2025 disability prevalence data
-#'   (data.table with year, rate or similar)
+#' For ages 16-61: current-year age-specific RD.
+#' For ages 62-74: cohort RD at age 61 (lagged).
+#'
+#' This will be replaced when the Beneficiaries subprocess computes
+#' age-sex-specific disability prevalence directly.
+#'
+#' @param di_prevalence V.C5 disability prevalence (data.table with year,
+#'   age_sex_adj_prevalence_rate)
+#' @param di_age_profile Age-sex-specific prevalence rates from load_di_age_profile()
+#'   (data.table with age_group, sex, prevalence_rate in per-1,000 insured)
 #' @param config_employment Employment config section
 #'
 #' @return data.table with columns: year, age_group, sex, rd
 #'
 #' @export
-construct_disability_ratio <- function(di_prevalence, config_employment) {
+construct_disability_ratio <- function(di_prevalence, di_age_profile, config_employment) {
   checkmate::assert_data_table(di_prevalence)
+  checkmate::assert_data_table(di_age_profile)
+  checkmate::assert_names(names(di_prevalence),
+                          must.include = c("year", "age_sex_adj_prevalence_rate"))
+  checkmate::assert_names(names(di_age_profile),
+                          must.include = c("age_group", "sex", "prevalence_rate"))
 
   cli::cli_alert_info("Constructing disability prevalence ratio (RD)")
 
-  # V.C5 provides the age-sex adjusted prevalence rate per 1,000 insured.
-  # This is an aggregate rate. For USEMP, we need age-specific RD.
-  #
-  # Approach: Scale the aggregate rate by an age profile derived from
-  # published SSA disability statistics. The age profile shape comes from
-  # the DI beneficiary age distribution (SSA Annual Statistical Supplement),
-  # normalized so the population-weighted average matches V.C5's aggregate.
-  #
-  # This will be replaced when the Beneficiaries subprocess computes
-  # age-sex-specific disability prevalence directly.
+  # V.C5 aggregate rate by year (per 1,000 insured)
+  agg_rates <- di_prevalence[, .(year, agg_rate = age_sex_adj_prevalence_rate)]
+  years <- sort(unique(agg_rates$year))
 
-  checkmate::assert_names(names(di_prevalence),
-                          must.include = c("year", "age_sex_adj_prevalence_rate"))
+  # Normalize profile to a shape with mean = 1.0
+  # so that: RD(age, sex, year) = shape(age, sex) × V.C5(year) / 1000
+  profile_mean <- mean(di_age_profile$prevalence_rate, na.rm = TRUE)
+  profile <- data.table::copy(di_age_profile)
+  profile[, shape := prevalence_rate / profile_mean]
 
-  base_year <- config_employment$base_year %||% 2024
+  # ── Ages 16-61: expand profile to all years, scaled by V.C5 ──────
+  base_rd <- data.table::CJ(
+    year = years,
+    age_group = unique(profile$age_group),
+    sex = c("male", "female")
+  )
+  base_rd <- merge(base_rd, profile[, .(age_group, sex, shape)],
+                    by = c("age_group", "sex"), all.x = TRUE)
+  base_rd <- merge(base_rd, agg_rates, by = "year", all.x = TRUE)
+  base_rd[, rd := shape * agg_rate / 1000]
 
-  # Get aggregate prevalence rate by year (per 1,000 → convert to proportion)
-  agg_rd <- di_prevalence[, .(year, agg_rd = age_sex_adj_prevalence_rate / 1000)]
+  na_count <- sum(is.na(base_rd$rd))
+  if (na_count > 0) {
+    cli::cli_abort(c(
+      "NA values in base RD computation",
+      "x" = "{na_count} cells have NA — check DI age profile and V.C5 data for missing values"
+    ))
+  }
 
-  # Age profile: relative disability prevalence by age
-
-  # From published SSA data, disability prevalence rises steeply with age:
-  # ~0.5% at age 20, ~2% at age 40, ~8% at age 55, peaking ~9% at age 60-61.
-  # After age 62, DI beneficiaries convert to retirement benefits, so RD
-  # for LFPR purposes is 0 (handled by setting default = 0 below).
-  # The relative profile is normalized so the weighted average = 1.0,
-  # then multiplied by the aggregate rate to produce age-specific RD.
-  age_profile <- data.table::data.table(
-    age_num = 16:100,
-    # Relative profile (will be multiplied by aggregate rate)
-    rel_profile = c(
-      rep(0.05, 4),    # 16-19: very low
-      rep(0.15, 5),    # 20-24
-      rep(0.25, 5),    # 25-29
-      rep(0.45, 5),    # 30-34
-      rep(0.65, 5),    # 35-39
-      rep(0.90, 5),    # 40-44
-      rep(1.20, 5),    # 45-49
-      rep(1.60, 5),    # 50-54
-      rep(2.10, 5),    # 55-59
-      rep(2.40, 2),    # 60-61
-      rep(0, 39)       # 62-100: DI converts to retirement
-    )
+  # Expand age groups to single-year ages for compatibility with LFPR code
+  age_group_map <- data.table::data.table(
+    age = c(16:17, 18:19, 20:24, 25:29, 30:34, 35:39,
+            40:44, 45:49, 50:54, 55:59, 60:61),
+    age_group = c(rep("16-17", 2), rep("18-19", 2), rep("20-24", 5),
+                   rep("25-29", 5), rep("30-34", 5), rep("35-39", 5),
+                   rep("40-44", 5), rep("45-49", 5), rep("50-54", 5),
+                   rep("55-59", 5), rep("60-61", 2))
   )
 
-  # Normalize so weighted average ≈ 1.0 (equal population weight approximation)
-  working_ages <- age_profile[age_num <= 61]
-  mean_profile <- mean(working_ages$rel_profile)
-  age_profile[, rel_profile := rel_profile / mean_profile]
+  base_expanded <- merge(
+    data.table::CJ(year = years, age = 16:61, sex = c("male", "female")),
+    age_group_map, by = "age"
+  )
+  base_expanded <- merge(base_expanded, base_rd[, .(year, age_group, sex, rd)],
+                          by = c("year", "age_group", "sex"), all.x = TRUE)
+  base_expanded[, age_group := as.character(age)]
+  base_expanded[, age := NULL]
 
-  # Expand to year × age × sex
-  sexes <- c("male", "female")
-  years <- sort(unique(agg_rd$year))
+  # ── Ages 62-74: cohort RD at age 61 (lagged) ────────────────────
+  # Person at age a in year y was age 61 in year (y - a + 61)
+  rd_at_61 <- base_rd[age_group == "60-61", .(year, sex, rd_61 = rd)]
 
-  result <- data.table::CJ(year = years, age_group = as.character(16:100), sex = sexes)
-  result[, age_num := as.integer(age_group)]
+  cohort_rd <- data.table::CJ(year = years, age = 62:74, sex = c("male", "female"))
+  cohort_rd[, cohort_year := year - age + 61L]
+  cohort_rd <- merge(cohort_rd, rd_at_61,
+                      by.x = c("cohort_year", "sex"), by.y = c("year", "sex"),
+                      all.x = TRUE)
+  # Cohorts whose age-61 year predates V.C5 data range cannot be computed
+  min_vc5_year <- min(rd_at_61$year)
+  n_missing <- sum(is.na(cohort_rd$rd_61))
+  if (n_missing > 0) {
+    cli::cli_alert_warning(
+      "{n_missing} cohort RD cells have age-61 year before V.C5 start ({min_vc5_year}) — using earliest available V.C5 value"
+    )
+    earliest_rd61 <- rd_at_61[, .SD[year == min(year)], by = sex]
+    cohort_rd <- merge(cohort_rd, earliest_rd61[, .(sex, rd_61_earliest = rd_61)],
+                        by = "sex", all.x = TRUE)
+    cohort_rd[is.na(rd_61), rd_61 := rd_61_earliest]
+    cohort_rd[, rd_61_earliest := NULL]
+  }
 
-  # Merge age profile
-  result <- merge(result, age_profile, by = "age_num", all.x = TRUE)
-  result[is.na(rel_profile), rel_profile := 0]
+  cohort_rd[, `:=`(age_group = as.character(age), rd = rd_61)]
+  cohort_rd <- cohort_rd[, .(year, age_group, sex, rd)]
 
-  # Merge aggregate rate by year
-  result <- merge(result, agg_rd, by = "year", all.x = TRUE)
+  # ── Ages 75-100: RD = 0 (DI converts to retirement) ─────────────
+  old_age_rd <- data.table::CJ(year = years, age_group = as.character(75:100),
+                                 sex = c("male", "female"))
+  old_age_rd[, rd := 0]
 
-  # RD = aggregate_rate × relative_profile
-  result[, rd := agg_rd * rel_profile]
-  result[is.na(rd), rd := 0]
-
-  # Clean up
-  result[, c("age_num", "rel_profile", "agg_rd") := NULL]
+  # ── Combine all ages ─────────────────────────────────────────────
+  result <- data.table::rbindlist(list(base_expanded, cohort_rd, old_age_rd))
+  na_final <- sum(is.na(result$rd))
+  if (na_final > 0) {
+    cli::cli_abort(c(
+      "NA values in final RD table",
+      "x" = "{na_final} cells have NA after combining all age ranges"
+    ))
+  }
+  data.table::setorder(result, year, sex, age_group)
 
   cli::cli_alert_success(
-    "Constructed RD for {nrow(result)} age-sex-year cells from V.C5 ({min(years)}-{max(years)})"
+    "Constructed RD: {nrow(result)} cells ({min(years)}-{max(years)}), ages 16-100"
   )
 
   result
@@ -610,6 +643,7 @@ construct_pot_et_txrt <- function(benefit_params, config_employment) {
 #' @param tr_economic_levels TR VI.G6 data (AWI, CPI, GDP levels)
 #' @param tr_di_prevalence TR V.C5 data
 #' @param tr_benefit_params TR V.C7 data
+#' @param di_age_profile DI age-sex profile from load_di_age_profile()
 #' @param cps_labor_data CPS ASEC labor force data from IPUMS (unified extract)
 #' @param config_employment Employment config section
 #'
@@ -634,6 +668,7 @@ build_employment_inputs <- function(projected_population,
                                      tr_economic_levels,
                                      tr_di_prevalence,
                                      tr_benefit_params,
+                                     di_age_profile,
                                      cps_labor_data,
                                      config_employment) {
   cli::cli_h1("Building Employment Input Variables")
@@ -693,7 +728,7 @@ build_employment_inputs <- function(projected_population,
 
   # 5. Disability prevalence ratio
   cli::cli_h2("Disability Prevalence Ratio")
-  rd <- construct_disability_ratio(tr_di_prevalence, config_employment)
+  rd <- construct_disability_ratio(tr_di_prevalence, di_age_profile, config_employment)
 
   # 6. RRADJ and POT_ET_TXRT
   cli::cli_h2("Retirement Variables")

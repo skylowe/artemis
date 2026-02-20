@@ -84,6 +84,13 @@ create_economics_targets <- function() {
       yaml::read_yaml(here::here("config/coefficients/eo_parameters.yaml"))
     ),
 
+    # DI age-sex profile from published SSA data (DI ASR + Supplement)
+    targets::tar_target(
+      di_age_profile,
+      load_di_age_profile(config_assumptions),
+      cue = targets::tar_cue(mode = "thorough")
+    ),
+
     # ══════════════════════════════════════════════════════════════════
     # INPUT VARIABLE CONSTRUCTION
     # ══════════════════════════════════════════════════════════════════
@@ -101,6 +108,7 @@ create_economics_targets <- function() {
         tr_economic_levels = tr_economic_levels,
         tr_di_prevalence = tr_di_prevalence,
         tr_benefit_params = tr_benefit_params,
+        di_age_profile = di_age_profile,
         cps_labor_data = cps_labor_force,
         config_employment = config_economics$employment
       )
