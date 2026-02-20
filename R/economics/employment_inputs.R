@@ -304,18 +304,56 @@ compute_edscore <- function(education_data, projection_years) {
     edscore = sum(proportion * edu_weights[education_level], na.rm = TRUE)
   ), by = .(year, age_group, sex)]
 
-  # For projection: hold each age group's EDSCORE at last historical value
-  # (simplified cohort projection — use last observed value for each age-sex group)
+  # Cohort-based projection: education is largely fixed by age 25, so for a
+  # target age group in a future year, use the EDSCORE from the age group that
+  # cohort occupied at the last historical year. This captures the rising
+  # education trend as more-educated young cohorts age into 55+.
   last_hist_year <- max(historical$year)
-  last_values <- historical[year == last_hist_year, .(age_group, sex, edscore)]
+  last_values <- historical[year == last_hist_year]
 
-  projection <- last_values[, .(year = projection_years, edscore = edscore),
-                             by = .(age_group, sex)]
+  # Age group midpoints for cohort tracking
+  ag_midpoints <- data.table::data.table(
+    age_group = c("25-29", "30-34", "35-39", "40-44", "45-49", "50-54",
+                  "55-59", "60-64", "65-69", "70-74", "75+"),
+    midpoint = c(27L, 32L, 37L, 42L, 47L, 52L, 57L, 62L, 67L, 72L, 77L)
+  )
+
+  proj_grid <- data.table::CJ(
+    age_group = unique(last_values$age_group),
+    sex = unique(last_values$sex),
+    year = projection_years
+  )
+  proj_grid <- merge(proj_grid, ag_midpoints, by = "age_group", all.x = TRUE)
+
+  # Where was this cohort at the last historical year?
+  proj_grid[, source_midpoint := midpoint - (year - last_hist_year)]
+
+  # Map source midpoint to the age group it falls in (clamp to youngest available)
+  proj_grid[, source_age_group := data.table::fcase(
+    source_midpoint < 30L, "25-29",
+    source_midpoint < 35L, "30-34",
+    source_midpoint < 40L, "35-39",
+    source_midpoint < 45L, "40-44",
+    source_midpoint < 50L, "45-49",
+    source_midpoint < 55L, "50-54",
+    source_midpoint < 60L, "55-59",
+    source_midpoint < 65L, "60-64",
+    source_midpoint < 70L, "65-69",
+    source_midpoint < 75L, "70-74",
+    default = "75+"
+  )]
+
+  # Look up source cohort's EDSCORE from the last historical year
+  proj_grid <- merge(proj_grid,
+                     last_values[, .(source_age_group = age_group, sex, edscore)],
+                     by = c("source_age_group", "sex"), all.x = TRUE)
+
+  projection <- proj_grid[, .(year, age_group, sex, edscore)]
 
   result <- data.table::rbindlist(list(historical, projection), fill = TRUE)
   data.table::setorder(result, year, sex, age_group)
 
-  cli::cli_alert_success("Computed EDSCORE for {nrow(result)} age-sex-year cells")
+  cli::cli_alert_success("Computed EDSCORE for {nrow(result)} age-sex-year cells (cohort-based projection)")
 
   result
 }
