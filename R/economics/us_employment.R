@@ -31,6 +31,16 @@ USEMP_LFPR_5YR_GROUPS <- c(
 #' USEMP LFPR single-year ages (55-100)
 USEMP_LFPR_SINGLE_AGES <- 55:100
 
+#' USEMP age group to single-year age mapping
+#' @keywords internal
+USEMP_AGE_GROUP_RANGES <- list(
+  "16-17" = 16:17, "18-19" = 18:19, "20-24" = 20:24,
+  "25-29" = 25:29, "30-34" = 30:34, "35-39" = 35:39,
+  "40-44" = 40:44, "45-49" = 45:49, "50-54" = 50:54,
+  "55-59" = 55:59, "60-64" = 60:64, "65-69" = 65:69,
+  "70-74" = 70:74, "75+"   = 75:120
+)
+
 # =============================================================================
 # Unemployment Rate Projection (Eq 2.1.3)
 # =============================================================================
@@ -260,6 +270,7 @@ project_lfpr <- function(unemployment_rates,
   # Extract input components
   edscore <- employment_inputs$edscore
   msshare <- employment_inputs$msshare
+  marital_pop <- employment_inputs$marital_cni_pop
   rd <- employment_inputs$rd
   rradj <- employment_inputs$rradj
   pot_et_txrt <- employment_inputs$pot_et_txrt
@@ -326,9 +337,9 @@ project_lfpr <- function(unemployment_rates,
       rd_val <- .get_rd(rd, ag, "male", yr)
 
       # Population weights for aggregation
-      pop_nm <- .get_cni_pop(cni_population, ag, "male", "never_married", yr)
-      pop_ms <- .get_cni_pop(cni_population, ag, "male", "married_present", yr)
-      pop_ma <- .get_cni_pop(cni_population, ag, "male", "married_absent", yr)
+      pop_nm <- .get_cni_pop(cni_population, ag, "male", "never_married", yr, marital_pop)
+      pop_ms <- .get_cni_pop(cni_population, ag, "male", "married_present", yr, marital_pop)
+      pop_ma <- .get_cni_pop(cni_population, ag, "male", "married_absent", yr, marital_pop)
       pop_total <- pop_nm + pop_ms + pop_ma
 
       lfpr_by_status <- list()
@@ -428,9 +439,9 @@ project_lfpr <- function(unemployment_rates,
       ru_ag_rates <- .get_ru_lags(ru_annual, ag, "female", yr, n_lags = 6)
       rd_val <- .get_rd(rd, ag, "female", yr)
 
-      pop_nm <- .get_cni_pop(cni_population, ag, "female", "never_married", yr)
-      pop_ms <- .get_cni_pop(cni_population, ag, "female", "married_present", yr)
-      pop_ma <- .get_cni_pop(cni_population, ag, "female", "married_absent", yr)
+      pop_nm <- .get_cni_pop(cni_population, ag, "female", "never_married", yr, marital_pop)
+      pop_ms <- .get_cni_pop(cni_population, ag, "female", "married_present", yr, marital_pop)
+      pop_ma <- .get_cni_pop(cni_population, ag, "female", "married_absent", yr, marital_pop)
       pop_total <- pop_nm + pop_ms + pop_ma
 
       lfpr_by_status <- list()
@@ -650,11 +661,35 @@ project_labor_force_employment <- function(lfpr_projection,
   checkmate::assert_list(unemployment_projection)
   checkmate::assert_data_table(quarterly_cni_pop)
 
-  lfpr_q <- lfpr_projection$quarterly
+  # Use aggregate LFPR only (one value per age_group × sex × year × quarter)
+  # The detailed LFPR has marital status disaggregation — not needed for total LC/E
+  lfpr_q <- data.table::copy(lfpr_projection$quarterly)
+
+  # Deduplicate: keep only the aggregate (first) value per age-sex-quarter
+  lfpr_q <- unique(lfpr_q, by = c("year", "quarter", "age_group", "sex"))
+
   ru_q <- unemployment_projection$actual
 
+  # Aggregate quarterly CNI population from single-year ages to LFPR age groups
+  cni_pop <- data.table::copy(quarterly_cni_pop)
+  cni_pop[, age_group := fcase(
+    age <= 17, "16-17", age <= 19, "18-19", age <= 24, "20-24",
+    age <= 29, "25-29", age <= 34, "30-34", age <= 39, "35-39",
+    age <= 44, "40-44", age <= 49, "45-49", age <= 54, "50-54",
+    age <= 59, "55-59", age <= 64, "60-64", age <= 69, "65-69",
+    age <= 74, "70-74", default = "75+"
+  )]
+  # Also create single-year age groups for ages 55+ (used by LFPR)
+  cni_single <- cni_pop[age >= 55, .(population = sum(population)),
+                        by = .(year, quarter, age_group = as.character(age), sex)]
+  # Aggregate 5-year groups
+  cni_grouped <- cni_pop[, .(population = sum(population)),
+                         by = .(year, quarter, age_group, sex)]
+  # Combine both
+  cni_by_group <- data.table::rbindlist(list(cni_grouped, cni_single))
+
   # Merge LFPR, RU, and population
-  lf_data <- merge(lfpr_q, quarterly_cni_pop,
+  lf_data <- merge(lfpr_q, cni_by_group,
                    by = c("year", "quarter", "age_group", "sex"), all.x = TRUE)
   lf_data <- merge(lf_data, ru_q,
                    by = c("year", "quarter", "age_group", "sex"),
@@ -740,32 +775,62 @@ project_labor_force_employment <- function(lfpr_projection,
   if (nrow(row) > 0) row$pot_et_txrt[1] else 0
 }
 
+#' Get CNI population for a given age group, sex, and marital status
+#'
+#' @description
+#' Looks up population from either:
+#' - Total CNI population (quarterly, single-year age) for marital_status = "all"
+#' - Marital CNI population (annual, single-year age, 3 LFPR categories) for disaggregated
+#'
+#' Aggregates single-year ages into the requested age group.
+#'
 #' @keywords internal
-.get_cni_pop <- function(cni_pop, tgt_age_group, tgt_sex, tgt_marital_status, tgt_year) {
-  ms_map <- c(
-    never_married = "single",
-    married_present = "married",
-    married_absent = "married"
-  )
-  ms_val <- ms_map[[tgt_marital_status]]
-  if (is.null(ms_val)) ms_val <- tgt_marital_status
+.get_cni_pop <- function(cni_pop, tgt_age_group, tgt_sex, tgt_marital_status, tgt_year,
+                          marital_pop = NULL) {
+  age_range <- USEMP_AGE_GROUP_RANGES[[tgt_age_group]]
+  if (is.null(age_range)) {
+    age_range <- as.integer(tgt_age_group)
+  }
 
-  row <- cni_pop[age_group == tgt_age_group & sex == tgt_sex &
-                 marital_status == ms_val & year == tgt_year]
-  if (nrow(row) > 0) sum(row$population) else 1
+  if (tgt_marital_status == "all") {
+    # Use total CNI population (quarterly — pick Q2 for midyear)
+    if ("quarter" %in% names(cni_pop)) {
+      pop_rows <- cni_pop[age %in% age_range & sex == tgt_sex &
+                           year == tgt_year & quarter == 2L]
+      if (nrow(pop_rows) == 0) {
+        pop_rows <- cni_pop[age %in% age_range & sex == tgt_sex & year == tgt_year]
+      }
+    } else {
+      pop_rows <- cni_pop[age %in% age_range & sex == tgt_sex & year == tgt_year]
+    }
+    total <- sum(pop_rows$population, na.rm = TRUE)
+    return(if (total > 0) total else 1)
+  }
+
+  # Marital status disaggregation — use marital_cni_pop
+  if (!is.null(marital_pop)) {
+    pop_rows <- marital_pop[age %in% age_range & sex == tgt_sex &
+                             lfpr_marital_status == tgt_marital_status &
+                             year == tgt_year]
+    total <- sum(pop_rows$population, na.rm = TRUE)
+    return(if (total > 0) total else 1)
+  }
+
+  # Fallback: use total CNI with approximate proportions if marital_pop unavailable
+  total_pop <- .get_cni_pop(cni_pop, tgt_age_group, tgt_sex, "all", tgt_year)
+  cli::cli_alert_warning("Marital CNI pop unavailable for {tgt_age_group} {tgt_sex} — using total")
+  return(total_pop / 3)
 }
 
 #' @keywords internal
-.get_cni_pop_children <- function(cni_pop, children_props, age_group, category, year) {
-  # Get total population for age-group and split by children proportion
-  total_pop <- .get_cni_pop(cni_pop, age_group, "female",
-                            sub("_(child_under6|no_child)$", "", category), year)
+.get_cni_pop_children <- function(cni_pop, children_props, tgt_age_group, category, tgt_year) {
+  ms <- sub("_(child_under6|no_child)$", "", category)
+  total_pop <- .get_cni_pop(cni_pop, tgt_age_group, "female", ms, tgt_year)
+  c6u_prop <- .get_child_under6_prop(children_props, tgt_age_group, tgt_year)
   if (grepl("child_under6$", category)) {
-    prop <- .get_child_under6_prop(children_props, age_group, year)
-    return(total_pop * prop)
+    return(total_pop * c6u_prop)
   } else {
-    prop <- .get_child_under6_prop(children_props, age_group, year)
-    return(total_pop * (1 - prop))
+    return(total_pop * (1 - c6u_prop))
   }
 }
 

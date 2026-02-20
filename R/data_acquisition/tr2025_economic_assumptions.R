@@ -14,6 +14,76 @@
 NULL
 
 # =============================================================================
+# Shared Helper: Parse Sectioned TR2025 Sheet
+# =============================================================================
+
+#' Parse a TR2025 SingleYear sheet with Historical/Intermediate/Low/High sections
+#'
+#' @param file_path Path to SingleYearTRTables_TR2025.xlsx
+#' @param sheet Sheet name (e.g., "V.B1", "V.B2")
+#' @param skip_rows Number of header rows to skip before data
+#' @param col_names Character vector of column names (first must be year)
+#' @param alternative Which alternative to use for projected data
+#'
+#' @return data.table with historical + selected alternative, named columns
+#' @keywords internal
+parse_tr2025_sectioned_sheet <- function(file_path, sheet, skip_rows,
+                                          col_names, alternative = "intermediate") {
+  raw <- readxl::read_excel(file_path, sheet = sheet, skip = skip_rows, col_names = FALSE)
+  dt <- data.table::as.data.table(raw)
+
+  # Assign column names
+  if (ncol(dt) >= length(col_names)) {
+    data.table::setnames(dt, names(dt)[seq_along(col_names)], col_names)
+  }
+
+  # Parse year (first column) — handle "2024 a" style annotations
+  dt[, year := suppressWarnings(as.integer(gsub("\\s.*", "", as.character(year))))]
+
+  # Find section boundaries
+  year_raw <- as.character(raw[[1]])
+  section_rows <- which(is.na(suppressWarnings(as.integer(gsub("\\s.*", "", year_raw)))) &
+                         !is.na(year_raw) & nchar(trimws(year_raw)) > 0)
+  section_labels <- trimws(year_raw[section_rows])
+
+  # Historical: rows before first section header
+  first_section <- if (length(section_rows) > 0) section_rows[1] else nrow(dt) + 1
+  historical <- dt[1:(first_section - 1)][!is.na(year)]
+
+  # Find the requested alternative
+  alt_pattern <- switch(alternative,
+    intermediate = "Intermediate",
+    low = "Low",
+    high = "High",
+    "Intermediate"
+  )
+  section_idx <- grep(alt_pattern, section_labels, ignore.case = TRUE)
+
+  projected <- data.table::data.table()
+  if (length(section_idx) > 0) {
+    start_row <- section_rows[section_idx[1]] + 1
+    end_row <- if (section_idx[1] < length(section_rows)) {
+      section_rows[section_idx[1] + 1] - 1
+    } else {
+      nrow(dt)
+    }
+    projected <- dt[start_row:end_row][!is.na(year)]
+  }
+
+  result <- data.table::rbindlist(list(historical, projected))
+
+  # Convert value columns to numeric
+  value_cols <- setdiff(col_names, "year")
+  for (col in value_cols) {
+    if (col %in% names(result)) {
+      result[, (col) := suppressWarnings(as.numeric(get(col)))]
+    }
+  }
+
+  result[!is.na(year)]
+}
+
+# =============================================================================
 # V.B1: Economic Assumptions — Growth Rates
 # =============================================================================
 
@@ -22,16 +92,15 @@ NULL
 #' @description
 #' Loads productivity growth, GDP deflator, average hours, earnings/compensation
 #' ratio, and CPI from the SingleYearTRTables V.B1 sheet.
+#' Parses section headers to return only historical + selected alternative.
 #'
 #' @param config List with metadata section (for TR data directory)
-#' @param years_filter Optional integer vector to filter specific years
+#' @param alternative Character: "intermediate" (default), "low", or "high"
 #'
 #' @return data.table with columns: year, variable, value
-#'   Variables: productivity, gdp_deflator, avg_hours, earnings_compensation_ratio,
-#'             real_wage, nominal_earnings, cpi
 #'
 #' @export
-load_tr2025_vb1 <- function(config, years_filter = NULL) {
+load_tr2025_vb1 <- function(config, alternative = "intermediate") {
   tr_dir <- get_tr_data_dir(config)
   file_path <- file.path(tr_dir, "SingleYearTRTables_TR2025.xlsx")
 
@@ -43,56 +112,23 @@ load_tr2025_vb1 <- function(config, years_filter = NULL) {
     ))
   }
 
-  cli::cli_alert_info("Loading TR2025 V.B1 (economic assumptions) from {.file {file_path}}")
+  cli::cli_alert_info("Loading TR2025 V.B1 (economic assumptions, {alternative})")
 
-  # Read the V.B1 sheet
-  raw <- readxl::read_excel(file_path, sheet = "V.B1", skip = 2)
+  # V.B1: skip 10 header rows, 8 data columns
+  col_names <- c("year", "productivity", "gdp_deflator", "avg_hours",
+                 "earnings_compensation_ratio", "nominal_earnings",
+                 "real_wage", "cpi")
 
-  # The sheet has columns: Year, then various economic variables
-
-  # Column mapping depends on exact sheet layout — handle flexibly
-  dt <- data.table::as.data.table(raw)
-
-  # Identify the year column (first column)
-  year_col <- names(dt)[1]
-  data.table::setnames(dt, year_col, "year")
-
-  # Clean year column
-  dt[, year := suppressWarnings(as.integer(year))]
-  dt <- dt[!is.na(year)]
-
-  if (!is.null(years_filter)) {
-    dt <- dt[year %in% years_filter]
-  }
-
-  # Map remaining columns to standard variable names
-  # V.B1 typically has these columns in order after Year:
-  # Productivity, Real wage, Average hours, Earnings/compensation ratio,
-  # GDP deflator, CPI
-  var_cols <- names(dt)[names(dt) != "year"]
+  dt <- parse_tr2025_sectioned_sheet(file_path, "V.B1", skip_rows = 10,
+                                      col_names = col_names, alternative = alternative)
 
   # Melt to long format
-  result <- data.table::melt(dt, id.vars = "year",
-                              measure.vars = var_cols,
-                              variable.name = "variable_raw",
-                              value.name = "value")
-
-  # Clean variable names
-  result[, value := suppressWarnings(as.numeric(value))]
+  value_cols <- setdiff(col_names, "year")
+  result <- data.table::melt(dt, id.vars = "year", measure.vars = value_cols,
+                              variable.name = "variable", value.name = "value")
   result <- result[!is.na(value)]
 
-  # Standardize variable names based on position
-  var_mapping <- data.table::data.table(
-    variable_raw = var_cols,
-    variable = c("productivity", "real_wage", "avg_hours",
-                 "earnings_compensation_ratio", "gdp_deflator", "cpi",
-                 "nominal_earnings")[seq_along(var_cols)]
-  )
-  result <- merge(result, var_mapping, by = "variable_raw", all.x = TRUE)
-  result[is.na(variable), variable := as.character(variable_raw)]
-  result[, variable_raw := NULL]
-
-  cli::cli_alert_success("Loaded V.B1: {nrow(result)} rows, years {min(result$year)}-{max(result$year)}")
+  cli::cli_alert_success("Loaded V.B1: {nrow(result)} rows ({min(result$year)}-{max(result$year)}), {alternative}")
 
   result[, .(year, variable, value)]
 }
@@ -105,17 +141,15 @@ load_tr2025_vb1 <- function(config, years_filter = NULL) {
 #'
 #' @description
 #' Loads unemployment rate, labor force change, employment change, real GDP change,
-#' and interest rates from the SingleYearTRTables V.B2 sheet.
+#' and interest rates. Parses section headers for alternative selection.
 #'
 #' @param config List with metadata section
-#' @param years_filter Optional integer vector
+#' @param alternative Character: "intermediate" (default), "low", or "high"
 #'
 #' @return data.table with columns: year, variable, value
-#'   Variables: unemployment_rate, labor_force_change, employment_change,
-#'             real_gdp_change, nominal_interest_rate, real_interest_rate
 #'
 #' @export
-load_tr2025_vb2 <- function(config, years_filter = NULL) {
+load_tr2025_vb2 <- function(config, alternative = "intermediate") {
   tr_dir <- get_tr_data_dir(config)
   file_path <- file.path(tr_dir, "SingleYearTRTables_TR2025.xlsx")
 
@@ -126,41 +160,22 @@ load_tr2025_vb2 <- function(config, years_filter = NULL) {
     ))
   }
 
-  cli::cli_alert_info("Loading TR2025 V.B2 (employment/GDP assumptions)")
+  cli::cli_alert_info("Loading TR2025 V.B2 (employment/GDP assumptions, {alternative})")
 
-  raw <- readxl::read_excel(file_path, sheet = "V.B2", skip = 2)
-  dt <- data.table::as.data.table(raw)
+  # V.B2: skip 9 header rows, 7 data columns
+  col_names <- c("year", "unemployment_rate", "labor_force_change",
+                 "employment_change", "real_gdp_change",
+                 "nominal_interest_rate", "real_interest_rate")
 
-  year_col <- names(dt)[1]
-  data.table::setnames(dt, year_col, "year")
-  dt[, year := suppressWarnings(as.integer(year))]
-  dt <- dt[!is.na(year)]
+  dt <- parse_tr2025_sectioned_sheet(file_path, "V.B2", skip_rows = 9,
+                                      col_names = col_names, alternative = alternative)
 
-  if (!is.null(years_filter)) {
-    dt <- dt[year %in% years_filter]
-  }
-
-  var_cols <- names(dt)[names(dt) != "year"]
-
-  result <- data.table::melt(dt, id.vars = "year",
-                              measure.vars = var_cols,
-                              variable.name = "variable_raw",
-                              value.name = "value")
-
-  result[, value := suppressWarnings(as.numeric(value))]
+  value_cols <- setdiff(col_names, "year")
+  result <- data.table::melt(dt, id.vars = "year", measure.vars = value_cols,
+                              variable.name = "variable", value.name = "value")
   result <- result[!is.na(value)]
 
-  # Map columns
-  var_mapping <- data.table::data.table(
-    variable_raw = var_cols,
-    variable = c("unemployment_rate", "labor_force_change", "employment_change",
-                 "real_gdp_change", "nominal_interest_rate", "real_interest_rate")[seq_along(var_cols)]
-  )
-  result <- merge(result, var_mapping, by = "variable_raw", all.x = TRUE)
-  result[is.na(variable), variable := as.character(variable_raw)]
-  result[, variable_raw := NULL]
-
-  cli::cli_alert_success("Loaded V.B2: {nrow(result)} rows, years {min(result$year)}-{max(result$year)}")
+  cli::cli_alert_success("Loaded V.B2: {nrow(result)} rows ({min(result$year)}-{max(result$year)}), {alternative}")
 
   result[, .(year, variable, value)]
 }

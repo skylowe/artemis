@@ -54,14 +54,47 @@ project_employed_op <- function(quarterly_op,
 
   cli::cli_alert_info("Projecting employed OP (EO)")
 
-  # Compute civilian employment-to-population ratio (E/N) by age group and sex
+  # Compute civilian employment-to-population ratio (E/N) by age and sex
+  # CNI pop has single-year ages; employment_projection has age_group labels.
+  # For EO we need E/N at single-year-of-age level.
+  # Aggregate employment to single-year ages isn't possible (it's by group),
+  # so we compute E/N at the group level and apply it to each single age.
+  cni_grouped <- data.table::copy(quarterly_cni_pop)
+  cni_grouped[, age_group := fcase(
+    age <= 17, "16-17", age <= 19, "18-19", age <= 24, "20-24",
+    age <= 29, "25-29", age <= 34, "30-34", age <= 39, "35-39",
+    age <= 44, "40-44", age <= 49, "45-49", age <= 54, "50-54",
+    age <= 59, "55-59", age <= 64, "60-64", age <= 69, "65-69",
+    age <= 74, "70-74", default = "75+"
+  )]
+  cni_by_group <- cni_grouped[, .(population = sum(population)),
+                               by = .(year, quarter, age_group, sex)]
   en_ratio <- merge(
     employment_projection[, .(year, quarter, age_group, sex, employment)],
-    quarterly_cni_pop[, .(year, quarter, age_group = as.character(age), sex, population)],
+    cni_by_group,
     by = c("year", "quarter", "age_group", "sex"),
     all.x = TRUE
   )
   en_ratio[, e_n_ratio := fifelse(population > 0, employment / population, 0)]
+
+  # Keep only the 14 standard 5-year age groups (not single-year entries)
+  standard_groups <- c("16-17", "18-19", "20-24", "25-29", "30-34", "35-39",
+                       "40-44", "45-49", "50-54", "55-59", "60-64", "65-69",
+                       "70-74", "75+")
+  en_ratio <- en_ratio[age_group %in% standard_groups]
+
+  # Create age-to-group mapping for OP single-year ages
+  ages_vec <- 0:120
+  age_to_group <- data.table::data.table(
+    age = ages_vec,
+    age_group = fcase(
+      ages_vec <= 17, "16-17", ages_vec <= 19, "18-19", ages_vec <= 24, "20-24",
+      ages_vec <= 29, "25-29", ages_vec <= 34, "30-34", ages_vec <= 39, "35-39",
+      ages_vec <= 44, "40-44", ages_vec <= 49, "45-49", ages_vec <= 54, "50-54",
+      ages_vec <= 59, "55-59", ages_vec <= 64, "60-64", ages_vec <= 69, "65-69",
+      ages_vec <= 74, "70-74", default = "75+"
+    )
+  )
 
   results <- list()
 
@@ -79,9 +112,9 @@ project_employed_op <- function(quarterly_op,
   # EO_NA: Overstayed — same E/N ratio as civilian (Eq 2.1.8)
   op_na <- quarterly_op[visa_status == "OP_NA"]
   if (nrow(op_na) > 0) {
+    op_na <- merge(op_na, age_to_group, by = "age", all.x = TRUE)
     op_na <- merge(op_na, en_ratio[, .(year, quarter, age_group, sex, e_n_ratio)],
-                   by.x = c("year", "quarter", "age", "sex"),
-                   by.y = c("year", "quarter", "age_group", "sex"),
+                   by = c("year", "quarter", "age_group", "sex"),
                    all.x = TRUE)
     op_na[is.na(e_n_ratio), e_n_ratio := 0]
     op_na[, eo := population * e_n_ratio]
@@ -92,9 +125,9 @@ project_employed_op <- function(quarterly_op,
   # EO_NO: Never authorized — same E/N ratio as civilian (Eq 2.1.9)
   op_no <- quarterly_op[visa_status == "OP_NO"]
   if (nrow(op_no) > 0) {
+    op_no <- merge(op_no, age_to_group, by = "age", all.x = TRUE)
     op_no <- merge(op_no, en_ratio[, .(year, quarter, age_group, sex, e_n_ratio)],
-                   by.x = c("year", "quarter", "age", "sex"),
-                   by.y = c("year", "quarter", "age_group", "sex"),
+                   by = c("year", "quarter", "age_group", "sex"),
                    all.x = TRUE)
     op_no[is.na(e_n_ratio), e_n_ratio := 0]
     op_no[, eo := population * e_n_ratio]

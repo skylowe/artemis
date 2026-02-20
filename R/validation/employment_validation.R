@@ -122,9 +122,10 @@ validate_employment_projections <- function(unemployment_projection,
     # Check LFPR shape: prime age > young, prime age > old
     for (yr in c(2030, 2050, 2075)) {
       for (sex in c("male", "female")) {
-        prime <- agg[year == yr & sex == (!!sex) & age_group %in% c("25-29", "30-34", "35-39")]
-        young <- agg[year == yr & sex == (!!sex) & age_group == "16-17"]
-        old <- agg[year == yr & sex == (!!sex) & age_group == "75+"]
+        sex_val <- sex
+        prime <- agg[year == yr & sex == sex_val & age_group %in% c("25-29", "30-34", "35-39")]
+        young <- agg[year == yr & sex == sex_val & age_group == "16-17"]
+        old <- agg[year == yr & sex == sex_val & age_group == "75+"]
 
         if (nrow(prime) > 0 && nrow(young) > 0) {
           if (mean(prime$lfpr) > mean(young$lfpr, na.rm = TRUE)) {
