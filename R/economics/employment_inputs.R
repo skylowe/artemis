@@ -646,8 +646,10 @@ build_employment_inputs <- function(projected_population,
     data.table::setnames(cps_edu_reshaped, "age", "age", skip_absent = TRUE)
     edscore <- compute_edscore(cps_edu_reshaped)
   } else {
-    cli::cli_alert_warning("No education data in CPS extract — using placeholder EDSCORE")
-    edscore <- NULL
+    cli::cli_abort(c(
+      "No education data found in CPS extract (concept == 'education_proportion' has 0 rows).",
+      "i" = "EDSCORE is required for LFPR projection — ensure CPS labor data includes education proportions."
+    ))
   }
 
   # 5. Disability prevalence ratio
@@ -684,6 +686,6 @@ build_employment_inputs <- function(projected_population,
     rradj = rradj,
     pot_et_txrt = pot_et_txrt,
     rtp_quarterly = rtp_quarterly,
-    children_proportions = NULL  # Placeholder — will construct from CPS/demography
+    children_proportions = NULL  # NOT YET IMPLEMENTED — .get_child_under6_prop() will error if accessed
   )
 }

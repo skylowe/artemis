@@ -1122,44 +1122,74 @@ project_labor_force_employment <- function(lfpr_projection,
 
 #' @keywords internal
 .get_child_under6_prop <- function(children_props, tgt_age_group, tgt_year) {
-  if (is.null(children_props)) return(0)
+  if (is.null(children_props)) {
+    cli::cli_abort("Required input 'children_proportions' is NULL \u2014 ensure build_employment_inputs() provides it.")
+  }
   row <- children_props[age_group == tgt_age_group & year == tgt_year]
-  if (nrow(row) > 0) row$proportion[1] else 0
+  if (nrow(row) == 0) {
+    cli::cli_abort("No children_proportions data found for age_group={tgt_age_group}, year={tgt_year}.")
+  }
+  row$proportion[1]
 }
 
 #' @keywords internal
 .get_rd <- function(rd, tgt_age_group, tgt_sex, tgt_year) {
-  if (is.null(rd)) return(0)
+  if (is.null(rd)) {
+    cli::cli_abort("Required input 'rd' is NULL \u2014 ensure build_employment_inputs() provides it.")
+  }
   row <- rd[age_group == tgt_age_group & sex == tgt_sex & year == tgt_year]
-  if (nrow(row) > 0) row$rd[1] else 0
+  if (nrow(row) == 0) {
+    cli::cli_abort("No rd data found for age_group={tgt_age_group}, sex={tgt_sex}, year={tgt_year}.")
+  }
+  row$rd[1]
 }
 
 #' @keywords internal
 .get_edscore <- function(edscore, tgt_age_group, tgt_sex, tgt_year) {
-  if (is.null(edscore)) return(1)
+  if (is.null(edscore)) {
+    cli::cli_abort("Required input 'edscore' is NULL \u2014 ensure build_employment_inputs() provides it.")
+  }
   row <- edscore[age_group == tgt_age_group & sex == tgt_sex & year == tgt_year]
-  if (nrow(row) > 0) row$edscore[1] else 1
+  if (nrow(row) == 0) {
+    cli::cli_abort("No edscore data found for age_group={tgt_age_group}, sex={tgt_sex}, year={tgt_year}.")
+  }
+  row$edscore[1]
 }
 
 #' @keywords internal
 .get_msshare <- function(msshare, tgt_age, tgt_sex, tgt_year) {
-  if (is.null(msshare)) return(0.5)
+  if (is.null(msshare)) {
+    cli::cli_abort("Required input 'msshare' is NULL \u2014 ensure build_employment_inputs() provides it.")
+  }
   row <- msshare[age == tgt_age & sex == tgt_sex & year == tgt_year]
-  if (nrow(row) > 0) row$msshare[1] else 0.5
+  if (nrow(row) == 0) {
+    cli::cli_abort("No msshare data found for age={tgt_age}, sex={tgt_sex}, year={tgt_year}.")
+  }
+  row$msshare[1]
 }
 
 #' @keywords internal
 .get_rradj <- function(rradj, tgt_age, tgt_sex, tgt_year) {
-  if (is.null(rradj)) return(0)
+  if (is.null(rradj)) {
+    cli::cli_abort("Required input 'rradj' is NULL \u2014 ensure build_employment_inputs() provides it.")
+  }
   row <- rradj[age == tgt_age & sex == tgt_sex & year == tgt_year]
-  if (nrow(row) > 0) row$rradj[1] else 0
+  if (nrow(row) == 0) {
+    cli::cli_abort("No rradj data found for age={tgt_age}, sex={tgt_sex}, year={tgt_year}.")
+  }
+  row$rradj[1]
 }
 
 #' @keywords internal
 .get_pot_et_txrt <- function(pot_et_txrt, tgt_age, tgt_year) {
-  if (is.null(pot_et_txrt)) return(0)
+  if (is.null(pot_et_txrt)) {
+    cli::cli_abort("Required input 'pot_et_txrt' is NULL \u2014 ensure build_employment_inputs() provides it.")
+  }
   row <- pot_et_txrt[age == tgt_age & year == tgt_year]
-  if (nrow(row) > 0) row$pot_et_txrt[1] else 0
+  if (nrow(row) == 0) {
+    cli::cli_abort("No pot_et_txrt data found for age={tgt_age}, year={tgt_year}.")
+  }
+  row$pot_et_txrt[1]
 }
 
 #' Get CNI population for a given age group, sex, and marital status
@@ -1180,7 +1210,7 @@ project_labor_force_employment <- function(lfpr_projection,
   }
 
   if (tgt_marital_status == "all") {
-    # Use total CNI population (quarterly — pick Q2 for midyear)
+    # Use total CNI population (quarterly -- pick Q2 for midyear)
     if ("quarter" %in% names(cni_pop)) {
       pop_rows <- cni_pop[age %in% age_range & sex == tgt_sex &
                            year == tgt_year & quarter == 2L]
@@ -1191,22 +1221,28 @@ project_labor_force_employment <- function(lfpr_projection,
       pop_rows <- cni_pop[age %in% age_range & sex == tgt_sex & year == tgt_year]
     }
     total <- sum(pop_rows$population, na.rm = TRUE)
-    return(if (total > 0) total else 1)
+    if (total <= 0) {
+      cli::cli_abort("CNI population is zero/missing for age_group={tgt_age_group}, sex={tgt_sex}, year={tgt_year}.")
+    }
+    return(total)
   }
 
-  # Marital status disaggregation — use marital_cni_pop
-  if (!is.null(marital_pop)) {
-    pop_rows <- marital_pop[age %in% age_range & sex == tgt_sex &
-                             lfpr_marital_status == tgt_marital_status &
-                             year == tgt_year]
-    total <- sum(pop_rows$population, na.rm = TRUE)
-    return(if (total > 0) total else 1)
+  # Marital status disaggregation -- use marital_cni_pop
+  if (is.null(marital_pop)) {
+    cli::cli_abort(c(
+      "Required input 'marital_pop' is NULL for marital status '{tgt_marital_status}'.",
+      "i" = "age_group={tgt_age_group}, sex={tgt_sex}, year={tgt_year}",
+      "i" = "Ensure build_employment_inputs() provides marital_cni_pop."
+    ))
   }
-
-  # Fallback: use total CNI with approximate proportions if marital_pop unavailable
-  total_pop <- .get_cni_pop(cni_pop, tgt_age_group, tgt_sex, "all", tgt_year)
-  cli::cli_alert_warning("Marital CNI pop unavailable for {tgt_age_group} {tgt_sex} — using total")
-  return(total_pop / 3)
+  pop_rows <- marital_pop[age %in% age_range & sex == tgt_sex &
+                           lfpr_marital_status == tgt_marital_status &
+                           year == tgt_year]
+  total <- sum(pop_rows$population, na.rm = TRUE)
+  if (total <= 0) {
+    cli::cli_abort("Marital CNI population is zero/missing for age_group={tgt_age_group}, sex={tgt_sex}, marital_status={tgt_marital_status}, year={tgt_year}.")
+  }
+  total
 }
 
 #' @keywords internal

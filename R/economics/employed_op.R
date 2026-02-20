@@ -297,7 +297,15 @@ compute_teo <- function(eo_by_recording, eo_params) {
     dt[visa_status == "EO_A", teo := eo * auth_factors$full_year_factor]
   }
 
-  dt[is.na(teo), teo := eo * 1.25]  # Default fallback
+  na_teo <- dt[is.na(teo)]
+  if (nrow(na_teo) > 0) {
+    example <- na_teo[1]
+    cli::cli_abort(c(
+      "TEO conversion left {nrow(na_teo)} rows with NA after applying weights.",
+      "i" = "Example: sex={example$sex}, weight_group={example$weight_group}, age={example$age}",
+      "i" = "Check that conversion weights in config cover all sex/weight_group combinations."
+    ))
+  }
 
   result <- dt[, .(year, quarter, age, sex, visa_status, recording_status, teo)]
 
