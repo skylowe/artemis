@@ -225,6 +225,8 @@ derive_config_defaults <- function(config) {
 
   # Economics
   if (!is.null(config$economics) && !is.null(config$economics$employment)) {
+    config$economics$employment$base_year <-
+      config$economics$employment$base_year %||% (tr_year - 1L)
     config$economics$employment$end_year <-
       config$economics$employment$end_year %||% proj_end
   }
