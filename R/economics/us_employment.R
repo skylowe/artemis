@@ -551,6 +551,26 @@ project_lfpr <- function(unemployment_rates,
   # ============================================================================
   # Set keys on input data.tables for O(log n) binary search instead of O(n) scan
   if (!is.null(rd)) data.table::setkey(rd, age_group, sex, year)
+
+  # Pre-compute 5-year grouped RD for sections 1-4 (which use 5-year age groups).
+  # RD data has single-year age_groups ("16", "17", ...) but the young/marital
+  # equations use "16-17", "18-19", "20-24", etc.
+  rd_5yr <- NULL
+  if (!is.null(rd)) {
+    rd_tmp <- data.table::copy(rd)
+    rd_tmp[, age_int := as.integer(age_group)]
+    rd_tmp <- rd_tmp[!is.na(age_int) & age_int >= 16L & age_int <= 54L]
+    rd_tmp[, age_group_5yr := data.table::fcase(
+      age_int <= 17L, "16-17", age_int <= 19L, "18-19",
+      age_int <= 24L, "20-24", age_int <= 29L, "25-29",
+      age_int <= 34L, "30-34", age_int <= 39L, "35-39",
+      age_int <= 44L, "40-44", age_int <= 49L, "45-49",
+      age_int <= 54L, "50-54"
+    )]
+    rd_5yr <- rd_tmp[, .(rd = mean(rd)), by = .(age_group = age_group_5yr, sex, year)]
+    data.table::setkey(rd_5yr, age_group, sex, year)
+  }
+
   if (!is.null(edscore)) data.table::setkey(edscore, age_group, sex, year)
   if (!is.null(msshare)) data.table::setkey(msshare, age, sex, year)
   if (!is.null(rradj)) data.table::setkey(rradj, age, sex, year)
@@ -627,9 +647,9 @@ project_lfpr <- function(unemployment_rates,
   young_grid <- merge(young_grid, ru_grid,
                        by = c("age_group", "sex", "year"), all.x = TRUE, sort = FALSE)
 
-  # Merge RD
-  if (!is.null(rd)) {
-    young_grid <- merge(young_grid, rd[, .(age_group, sex, year, rd)],
+  # Merge RD (use 5-year grouped RD for 5-year age groups)
+  if (!is.null(rd_5yr)) {
+    young_grid <- merge(young_grid, rd_5yr[, .(age_group, sex, year, rd)],
                          by = c("age_group", "sex", "year"), all.x = TRUE, sort = FALSE)
     young_grid[is.na(rd), rd := 0]
   } else {
@@ -661,6 +681,18 @@ project_lfpr <- function(unemployment_rates,
   young_grid[, trend_effect := trend_coeff * trend_val + trend_offset]
   young_grid[, c6u_effect := fifelse(has_c6u, c6u_coeff * proportion + c6u_offset, 0)]
   young_grid[, lfpr := (ru_effect + trend_effect + c6u_effect + intercept) / (1 + rd)]
+
+  # Apply addfactors to young ages
+  if (!is.null(addfactors)) {
+    for (ag_name in names(addfactors)) {
+      for (sx in c("male", "female")) {
+        af_val <- addfactors[[ag_name]][[sx]]
+        if (!is.null(af_val)) {
+          young_grid[age_group == ag_name & sex == sx, lfpr := lfpr + af_val]
+        }
+      }
+    }
+  }
 
   young_detailed <- young_grid[, .(year, age_group, sex,
                                     marital_status = "all", child_status = "all",
@@ -698,9 +730,9 @@ project_lfpr <- function(unemployment_rates,
   male_grid <- merge(male_grid, ru_grid[sex == "male"],
                       by = c("age_group", "sex", "year"), all.x = TRUE, sort = FALSE)
 
-  # Merge RD
-  if (!is.null(rd)) {
-    male_grid <- merge(male_grid, rd[sex == "male", .(age_group, year, rd)],
+  # Merge RD (use 5-year grouped RD for 5-year age groups)
+  if (!is.null(rd_5yr)) {
+    male_grid <- merge(male_grid, rd_5yr[sex == "male", .(age_group, year, rd)],
                         by = c("age_group", "year"), all.x = TRUE, sort = FALSE)
     male_grid[is.na(rd), rd := 0]
   } else {
@@ -804,9 +836,9 @@ project_lfpr <- function(unemployment_rates,
   fmc_grid <- merge(fmc_grid, ru_grid[sex == "female"],
                      by = c("age_group", "sex", "year"), all.x = TRUE, sort = FALSE)
 
-  # Merge RD
-  if (!is.null(rd)) {
-    fmc_grid <- merge(fmc_grid, rd[sex == "female", .(age_group, year, rd)],
+  # Merge RD (use 5-year grouped RD for 5-year age groups)
+  if (!is.null(rd_5yr)) {
+    fmc_grid <- merge(fmc_grid, rd_5yr[sex == "female", .(age_group, year, rd)],
                        by = c("age_group", "year"), all.x = TRUE, sort = FALSE)
     fmc_grid[is.na(rd), rd := 0]
   } else {
@@ -917,9 +949,9 @@ project_lfpr <- function(unemployment_rates,
   f4554_grid <- merge(f4554_grid, ru_grid[sex == "female"],
                        by = c("age_group", "sex", "year"), all.x = TRUE, sort = FALSE)
 
-  # Merge RD
-  if (!is.null(rd)) {
-    f4554_grid <- merge(f4554_grid, rd[sex == "female", .(age_group, year, rd)],
+  # Merge RD (use 5-year grouped RD for 5-year age groups)
+  if (!is.null(rd_5yr)) {
+    f4554_grid <- merge(f4554_grid, rd_5yr[sex == "female", .(age_group, year, rd)],
                          by = c("age_group", "year"), all.x = TRUE, sort = FALSE)
     f4554_grid[is.na(rd), rd := 0]
   } else {

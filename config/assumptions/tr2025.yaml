@@ -1108,10 +1108,25 @@ economics:
     # A value of 0.10 limits MSSHARE change to ±10pp from base year.
     msshare_max_deviation: 0.10
 
-    # Addfactors: manual adjustments to LFPR equations
-    # Default to null (zero); override per age-sex group as needed
+    # Addfactors: manual adjustments added to LFPR before clamping.
+    # Calibrated to match CPS 2024 group-average LFPRs where the
+    # regression equations systematically deviate.
     # Format: { "age_group": { "male": value, "female": value } }
-    addfactors: null
+    addfactors:
+      # Ages 60-64: equations overestimate due to smooth retirement modeling
+      # (CPS 2024: male 64.7%, female 54.3%)
+      "60": { male: -0.094, female: -0.053 }
+      "61": { male: -0.094, female: -0.053 }
+      "62": { male: -0.094, female: -0.053 }
+      "63": { male: -0.094, female: -0.053 }
+      "64": { male: -0.094, female: -0.053 }
+      # Ages 65-69: largest gap — retirement cliff not captured by equations
+      # (CPS 2024: male 37.8%, female 30.0%)
+      "65": { male: -0.159, female: -0.097 }
+      "66": { male: -0.159, female: -0.097 }
+      "67": { male: -0.159, female: -0.097 }
+      "68": { male: -0.159, female: -0.097 }
+      "69": { male: -0.159, female: -0.097 }
 
     # EO (Employed OP) configuration
     employed_op:
