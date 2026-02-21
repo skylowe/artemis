@@ -532,6 +532,9 @@ project_lfpr <- function(unemployment_rates,
   # Addfactors (default to empty)
   addfactors <- config_employment$addfactors
 
+  # Young-age trend addfactors (level + annual correction)
+  young_trend_addfactors <- config_employment$young_trend_addfactors
+
   cli::cli_alert_info("Projecting LFPR for {n_proj_years} years")
 
   # ============================================================================
@@ -682,13 +685,21 @@ project_lfpr <- function(unemployment_rates,
   young_grid[, c6u_effect := fifelse(has_c6u, c6u_coeff * proportion + c6u_offset, 0)]
   young_grid[, lfpr := (ru_effect + trend_effect + c6u_effect + intercept) / (1 + rd)]
 
-  # Apply addfactors to young ages
-  if (!is.null(addfactors)) {
-    for (ag_name in names(addfactors)) {
+  # Apply young-age trend addfactors (level + annual × years_from_start)
+  # Corrects excess trend decline to match BLS 10-year projections.
+  # After cap_years, correction holds constant.
+  first_proj_year <- min(projection_years)
+  if (!is.null(young_trend_addfactors)) {
+    af_cap <- young_trend_addfactors$cap_years %||% Inf
+    for (ag_name in names(young_trend_addfactors)) {
+      if (ag_name == "cap_years") next
       for (sx in c("male", "female")) {
-        af_val <- addfactors[[ag_name]][[sx]]
-        if (!is.null(af_val)) {
-          young_grid[age_group == ag_name & sex == sx, lfpr := lfpr + af_val]
+        af <- young_trend_addfactors[[ag_name]][[sx]]
+        if (!is.null(af)) {
+          af_level <- af$level %||% 0
+          af_annual <- af$annual %||% 0
+          young_grid[age_group == ag_name & sex == sx,
+                     lfpr := lfpr + af_level + af_annual * pmin(year - first_proj_year, af_cap)]
         }
       }
     }
