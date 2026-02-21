@@ -271,12 +271,13 @@ compute_married_share <- function(marital_population) {
 compute_edscore <- function(education_data, projection_years) {
   checkmate::assert_data_table(education_data)
 
-  # Education level weights (higher weight = higher participation differential)
+  # Ordinal education level weights matching SSA regression coefficient scale.
+  # The LFPR coefficients were estimated with EDSCORE on a 0-3 integer scale.
   edu_weights <- c(
-    less_than_hs = 0.0,
-    high_school = 0.5,
-    some_college = 0.75,
-    bachelors_plus = 1.0
+    less_than_hs = 0,
+    high_school = 1,
+    some_college = 2,
+    bachelors_plus = 3
   )
 
   dt <- data.table::copy(education_data)

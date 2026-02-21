@@ -208,6 +208,10 @@ sudo systemctl restart jupyterhub
 18. **Monthly births not modeled:** TR2025 Input #33 lists NCHS monthly births by sex, but Equation 1.8.1 uses annual birth rates applied to midyear female population. Monthly disaggregation is not used — annual-level calculation is standard practice for long-range projections.
 19. **CNI marital status ratios:** Uses Census ACS CNI data (configurable year range) instead of internal OCACT CNI series. Ratios are averaged over the full historical range. Configurable via `projected_population.cni.ratio_years`.
 
+### Employment / LFPR
+20. **LFPR time trend freeze:** TR2025 uses ~50 unpublished "addfactors" (Input #20) to modify LFPRs "for reasonable age-LFPR profile shape." Without these, negative time trend coefficients for ages 16-29 drive LFPR toward 0% over the 75-year projection. ARTEMIS approximates by freezing the trend accumulation after a configurable number of years (default: 10, matching the TR "short range" where ultimate values are reached). Configurable via `economics.employment.lfpr_trend_freeze_years`.
+21. **MSSHARE deviation cap (ages 55+):** LFPR coefficients for ages 55-74 include MSSHARE (married share) terms estimated from historical data where MSSHARE ranged ~0.55-0.67. The demography pipeline projects MSSHARE rising to ~0.87 for some age-sex groups — a +20pp extrapolation outside the estimation range that produces implausible LFPR declines (up to -20pp at age 64 male). ARTEMIS caps MSSHARE deviation from the first projection year at ±10pp. SSA likely avoids this through different internal marital projections or unpublished adjustments. Configurable via `economics.employment.msshare_max_deviation`.
+
 ## Key Rules
 1. **Real data only** - No synthetic/mock data. Tasks are not complete until working with real API/file data.
 2. **Validation required** - All outputs must validate against official TR2025 tables.

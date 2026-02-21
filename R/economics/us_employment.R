@@ -523,6 +523,12 @@ project_lfpr <- function(unemployment_rates,
   decay_75_79 <- config_employment$lfpr_decay_75_79
   decay_80_plus <- config_employment$lfpr_decay_80_plus
 
+  # Trend freeze: after this many years, trend stops accumulating
+  trend_freeze_years <- config_employment$lfpr_trend_freeze_years
+
+  # MSSHARE cap: maximum deviation from base-year values
+  msshare_max_dev <- config_employment$msshare_max_deviation
+
   # Addfactors (default to empty)
   addfactors <- config_employment$addfactors
 
@@ -647,7 +653,9 @@ project_lfpr <- function(unemployment_rates,
   young_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
 
   # Compute LFPR
-  young_grid[, trend_val := calibrated_tr_base + (year - base_year)]
+  trend_increment <- young_grid$year - base_year
+  if (!is.null(trend_freeze_years)) trend_increment <- pmin(trend_increment, trend_freeze_years)
+  young_grid[, trend_val := calibrated_tr_base + trend_increment]
   young_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                             rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   young_grid[, trend_effect := trend_coeff * trend_val + trend_offset]
@@ -707,7 +715,9 @@ project_lfpr <- function(unemployment_rates,
   male_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
 
   # Compute per-status LFPR
-  male_grid[, trend_val := calibrated_tr_base + (year - base_year)]
+  trend_increment <- male_grid$year - base_year
+  if (!is.null(trend_freeze_years)) trend_increment <- pmin(trend_increment, trend_freeze_years)
+  male_grid[, trend_val := calibrated_tr_base + trend_increment]
   male_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                            rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   male_grid[, lfpr_raw := (ru_effect + trend_coeff * trend_val + intercept) / (1 + rd)]
@@ -811,7 +821,9 @@ project_lfpr <- function(unemployment_rates,
   fmc_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
 
   # Compute per-category LFPR
-  fmc_grid[, trend_val := calibrated_tr_base + (year - base_year)]
+  trend_increment <- fmc_grid$year - base_year
+  if (!is.null(trend_freeze_years)) trend_increment <- pmin(trend_increment, trend_freeze_years)
+  fmc_grid[, trend_val := calibrated_tr_base + trend_increment]
   fmc_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                           rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   fmc_grid[, lfpr_raw := (ru_effect + trend_coeff * trend_val + intercept) / (1 + rd)]
@@ -1019,6 +1031,20 @@ project_lfpr <- function(unemployment_rates,
     older_grid[is.na(msshare_val), msshare_val := 0.5]
   } else {
     older_grid[, msshare_val := 0.5]
+  }
+
+  # Cap MSSHARE deviation from base year to prevent coefficient extrapolation
+  if (!is.null(msshare_max_dev)) {
+    base_msshare <- older_grid[year == (base_year + 1L),
+                               .(age, sex, msshare_base = msshare_val)]
+    base_msshare <- unique(base_msshare, by = c("age", "sex"))
+    older_grid <- merge(older_grid, base_msshare,
+                        by = c("age", "sex"), all.x = TRUE, sort = FALSE)
+    older_grid[!is.na(msshare_base),
+               msshare_val := pmin(pmax(msshare_val,
+                                         msshare_base - msshare_max_dev),
+                                    msshare_base + msshare_max_dev)]
+    older_grid[, msshare_base := NULL]
   }
 
   # Merge RD: for ages 62+, use cohort RD at age 61 from year - (age - 61)
