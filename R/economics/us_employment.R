@@ -523,9 +523,6 @@ project_lfpr <- function(unemployment_rates,
   decay_75_79 <- config_employment$lfpr_decay_75_79
   decay_80_plus <- config_employment$lfpr_decay_80_plus
 
-  # Trend freeze: after this many years, trend stops accumulating
-  trend_freeze_years <- config_employment$lfpr_trend_freeze_years
-
   # MSSHARE cap: maximum deviation from base-year values
   msshare_max_dev <- config_employment$msshare_max_deviation
 
@@ -676,9 +673,7 @@ project_lfpr <- function(unemployment_rates,
   young_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
 
   # Compute LFPR
-  trend_increment <- young_grid$year - base_year
-  if (!is.null(trend_freeze_years)) trend_increment <- pmin(trend_increment, trend_freeze_years)
-  young_grid[, trend_val := calibrated_tr_base + trend_increment]
+  young_grid[, trend_val := calibrated_tr_base + (year - base_year)]
   young_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                             rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   young_grid[, trend_effect := trend_coeff * trend_val + trend_offset]
@@ -758,9 +753,7 @@ project_lfpr <- function(unemployment_rates,
   male_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
 
   # Compute per-status LFPR
-  trend_increment <- male_grid$year - base_year
-  if (!is.null(trend_freeze_years)) trend_increment <- pmin(trend_increment, trend_freeze_years)
-  male_grid[, trend_val := calibrated_tr_base + trend_increment]
+  male_grid[, trend_val := calibrated_tr_base + (year - base_year)]
   male_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                            rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   male_grid[, lfpr_raw := (ru_effect + trend_coeff * trend_val + intercept) / (1 + rd)]
@@ -864,9 +857,7 @@ project_lfpr <- function(unemployment_rates,
   fmc_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
 
   # Compute per-category LFPR
-  trend_increment <- fmc_grid$year - base_year
-  if (!is.null(trend_freeze_years)) trend_increment <- pmin(trend_increment, trend_freeze_years)
-  fmc_grid[, trend_val := calibrated_tr_base + trend_increment]
+  fmc_grid[, trend_val := calibrated_tr_base + (year - base_year)]
   fmc_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                           rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   fmc_grid[, lfpr_raw := (ru_effect + trend_coeff * trend_val + intercept) / (1 + rd)]
