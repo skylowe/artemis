@@ -141,6 +141,16 @@ mod_population_viz_ui <- function(id) {
 mod_population_viz_server <- function(id, rv) {
   moduleServer(id, function(input, output, session) {
 
+    # Dynamically update year slider when projection data changes
+    observe({
+      data <- rv$active_data$projected_population
+      req(data)
+      max_year <- max(data$year, na.rm = TRUE)
+      if (max_year != isolate(input$year)) {
+        updateSliderInput(session, "year", max = max_year)
+      }
+    })
+
     # Get population data for selected year
     pop_data <- reactive({
       req(rv$active_data$projected_population)

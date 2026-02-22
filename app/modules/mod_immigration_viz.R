@@ -109,6 +109,23 @@ mod_immigration_viz_ui <- function(id) {
 mod_immigration_viz_server <- function(id, rv) {
   moduleServer(id, function(input, output, session) {
 
+    # Dynamically update year sliders when projection data changes
+    observe({
+      data <- rv$active_data$projected_net_immigration
+      req(data)
+      max_year <- max(data$year, na.rm = TRUE)
+      current <- isolate(input$year_range)
+      if (!is.null(current) && max_year != current[2]) {
+        updateSliderInput(session, "year_range",
+          max = max_year,
+          value = c(current[1], max_year))
+      }
+      current_age <- isolate(input$age_dist_year)
+      if (!is.null(current_age) && max_year != current_age) {
+        updateSliderInput(session, "age_dist_year", max = max_year)
+      }
+    })
+
     # Main chart
     output$main_chart <- renderPlotly({
       req(rv$active_data$projected_net_immigration)

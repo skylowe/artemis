@@ -115,6 +115,25 @@ mod_marriage_divorce_viz_ui <- function(id) {
 mod_marriage_divorce_viz_server <- function(id, rv) {
   moduleServer(id, function(input, output, session) {
 
+    # Dynamically update year sliders when projection data changes
+    observe({
+      data <- rv$active_data$marriage_amr_projected
+      req(data)
+      max_year <- max(data$year, na.rm = TRUE)
+      # Single-value slider
+      current_hm <- isolate(input$heatmap_year)
+      if (!is.null(current_hm) && max_year != current_hm) {
+        updateSliderInput(session, "heatmap_year", max = max_year)
+      }
+      # Range slider
+      current <- isolate(input$year_range)
+      if (!is.null(current) && max_year != current[2]) {
+        updateSliderInput(session, "year_range",
+          max = max_year,
+          value = c(current[1], max_year))
+      }
+    })
+
     # Get data based on event type
     event_data <- reactive({
       if (input$event_type == "marriage") {

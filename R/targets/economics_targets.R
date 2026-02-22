@@ -24,9 +24,13 @@ create_economics_targets <- function() {
     # ══════════════════════════════════════════════════════════════════
 
     # TR projected economic assumptions (V.B1, V.B2)
+    # Depends on config_economics gate so economic_alternative changes trigger rebuild
     targets::tar_target(
       tr_economic_assumptions,
-      load_tr_economic_assumptions(config_assumptions),
+      {
+        force(config_economics)
+        load_tr_economic_assumptions(config_assumptions)
+      },
       cue = targets::tar_cue(mode = "thorough")
     ),
 

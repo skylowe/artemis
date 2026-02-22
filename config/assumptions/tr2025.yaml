@@ -1060,6 +1060,10 @@ historical_population:
 
 economics:
   employment:
+    # Economic scenario alternative — switches V.B1/V.B2 assumption paths
+    # "low" / "intermediate" / "high" (matches TR2025 cost alternatives)
+    economic_alternative: "intermediate"
+
     # Data source for historical economic assumptions
     # "api" = fetch from BLS/BEA/FRED (default); "tr2025" = use SingleYear tables for all
     assumptions_data_source: "api"

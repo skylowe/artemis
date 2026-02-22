@@ -89,6 +89,21 @@ mod_fertility_viz_ui <- function(id) {
 mod_fertility_viz_server <- function(id, rv) {
   moduleServer(id, function(input, output, session) {
 
+    # Dynamically update year sliders when projection data changes
+    observe({
+      data <- rv$active_data$fertility_rates_complete
+      req(data)
+      max_year <- max(data$year, na.rm = TRUE)
+      for (sid in c("asfr_year_range", "tfr_year_range")) {
+        current <- isolate(input[[sid]])
+        if (!is.null(current) && max_year != current[2]) {
+          updateSliderInput(session, sid,
+            max = max_year,
+            value = c(current[1], max_year))
+        }
+      }
+    })
+
     # Main chart
     output$main_chart <- renderPlotly({
       req(rv$active_data$fertility_rates_complete)

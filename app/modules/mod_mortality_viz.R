@@ -103,6 +103,21 @@ mod_mortality_viz_ui <- function(id) {
 mod_mortality_viz_server <- function(id, rv) {
   moduleServer(id, function(input, output, session) {
 
+    # Dynamically update year sliders when projection data changes
+    observe({
+      data <- rv$active_data$mortality_qx_projected
+      req(data)
+      max_year <- max(data$year, na.rm = TRUE)
+      for (sid in c("qx_year_range", "year_range")) {
+        current <- isolate(input[[sid]])
+        if (!is.null(current) && max_year != current[2]) {
+          updateSliderInput(session, sid,
+            max = max_year,
+            value = c(current[1], max_year))
+        }
+      }
+    })
+
     # Calculate life expectancy from qx
     calc_life_expectancy <- function(qx_data, at_age = 0) {
       # Sort by age

@@ -446,12 +446,12 @@ load_tr_economic_assumptions <- function(config) {
 
   data_source <- config$economics$employment$assumptions_data_source %||% "api"
   base_year <- config$economics$employment$base_year %||% 2024
+  alternative <- config$economics$employment$economic_alternative %||% "intermediate"
 
-  vb1 <- load_tr_vb1(config)
+  vb1 <- load_tr_vb1(config, alternative = alternative)
   vb1[, source := "V.B1"]
 
-
-  vb2 <- load_tr_vb2(config)
+  vb2 <- load_tr_vb2(config, alternative = alternative)
   vb2[, source := "V.B2"]
 
   combined <- data.table::rbindlist(list(vb1, vb2))

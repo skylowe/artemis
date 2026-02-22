@@ -129,6 +129,19 @@ mod_timeseries_viz_ui <- function(id, show_marital = FALSE) {
 mod_timeseries_viz_server <- function(id, rv, show_marital = FALSE) {
   moduleServer(id, function(input, output, session) {
 
+    # Dynamically update year slider when projection data changes
+    observe({
+      data <- rv$active_data$projected_population
+      req(data)
+      max_year <- max(data$year, na.rm = TRUE)
+      current <- isolate(input$year_range)
+      if (!is.null(current) && max_year != current[2]) {
+        updateSliderInput(session, "year_range",
+          max = max_year,
+          value = c(current[1], max_year))
+      }
+    })
+
     # Prepare data based on metric selection
     chart_data <- reactive({
       req(rv$active_data)

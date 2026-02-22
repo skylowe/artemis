@@ -462,6 +462,46 @@ mod_config_editor_ui <- function(id) {
           step = 0.5,
           post = "%"
         )
+      ),
+
+      # --- US Employment ---
+      accordion_panel(
+        title = "US Employment",
+        icon = icon("briefcase"),
+
+        selectInput(
+          ns("economic_alternative"),
+          "Economic Scenario (V.B1/V.B2)",
+          choices = c(
+            "Low Cost" = "low",
+            "Intermediate" = "intermediate",
+            "High Cost" = "high"
+          ),
+          selected = "intermediate"
+        ),
+        helpText("Switches the full TR economic assumption path: unemployment rate,
+                 GDP growth, CPI, productivity, interest rates."),
+
+        sliderInput(
+          ns("ultimate_unemployment_rate"),
+          "Ultimate Unemployment Rate",
+          min = 4.0, max = 7.0,
+          value = 5.5,
+          step = 0.1,
+          post = "%"
+        ),
+        helpText("Long-run equilibrium unemployment rate. TR2025: 4.5% (low),
+                 5.5% (intermediate), 6.5% (high)."),
+
+        sliderInput(
+          ns("okun_coefficient"),
+          "Okun's Law Coefficient",
+          min = 1.5, max = 3.0,
+          value = 2.0,
+          step = 0.1
+        ),
+        helpText("RTP-to-unemployment elasticity. Higher = more cyclical sensitivity
+                 in age-group unemployment rates.")
       )
     ),
 
@@ -689,6 +729,14 @@ mod_config_editor_server <- function(id, rv) {
         value = (config$projected_population$population_status$lesbian_percent %||% 0.045) * 100)
       updateSliderInput(session, "same_sex_fraction",
         value = (config$marriage$same_sex$default_fraction %||% 0.045) * 100)
+
+      # --- US Employment ---
+      updateSelectInput(session, "economic_alternative",
+        selected = config$economics$employment$economic_alternative %||% "intermediate")
+      updateSliderInput(session, "ultimate_unemployment_rate",
+        value = config$economics$employment$ultimate_unemployment_rate %||% 5.5)
+      updateSliderInput(session, "okun_coefficient",
+        value = config$economics$employment$okun_coefficient %||% 2.0)
     }
 
     # Initialize from baseline config
@@ -704,6 +752,17 @@ mod_config_editor_server <- function(id, rv) {
       if (isTRUE(input$distribution_method == "tr_derived")) {
         updateCheckboxInput(session, "elderly_override_enabled", value = TRUE)
       }
+    }, ignoreInit = TRUE)
+
+    # Auto-sync ultimate unemployment rate to match economic scenario
+    observeEvent(input$economic_alternative, {
+      canonical_ur <- switch(input$economic_alternative,
+        low = 4.5,
+        intermediate = 5.5,
+        high = 6.5,
+        5.5
+      )
+      updateSliderInput(session, "ultimate_unemployment_rate", value = canonical_ur)
     }, ignoreInit = TRUE)
 
     # Helper: update a nested config value only if it actually changed.
@@ -860,6 +919,14 @@ mod_config_editor_server <- function(id, rv) {
       config <- set_config(config, c("projected_population", "population_status", "gay_percent"), input$gay_percent / 100)
       config <- set_config(config, c("projected_population", "population_status", "lesbian_percent"), input$lesbian_percent / 100)
       config <- set_config(config, c("marriage", "same_sex", "default_fraction"), input$same_sex_fraction / 100)
+
+      # --- US Employment ---
+      config <- set_config(config, c("economics", "employment", "economic_alternative"),
+                           input$economic_alternative)
+      config <- set_config(config, c("economics", "employment", "ultimate_unemployment_rate"),
+                           input$ultimate_unemployment_rate)
+      config <- set_config(config, c("economics", "employment", "okun_coefficient"),
+                           input$okun_coefficient)
 
       # Store modified config
       modified_config(config)
