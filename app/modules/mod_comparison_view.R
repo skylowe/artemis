@@ -31,7 +31,11 @@ mod_comparison_view_ui <- function(id) {
           "Net Immigration" = "immigration",
           "Life Expectancy (e0)" = "life_exp",
           "TFR" = "tfr",
-          "Dependency Ratio (per 100 working-age)" = "dependency"
+          "Dependency Ratio (per 100 working-age)" = "dependency",
+          "Labor Force" = "labor_force",
+          "Total Employment" = "employment",
+          "Unemployment Rate (%)" = "unemployment_rate",
+          "LFPR (%)" = "lfpr"
         ),
         selected = "population"
       ),
@@ -263,6 +267,39 @@ mod_comparison_view_server <- function(id, rv) {
               ), by = year]
             }
           },
+          "labor_force" = {
+            lf <- data$labor_force_employment$labor_force
+            if (!is.null(lf)) {
+              lf[year %in% years,
+                .(value = sum(labor_force, na.rm = TRUE) / 4),
+                by = year]
+            }
+          },
+          "employment" = {
+            emp <- data$labor_force_employment$employment
+            if (!is.null(emp)) {
+              emp[year %in% years,
+                .(value = sum(employment, na.rm = TRUE) / 4),
+                by = year]
+            }
+          },
+          "unemployment_rate" = {
+            ur <- data$unemployment_projection$actual
+            if (!is.null(ur)) {
+              # Population-weighted aggregate UR across age groups
+              ur[year %in% years,
+                .(value = mean(rate, na.rm = TRUE)),
+                by = year]
+            }
+          },
+          "lfpr" = {
+            lfpr_agg <- data$lfpr_projection$aggregate
+            if (!is.null(lfpr_agg)) {
+              lfpr_agg[year %in% years,
+                .(value = mean(lfpr, na.rm = TRUE) * 100),
+                by = year]
+            }
+          },
           NULL
         )
 
@@ -308,6 +345,10 @@ mod_comparison_view_server <- function(id, rv) {
         "tfr" = "TFR",
         "life_exp" = "Life Expectancy at Birth (years)",
         "dependency" = "Dependents per 100 working-age (18\u201366)",
+        "labor_force" = "Labor Force",
+        "employment" = "Employment",
+        "unemployment_rate" = "Unemployment Rate (%)",
+        "lfpr" = "LFPR (%)",
         "Value"
       )
 
@@ -319,7 +360,8 @@ mod_comparison_view_server <- function(id, rv) {
 
       # Scale values for display
       scale_factor <- 1
-      if (input$metric %in% c("population", "births", "deaths", "immigration") &&
+      if (input$metric %in% c("population", "births", "deaths", "immigration",
+                               "labor_force", "employment") &&
           input$comparison_type == "absolute") {
         scale_factor <- 1e6
         y_label <- paste(y_label, "(millions)")
