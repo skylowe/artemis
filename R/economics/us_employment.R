@@ -684,8 +684,8 @@ project_lfpr <- function(unemployment_rates,
   # Corrects excess trend decline to match BLS 10-year projections.
   # After cap_years, correction holds constant.
   first_proj_year <- min(projection_years)
+  af_cap <- if (!is.null(young_trend_addfactors)) young_trend_addfactors$cap_years %||% Inf else Inf
   if (!is.null(young_trend_addfactors)) {
-    af_cap <- young_trend_addfactors$cap_years %||% Inf
     for (ag_name in names(young_trend_addfactors)) {
       if (ag_name == "cap_years") next
       for (sx in c("male", "female")) {
@@ -787,6 +787,20 @@ project_lfpr <- function(unemployment_rates,
       af_male <- addfactors[[ag_name]]$male
       if (!is.null(af_male)) {
         male_grid[age_group == ag_name, lfpr_agg := lfpr_agg + af_male]
+      }
+    }
+  }
+
+  # Apply trend addfactors (level + annual correction) for ages 20-29
+  if (!is.null(young_trend_addfactors)) {
+    for (ag_name in names(young_trend_addfactors)) {
+      if (ag_name == "cap_years") next
+      af_male <- young_trend_addfactors[[ag_name]]$male
+      if (!is.null(af_male)) {
+        af_level <- af_male$level %||% 0
+        af_annual <- af_male$annual %||% 0
+        male_grid[age_group == ag_name,
+                   lfpr_agg := lfpr_agg + af_level + af_annual * pmin(year - first_proj_year, af_cap)]
       }
     }
   }
@@ -908,6 +922,20 @@ project_lfpr <- function(unemployment_rates,
       af_female <- addfactors[[ag_name]]$female
       if (!is.null(af_female)) {
         fmc_grid[age_group == ag_name, lfpr_agg := lfpr_agg + af_female]
+      }
+    }
+  }
+
+  # Apply trend addfactors (level + annual correction) for ages 20-29
+  if (!is.null(young_trend_addfactors)) {
+    for (ag_name in names(young_trend_addfactors)) {
+      if (ag_name == "cap_years") next
+      af_female <- young_trend_addfactors[[ag_name]]$female
+      if (!is.null(af_female)) {
+        af_level <- af_female$level %||% 0
+        af_annual <- af_female$annual %||% 0
+        fmc_grid[age_group == ag_name,
+                  lfpr_agg := lfpr_agg + af_level + af_annual * pmin(year - first_proj_year, af_cap)]
       }
     }
   }

@@ -1095,8 +1095,9 @@ economics:
     # Ages 80+: multiply by this factor per year of age
     lfpr_decay_80_plus: 0.965
 
-    # Young-age trend addfactors: correct excessive trend decline for ages 16-19.
-    # SSA trend coefficients produce slopes 4-9x steeper than BLS 10-year projections.
+    # Young-age trend addfactors: correct excessive trend decline for ages 16-29.
+    # SSA trend coefficients produce slopes steeper than BLS 10-year projections
+    # (4-9x for ages 16-19, ~50x for female 20-24).
     # Each entry has:
     #   level:  constant LFPR offset (corrects base-year level vs BLS)
     #   annual: per-year LFPR correction (offsets excess trend decline vs BLS slope)
@@ -1112,6 +1113,12 @@ economics:
       "18-19":
         male:   { level: -0.035, annual: 0.00916 }
         female: { level: -0.005, annual: 0.00864 }
+      "20-24":
+        male:   { level: -0.012, annual: 0.00045 }
+        female: { level: -0.037, annual: 0.00479 }
+      "25-29":
+        male:   { level: -0.014, annual: -0.00039 }
+        female: { level: -0.017, annual: 0.00486 }
 
     # Maximum allowed deviation of MSSHARE from base-year values for LFPR equations.
     # Prevents extrapolation outside the coefficient estimation range.
