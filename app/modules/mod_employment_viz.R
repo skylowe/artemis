@@ -172,24 +172,35 @@ mod_employment_viz_server <- function(id, rv) {
     # Reactive data helpers
     # =========================================================================
 
-    # Update year range slider when active data changes (e.g., different projection end year)
+    # Update year range slider when active data or selected scenarios change
     observe({
-      proj_end <- NULL
-      # Detect projection end year from available data
-      lf <- rv$active_data$labor_force_employment
-      if (!is.null(lf) && !is.null(lf$labor_force)) {
-        proj_end <- max(lf$labor_force$year, na.rm = TRUE)
-      } else {
-        ur <- rv$active_data$unemployment_projection
-        if (!is.null(ur) && !is.null(ur$actual)) {
-          proj_end <- max(ur$actual$year, na.rm = TRUE)
+      max_year <- MAX_YEAR
+
+      # Check all selected scenarios for max projection year
+      selected <- input$compare_scenarios
+      if (is.null(selected)) selected <- "active"
+
+      for (sid in selected) {
+        sdata <- get_scenario_data(sid)
+        if (!is.null(sdata)) {
+          lf <- sdata$labor_force_employment
+          if (!is.null(lf) && !is.null(lf$labor_force)) {
+            max_year <- max(max_year, max(lf$labor_force$year, na.rm = TRUE))
+          } else {
+            ur <- sdata$unemployment_projection
+            if (!is.null(ur) && !is.null(ur$actual)) {
+              max_year <- max(max_year, max(ur$actual$year, na.rm = TRUE))
+            }
+          }
         }
       }
-      if (!is.null(proj_end) && proj_end != isolate(input$year_range[2])) {
+
+      current_range <- isolate(input$year_range)
+      if (max_year != current_range[2]) {
         updateSliderInput(
           session, "year_range",
-          max = proj_end,
-          value = c(isolate(input$year_range[1]), proj_end)
+          max = max_year,
+          value = c(current_range[1], max_year)
         )
       }
     })

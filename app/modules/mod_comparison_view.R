@@ -144,17 +144,19 @@ mod_comparison_view_server <- function(id, rv) {
 
     # Update scenario choices when scenarios change
     observe({
-      choices <- c("ARTEMIS 2025 Baseline" = "baseline")
+      choices <- c("Active" = "active", "ARTEMIS 2025 Baseline" = "baseline")
 
       if (length(rv$scenarios) > 0) {
         scenario_choices <- setNames(names(rv$scenarios), names(rv$scenarios))
         choices <- c(choices, scenario_choices)
       }
 
+      selected <- input$scenarios
+      if (is.null(selected)) selected <- "baseline"
       updateCheckboxGroupInput(
         session, "scenarios",
         choices = choices,
-        selected = input$scenarios
+        selected = selected
       )
     })
 
@@ -165,7 +167,9 @@ mod_comparison_view_server <- function(id, rv) {
       max_year <- MAX_YEAR
 
       for (scenario_id in input$scenarios) {
-        data <- if (scenario_id == "baseline") {
+        data <- if (scenario_id == "active") {
+          rv$active_data
+        } else if (scenario_id == "baseline") {
           rv$baseline
         } else if (scenario_id %in% names(rv$scenarios)) {
           rv$scenarios[[scenario_id]]$results
@@ -204,7 +208,10 @@ mod_comparison_view_server <- function(id, rv) {
 
       for (scenario_id in input$scenarios) {
         # Get scenario data
-        if (scenario_id == "baseline") {
+        if (scenario_id == "active") {
+          data <- rv$active_data
+          name <- "Active"
+        } else if (scenario_id == "baseline") {
           data <- rv$baseline
           name <- "ARTEMIS 2025 Baseline"
         } else if (scenario_id %in% names(rv$scenarios)) {
@@ -423,7 +430,10 @@ mod_comparison_view_server <- function(id, rv) {
       pyramids <- list()
 
       for (scenario_id in input$scenarios) {
-        if (scenario_id == "baseline") {
+        if (scenario_id == "active") {
+          data <- rv$active_data$projected_population
+          name <- "Active"
+        } else if (scenario_id == "baseline") {
           data <- rv$baseline$projected_population
           name <- "Baseline"
         } else if (scenario_id %in% names(rv$scenarios)) {
