@@ -67,9 +67,20 @@ artemis_lf[, lf_change_pct := (labor_force / shift(labor_force) - 1) * 100]
 # === 2. Compute ARTEMIS aggregate unemployment rate ===
 
 # 2a. Current-year labor force weights (standard approach)
+# LF uses single-year ages for 55+; map to UR 5-year groups before merging
 unemp_actual <- unemp_proj$actual
-unemp_lf <- merge(unemp_actual, lf_detail[, .(year, age_group, sex, labor_force)],
-                   by = c("year", "age_group", "sex"), all.x = TRUE)
+lf_for_ur <- data.table::copy(lf_detail[, .(year, age_group, sex, labor_force)])
+lf_for_ur[, ur_age_group := age_group]
+lf_for_ur[age_group %in% as.character(55:59), ur_age_group := "55-59"]
+lf_for_ur[age_group %in% as.character(60:64), ur_age_group := "60-64"]
+lf_for_ur[age_group %in% as.character(65:69), ur_age_group := "65-69"]
+lf_for_ur[age_group %in% as.character(70:74), ur_age_group := "70-74"]
+lf_for_ur[age_group %in% c(as.character(75:100), "80+"), ur_age_group := "75+"]
+lf_by_ur_group <- lf_for_ur[, .(labor_force = sum(labor_force)),
+                              by = .(year, ur_age_group, sex)]
+unemp_lf <- merge(unemp_actual, lf_by_ur_group,
+                   by.x = c("year", "age_group", "sex"),
+                   by.y = c("year", "ur_age_group", "sex"), all.x = TRUE)
 artemis_ur <- unemp_lf[!is.na(labor_force), .(
   ur_current_wt = weighted.mean(rate, labor_force, na.rm = TRUE)
 ), by = year]
