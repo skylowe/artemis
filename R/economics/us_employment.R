@@ -523,8 +523,8 @@ project_lfpr <- function(unemployment_rates,
   decay_75_79 <- config_employment$lfpr_decay_75_79
   decay_80_plus <- config_employment$lfpr_decay_80_plus
 
-  # Trend freeze: after this many years, trend stops accumulating
-  trend_freeze_years <- config_employment$lfpr_trend_freeze_years
+  # Per-group trend adjustments: rate and max_years per age-sex group
+  trend_adjustments <- config_employment$lfpr_trend_adjustments
 
   # MSSHARE cap: maximum deviation from base-year values
   msshare_max_dev <- config_employment$msshare_max_deviation
@@ -672,10 +672,24 @@ project_lfpr <- function(unemployment_rates,
                        by = c("age_group", "sex"), all.x = TRUE, sort = FALSE)
   young_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
 
-  # Compute LFPR
-  trend_increment <- young_grid$year - base_year
-  if (!is.null(trend_freeze_years)) trend_increment <- pmin(trend_increment, trend_freeze_years)
+  # Compute LFPR — apply per-group trend adjustments
+  young_grid[, trend_increment := year - base_year]
+  if (!is.null(trend_adjustments)) {
+    for (ag_name in intersect(names(trend_adjustments), unique(young_grid$age_group))) {
+      ag_adj <- trend_adjustments[[ag_name]]
+      for (sx in c("male", "female")) {
+        sx_adj <- ag_adj[[sx]]
+        if (!is.null(sx_adj)) {
+          ta_rate <- sx_adj$rate %||% 1.0
+          ta_max <- sx_adj$max_years %||% .Machine$integer.max
+          young_grid[age_group == ag_name & sex == sx,
+                     trend_increment := pmin(trend_increment, ta_max) * ta_rate]
+        }
+      }
+    }
+  }
   young_grid[, trend_val := calibrated_tr_base + trend_increment]
+  young_grid[, trend_increment := NULL]
   young_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                             rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   young_grid[, trend_effect := trend_coeff * trend_val + trend_offset]
@@ -746,10 +760,21 @@ project_lfpr <- function(unemployment_rates,
                       by = c("age_group", "marital_status"), all.x = TRUE, sort = FALSE)
   male_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
 
-  # Compute per-status LFPR
-  trend_increment <- male_grid$year - base_year
-  if (!is.null(trend_freeze_years)) trend_increment <- pmin(trend_increment, trend_freeze_years)
+  # Compute per-status LFPR — apply per-group trend adjustments
+  male_grid[, trend_increment := year - base_year]
+  if (!is.null(trend_adjustments)) {
+    for (ag_name in intersect(names(trend_adjustments), unique(male_grid$age_group))) {
+      male_adj <- trend_adjustments[[ag_name]]$male
+      if (!is.null(male_adj)) {
+        ta_rate <- male_adj$rate %||% 1.0
+        ta_max <- male_adj$max_years %||% .Machine$integer.max
+        male_grid[age_group == ag_name,
+                  trend_increment := pmin(trend_increment, ta_max) * ta_rate]
+      }
+    }
+  }
   male_grid[, trend_val := calibrated_tr_base + trend_increment]
+  male_grid[, trend_increment := NULL]
   male_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                            rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   male_grid[, lfpr_raw := (ru_effect + trend_coeff * trend_val + intercept) / (1 + rd)]
@@ -852,10 +877,21 @@ project_lfpr <- function(unemployment_rates,
                      by = c("age_group", "category"), all.x = TRUE, sort = FALSE)
   fmc_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
 
-  # Compute per-category LFPR
-  trend_increment <- fmc_grid$year - base_year
-  if (!is.null(trend_freeze_years)) trend_increment <- pmin(trend_increment, trend_freeze_years)
+  # Compute per-category LFPR — apply per-group trend adjustments
+  fmc_grid[, trend_increment := year - base_year]
+  if (!is.null(trend_adjustments)) {
+    for (ag_name in intersect(names(trend_adjustments), unique(fmc_grid$age_group))) {
+      female_adj <- trend_adjustments[[ag_name]]$female
+      if (!is.null(female_adj)) {
+        ta_rate <- female_adj$rate %||% 1.0
+        ta_max <- female_adj$max_years %||% .Machine$integer.max
+        fmc_grid[age_group == ag_name,
+                 trend_increment := pmin(trend_increment, ta_max) * ta_rate]
+      }
+    }
+  }
   fmc_grid[, trend_val := calibrated_tr_base + trend_increment]
+  fmc_grid[, trend_increment := NULL]
   fmc_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                           rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   fmc_grid[, lfpr_raw := (ru_effect + trend_coeff * trend_val + intercept) / (1 + rd)]
