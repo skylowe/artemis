@@ -485,7 +485,7 @@ mod_config_editor_ui <- function(id) {
         sliderInput(
           ns("ultimate_unemployment_rate"),
           "Ultimate Unemployment Rate",
-          min = 4.0, max = 7.0,
+          min = 2.0, max = 12.0,
           value = 5.5,
           step = 0.1,
           post = "%"

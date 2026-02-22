@@ -486,25 +486,23 @@ mod_employment_viz_server <- function(id, rv) {
       years <- seq(input$year_range[1], input$year_range[2])
       agg <- get_lf_series(copy(lf_data$labor_force), years)
       growth_dt <- agg[!is.na(growth_rate)]
-      growth_dt[, scenario := "Active"]
 
       # Overlay selected scenarios
       compare <- input$compare_scenarios
-      if (length(compare) > 0) {
-        scenario_dts <- list(growth_dt)
-        for (sid in compare) {
-          sdata <- get_scenario_data(sid)
-          if (!is.null(sdata$labor_force_employment$labor_force)) {
-            s_agg <- get_lf_series(copy(sdata$labor_force_employment$labor_force), years)
-            s_growth <- s_agg[!is.na(growth_rate)]
-            s_growth[, scenario := sid]
-            scenario_dts <- c(scenario_dts, list(s_growth))
-          }
+      scenario_dts <- list()
+      for (sid in compare) {
+        sdata <- get_scenario_data(sid)
+        if (!is.null(sdata$labor_force_employment$labor_force)) {
+          s_agg <- get_lf_series(copy(sdata$labor_force_employment$labor_force), years)
+          s_growth <- s_agg[!is.na(growth_rate)]
+          s_growth[, scenario := sid]
+          scenario_dts <- c(scenario_dts, list(s_growth))
         }
-        growth_dt <- rbindlist(scenario_dts, use.names = TRUE, fill = TRUE)
       }
 
-      if (length(unique(growth_dt$scenario)) > 1) {
+      if (length(scenario_dts) > 0) {
+        growth_dt[, scenario := "Active"]
+        growth_dt <- rbindlist(c(list(growth_dt), scenario_dts), use.names = TRUE, fill = TRUE)
         p <- ggplot(growth_dt, aes(x = year, y = growth_rate, color = scenario)) +
           geom_line(linewidth = 0.8) +
           geom_hline(yintercept = 0, linetype = "dashed", color = "#BDC3C7") +
@@ -535,23 +533,21 @@ mod_employment_viz_server <- function(id, rv) {
 
       years <- seq(input$year_range[1], input$year_range[2])
       agg <- get_lf_series(copy(lf_data$labor_force), years)
-      agg[, scenario := "Active"]
 
       compare <- input$compare_scenarios
-      if (length(compare) > 0) {
-        scenario_dts <- list(agg)
-        for (sid in compare) {
-          sdata <- get_scenario_data(sid)
-          if (!is.null(sdata$labor_force_employment$labor_force)) {
-            s_agg <- get_lf_series(copy(sdata$labor_force_employment$labor_force), years)
-            s_agg[, scenario := sid]
-            scenario_dts <- c(scenario_dts, list(s_agg))
-          }
+      scenario_dts <- list()
+      for (sid in compare) {
+        sdata <- get_scenario_data(sid)
+        if (!is.null(sdata$labor_force_employment$labor_force)) {
+          s_agg <- get_lf_series(copy(sdata$labor_force_employment$labor_force), years)
+          s_agg[, scenario := sid]
+          scenario_dts <- c(scenario_dts, list(s_agg))
         }
-        agg <- rbindlist(scenario_dts, use.names = TRUE, fill = TRUE)
       }
 
-      if (length(unique(agg$scenario)) > 1) {
+      if (length(scenario_dts) > 0) {
+        agg[, scenario := "Active"]
+        agg <- rbindlist(c(list(agg), scenario_dts), use.names = TRUE, fill = TRUE)
         p <- ggplot(agg, aes(x = year, y = labor_force / 1e6, color = scenario)) +
           geom_line(linewidth = 0.8) +
           scale_color_manual(values = artemis_colors$scenarios[
