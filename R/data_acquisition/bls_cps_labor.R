@@ -256,6 +256,22 @@ process_cps_labor_force_data <- function(dt, years) {
     dt <- dt[as.integer(POPSTAT) == 1L | is.na(POPSTAT)]
   }
 
+  # 2014 ASEC dual-sample fix: the 2014 CPS ASEC contains both the traditional
+  # March sample and the redesigned 3/8 file. Both sub-samples (HFLAG=0 and
+  # HFLAG=1) have weights calibrated to the full population, so including both
+  # double-counts. Keep HFLAG=0 (traditional sample) for consistency with other
+  # years. See IPUMS CPS documentation on the 2014 ASEC redesign.
+  if ("HFLAG" %in% names(dt)) {
+    n_before <- nrow(dt[year == 2014L])
+    dt <- dt[year != 2014L | as.integer(HFLAG) == 0L | is.na(HFLAG)]
+    n_after <- nrow(dt[year == 2014L])
+    if (n_before > n_after) {
+      cli::cli_alert_info(
+        "2014 ASEC: dropped {n_before - n_after} redesigned-sample records (HFLAG=1)"
+      )
+    }
+  }
+
   # Weight column
   wt_col <- "ASECWT"
   if (!wt_col %in% names(dt)) {
