@@ -292,19 +292,29 @@ mod_comparison_view_server <- function(id, rv) {
           },
           "unemployment_rate" = {
             ur <- data$unemployment_projection$actual
-            if (!is.null(ur)) {
-              # Population-weighted aggregate UR across age groups
-              ur[year %in% years,
-                .(value = mean(rate, na.rm = TRUE)),
+            lf <- data$labor_force_employment$labor_force
+            if (!is.null(ur) && !is.null(lf)) {
+              # Labor-force-weighted aggregate UR
+              merged <- merge(ur, lf, by = c("year", "quarter", "age_group", "sex"))
+              merged[year %in% years,
+                .(value = sum(labor_force * rate, na.rm = TRUE) /
+                          sum(labor_force, na.rm = TRUE)),
                 by = year]
             }
           },
           "lfpr" = {
-            lfpr_agg <- data$lfpr_projection$aggregate
-            if (!is.null(lfpr_agg)) {
-              lfpr_agg[year %in% years,
-                .(value = mean(lfpr, na.rm = TRUE) * 100),
+            lf <- data$labor_force_employment$labor_force
+            cni <- data$projected_cni_population
+            if (!is.null(lf) && !is.null(cni)) {
+              # Aggregate LFPR = total labor force / CNI population 16+
+              lf_annual <- lf[year %in% years,
+                .(labor_force = sum(labor_force, na.rm = TRUE) / 4),
                 by = year]
+              cni_annual <- cni[year %in% years & age >= 16,
+                .(cni_pop = sum(population, na.rm = TRUE)),
+                by = year]
+              merged <- merge(lf_annual, cni_annual, by = "year")
+              merged[, .(value = labor_force / cni_pop * 100), by = year]
             }
           },
           NULL
