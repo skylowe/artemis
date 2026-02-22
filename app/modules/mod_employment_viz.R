@@ -8,11 +8,9 @@ USEMP_CHART_UR_GROUPS <- c(
   "45-49", "50-54", "55-59", "60-64", "65-69", "70-74", "75+"
 )
 
-# Representative groups for LFPR chart (keep readable: 9 five-year + 4 single-year + 75+)
-USEMP_CHART_LFPR_GROUPS <- c(
-  "16-17", "18-19", "20-24", "25-29", "30-34", "35-39", "40-44",
-  "45-49", "50-54", "55", "60", "65", "70", "75+"
-)
+# LFPR chart uses same 14 five-year groups as UR/employment
+# (single-year ages 55+ from lfpr_projection$aggregate are aggregated at plot time)
+USEMP_CHART_LFPR_GROUPS <- USEMP_CHART_UR_GROUPS
 
 #' US Employment Visualization UI
 #' @param id Module namespace ID
@@ -27,13 +25,14 @@ mod_employment_viz_ui <- function(id) {
         ns("chart_type"),
         "Chart Type",
         choices = c(
-          "Unemployment Rate" = "ur_ts",
-          "LFPR by Age Group" = "lfpr_ts",
-          "Aggregate Labor Force" = "lf_agg",
+          "Labor Force Growth Rate" = "lf_growth",
+          "Labor Force Level" = "lf_level",
           "Employment by Age Group" = "emp_ts",
-          "Detailed LFPR" = "lfpr_detail"
+          "LFPR by Age Group" = "lfpr_ts",
+          "Detailed LFPR" = "lfpr_detail",
+          "Unemployment Rate" = "ur_ts"
         ),
-        selected = "ur_ts"
+        selected = "lf_growth"
       ),
 
       hr(),
@@ -86,9 +85,12 @@ mod_employment_viz_ui <- function(id) {
         )
       ),
 
-      # Controls for lf_agg
+      # Controls for lf_growth / lf_level
       conditionalPanel(
-        condition = sprintf("input['%s'] == 'lf_agg'", ns("chart_type")),
+        condition = sprintf(
+          "input['%s'] == 'lf_growth' || input['%s'] == 'lf_level'",
+          ns("chart_type"), ns("chart_type")
+        ),
         checkboxInput(
           ns("compare_baseline"),
           "Compare to baseline",
@@ -126,10 +128,7 @@ mod_employment_viz_server <- function(id, rv) {
       viridis::viridis(length(USEMP_CHART_UR_GROUPS)),
       USEMP_CHART_UR_GROUPS
     )
-    lfpr_age_colors <- setNames(
-      viridis::viridis(length(USEMP_CHART_LFPR_GROUPS)),
-      USEMP_CHART_LFPR_GROUPS
-    )
+    lfpr_age_colors <- ur_age_colors
 
     # =========================================================================
     # Reactive data helpers
@@ -137,13 +136,7 @@ mod_employment_viz_server <- function(id, rv) {
 
     # Update age group choices when chart type switches to LFPR
     observeEvent(input$chart_type, {
-      if (input$chart_type == "lfpr_ts") {
-        updateCheckboxGroupInput(
-          session, "age_groups",
-          choices = USEMP_CHART_LFPR_GROUPS,
-          selected = c("16-17", "25-29", "45-49", "55", "65", "75+")
-        )
-      } else if (input$chart_type %in% c("ur_ts", "emp_ts")) {
+      if (input$chart_type %in% c("ur_ts", "lfpr_ts", "emp_ts")) {
         updateCheckboxGroupInput(
           session, "age_groups",
           choices = USEMP_CHART_UR_GROUPS,
@@ -159,16 +152,18 @@ mod_employment_viz_server <- function(id, rv) {
     output$main_chart <- renderPlotly({
       chart_type <- input$chart_type
 
-      if (chart_type == "ur_ts") {
-        render_ur_chart()
-      } else if (chart_type == "lfpr_ts") {
-        render_lfpr_chart()
-      } else if (chart_type == "lf_agg") {
-        render_lf_agg_chart()
+      if (chart_type == "lf_growth") {
+        render_lf_growth_chart()
+      } else if (chart_type == "lf_level") {
+        render_lf_level_chart()
       } else if (chart_type == "emp_ts") {
         render_emp_chart()
+      } else if (chart_type == "lfpr_ts") {
+        render_lfpr_chart()
       } else if (chart_type == "lfpr_detail") {
         render_lfpr_detail_chart()
+      } else if (chart_type == "ur_ts") {
+        render_ur_chart()
       }
     })
 
@@ -240,92 +235,117 @@ mod_employment_viz_server <- function(id, rv) {
         return(plotly_empty_message("Select at least one age group"))
       }
 
-      # Filter to representative groups and year range
-      dt <- dt[year %in% years & age_group %in% selected_groups]
+      dt <- dt[year %in% years]
+
+      # Map single-year ages 55+ to 5-year groups
+      dt[, display_group := fcase(
+        age_group %in% c("16-17", "18-19", "20-24", "25-29", "30-34",
+                         "35-39", "40-44", "45-49", "50-54"), age_group,
+        age_group %in% as.character(55:59), "55-59",
+        age_group %in% as.character(60:64), "60-64",
+        age_group %in% as.character(65:69), "65-69",
+        age_group %in% as.character(70:74), "70-74",
+        age_group %in% c(as.character(75:100), "75+", "80+"), "75+",
+        default = NA_character_
+      )]
+      dt <- dt[!is.na(display_group) & display_group %in% selected_groups]
+
+      # Aggregate single-year ages within each 5-year group (weighted mean by group size)
+      dt <- dt[, .(lfpr = mean(lfpr, na.rm = TRUE)),
+               by = .(year, display_group, sex)]
 
       sex_filter <- input$sex_filter
       if (sex_filter == "both") {
-        dt <- dt[, .(lfpr = mean(lfpr, na.rm = TRUE)), by = .(year, age_group)]
-
-        dt[, age_group := factor(age_group, levels = USEMP_CHART_LFPR_GROUPS)]
-
-        p <- ggplot(dt, aes(x = year, y = lfpr, color = age_group)) +
-          geom_line(linewidth = 0.8) +
-          scale_color_manual(values = lfpr_age_colors, name = "Age Group") +
-          scale_y_continuous(labels = scales::percent) +
-          labs(x = NULL, y = "LFPR") +
-          theme_artemis()
+        dt <- dt[, .(lfpr = mean(lfpr, na.rm = TRUE)), by = .(year, display_group)]
       } else {
         dt <- dt[sex == sex_filter]
-        dt[, age_group := factor(age_group, levels = USEMP_CHART_LFPR_GROUPS)]
+      }
 
-        p <- ggplot(dt, aes(x = year, y = lfpr, color = age_group)) +
-          geom_line(linewidth = 0.8) +
-          scale_color_manual(values = lfpr_age_colors, name = "Age Group") +
-          scale_y_continuous(labels = scales::percent) +
-          labs(x = NULL, y = "LFPR",
-               subtitle = paste0(tools::toTitleCase(sex_filter), "s")) +
-          theme_artemis()
+      dt[, display_group := factor(display_group, levels = USEMP_CHART_LFPR_GROUPS)]
+
+      p <- ggplot(dt, aes(x = year, y = lfpr, color = display_group)) +
+        geom_line(linewidth = 0.8) +
+        scale_color_manual(values = lfpr_age_colors, name = "Age Group") +
+        scale_y_continuous(labels = scales::percent) +
+        labs(x = NULL, y = "LFPR") +
+        theme_artemis()
+
+      if (sex_filter != "both") {
+        p <- p + labs(subtitle = paste0(tools::toTitleCase(sex_filter), "s"))
       }
 
       ggplotly(p) |> layout_artemis(y_title = "LFPR")
     }
 
     # =========================================================================
-    # Chart 3: Aggregate Labor Force & Growth Rate
+    # Chart 3a: Labor Force Growth Rate
     # =========================================================================
 
-    render_lf_agg_chart <- function() {
+    # Helper to aggregate labor force data
+    aggregate_lf <- function(lf_dt, years) {
+      agg <- lf_dt[year %in% years,
+                   .(labor_force = mean(labor_force, na.rm = TRUE)),
+                   by = .(year, quarter)]
+      agg <- agg[, .(labor_force = sum(labor_force, na.rm = TRUE)), by = year]
+      setorder(agg, year)
+      agg[, growth_rate := (labor_force / shift(labor_force) - 1) * 100]
+      agg
+    }
+
+    render_lf_growth_chart <- function() {
       lf_data <- rv$active_data$labor_force_employment
       if (is.null(lf_data) || is.null(lf_data$labor_force)) {
         return(plotly_empty_message("Labor force data not available"))
       }
 
-      dt <- copy(lf_data$labor_force)
       years <- seq(input$year_range[1], input$year_range[2])
+      agg <- aggregate_lf(copy(lf_data$labor_force), years)
+      growth_dt <- agg[!is.na(growth_rate)]
 
-      # Aggregate: quarterly -> annual total across all groups
-      agg <- dt[year %in% years,
-                .(labor_force = mean(labor_force, na.rm = TRUE)),
-                by = .(year, quarter)]
-      agg <- agg[, .(labor_force = sum(labor_force, na.rm = TRUE)), by = year]
+      p <- ggplot(growth_dt, aes(x = year, y = growth_rate)) +
+        geom_line(linewidth = 1, color = "#E74C3C") +
+        geom_hline(yintercept = 0, linetype = "dashed", color = "#BDC3C7") +
+        labs(x = NULL, y = "YoY Growth (%)") +
+        theme_artemis()
 
-      # YoY growth rate
-      setorder(agg, year)
-      agg[, growth_rate := (labor_force / shift(labor_force) - 1) * 100]
+      if (isTRUE(input$compare_baseline) && !is.null(rv$baseline$labor_force_employment)) {
+        bl_agg <- aggregate_lf(copy(rv$baseline$labor_force_employment$labor_force), years)
+        bl_growth <- bl_agg[!is.na(growth_rate)]
+        p <- p +
+          geom_line(data = bl_growth, aes(x = year, y = growth_rate),
+                    linetype = "dashed", color = "#7F8C8D", linewidth = 0.8)
+      }
 
-      # Top panel: level
-      p1 <- ggplot(agg, aes(x = year, y = labor_force / 1e6)) +
+      ggplotly(p) |> layout_artemis(y_title = "YoY Growth (%)")
+    }
+
+    # =========================================================================
+    # Chart 3b: Labor Force Level
+    # =========================================================================
+
+    render_lf_level_chart <- function() {
+      lf_data <- rv$active_data$labor_force_employment
+      if (is.null(lf_data) || is.null(lf_data$labor_force)) {
+        return(plotly_empty_message("Labor force data not available"))
+      }
+
+      years <- seq(input$year_range[1], input$year_range[2])
+      agg <- aggregate_lf(copy(lf_data$labor_force), years)
+
+      p <- ggplot(agg, aes(x = year, y = labor_force / 1e6)) +
         geom_line(linewidth = 1, color = "#3498DB") +
         labs(x = NULL, y = "Labor Force (millions)") +
         scale_y_continuous(labels = scales::comma) +
         theme_artemis()
 
-      # Baseline overlay
       if (isTRUE(input$compare_baseline) && !is.null(rv$baseline$labor_force_employment)) {
-        bl <- copy(rv$baseline$labor_force_employment$labor_force)
-        bl_agg <- bl[year %in% years,
-                     .(labor_force = mean(labor_force, na.rm = TRUE)),
-                     by = .(year, quarter)]
-        bl_agg <- bl_agg[, .(labor_force = sum(labor_force, na.rm = TRUE)), by = year]
-
-        p1 <- p1 +
+        bl_agg <- aggregate_lf(copy(rv$baseline$labor_force_employment$labor_force), years)
+        p <- p +
           geom_line(data = bl_agg, aes(x = year, y = labor_force / 1e6),
                     linetype = "dashed", color = "#7F8C8D", linewidth = 0.8)
       }
 
-      # Bottom panel: growth rate
-      growth_dt <- agg[!is.na(growth_rate)]
-      p2 <- ggplot(growth_dt, aes(x = year, y = growth_rate)) +
-        geom_line(linewidth = 0.8, color = "#E74C3C") +
-        geom_hline(yintercept = 0, linetype = "dashed", color = "#BDC3C7") +
-        labs(x = NULL, y = "YoY Growth (%)") +
-        theme_artemis()
-
-      # Combine with patchwork
-      combined <- p1 / p2 + patchwork::plot_layout(heights = c(2, 1))
-
-      ggplotly(combined) |> layout_artemis()
+      ggplotly(p) |> layout_artemis(y_title = "Labor Force (millions)")
     }
 
     # =========================================================================
@@ -485,13 +505,26 @@ mod_employment_viz_server <- function(id, rv) {
         lfpr_data <- rv$active_data$lfpr_projection
         req(lfpr_data, lfpr_data$aggregate)
         dt <- copy(lfpr_data$aggregate)
-        dt <- dt[year %in% years & age_group %in% USEMP_CHART_LFPR_GROUPS]
-        dt[, lfpr := round(lfpr * 100, 2)]
-        wide <- dcast(dt, year + sex ~ age_group, value.var = "lfpr")
+        dt <- dt[year %in% years]
+        # Map single-year ages 55+ to 5-year groups
+        dt[, display_group := fcase(
+          age_group %in% c("16-17", "18-19", "20-24", "25-29", "30-34",
+                           "35-39", "40-44", "45-49", "50-54"), age_group,
+          age_group %in% as.character(55:59), "55-59",
+          age_group %in% as.character(60:64), "60-64",
+          age_group %in% as.character(65:69), "65-69",
+          age_group %in% as.character(70:74), "70-74",
+          age_group %in% c(as.character(75:100), "75+", "80+"), "75+",
+          default = NA_character_
+        )]
+        dt <- dt[!is.na(display_group)]
+        dt <- dt[, .(lfpr = round(mean(lfpr, na.rm = TRUE) * 100, 2)),
+                 by = .(year, display_group, sex)]
+        wide <- dcast(dt, year + sex ~ display_group, value.var = "lfpr")
         datatable(wide, options = list(scrollX = TRUE, pageLength = 15)) |>
           formatRound(columns = 3:ncol(wide), digits = 2)
 
-      } else if (chart_type == "lf_agg") {
+      } else if (chart_type %in% c("lf_growth", "lf_level")) {
         lf_data <- rv$active_data$labor_force_employment
         req(lf_data, lf_data$labor_force)
         dt <- copy(lf_data$labor_force)
