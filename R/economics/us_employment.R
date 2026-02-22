@@ -42,6 +42,55 @@ USEMP_AGE_GROUP_RANGES <- list(
 )
 
 # =============================================================================
+# Internal helpers
+# =============================================================================
+
+#' Apply per-group trend adjustments via lookup table join
+#'
+#' @param dt data.table with age_group and trend_increment columns
+#' @param trend_adjustments Nested list: list(age_group = list(sex = list(rate, max_years)))
+#' @param sex_col Name of sex column in dt, or NULL if single-sex grid
+#' @param fixed_sex If sex_col is NULL, which sex to look up in trend_adjustments
+#' @keywords internal
+apply_trend_adjustments <- function(dt, trend_adjustments, sex_col = "sex",
+                                    fixed_sex = NULL) {
+  if (is.null(trend_adjustments)) return(invisible(NULL))
+
+  ta_rows <- vector("list", length(trend_adjustments) * 2L)
+  idx <- 0L
+  for (ag_name in names(trend_adjustments)) {
+    sexes <- if (!is.null(fixed_sex)) fixed_sex else c("male", "female")
+    for (sx in sexes) {
+      sx_adj <- trend_adjustments[[ag_name]][[sx]]
+      if (!is.null(sx_adj)) {
+        idx <- idx + 1L
+        ta_rows[[idx]] <- data.table::data.table(
+          age_group = ag_name, .sex = sx,
+          ta_rate = sx_adj$rate %||% 1.0,
+          ta_max  = as.numeric(sx_adj$max_years %||% .Machine$integer.max)
+        )
+      }
+    }
+  }
+  if (idx == 0L) return(invisible(NULL))
+
+  ta_lookup <- data.table::rbindlist(ta_rows[seq_len(idx)])
+
+  if (!is.null(sex_col) && sex_col %in% names(dt)) {
+    # Grid has a sex column — join on (age_group, sex)
+    data.table::setnames(ta_lookup, ".sex", sex_col)
+    dt[ta_lookup, on = c("age_group", sex_col),
+       trend_increment := pmin(trend_increment, i.ta_max) * i.ta_rate]
+  } else {
+    # Single-sex grid — join on age_group only
+    ta_lookup[, .sex := NULL]
+    dt[ta_lookup, on = "age_group",
+       trend_increment := pmin(trend_increment, i.ta_max) * i.ta_rate]
+  }
+  invisible(NULL)
+}
+
+# =============================================================================
 # Unemployment Rate Projection (Eq 2.1.3)
 # =============================================================================
 
@@ -593,19 +642,15 @@ project_lfpr <- function(unemployment_rates,
     sorted = FALSE
   )
 
-  # Build lag columns via repeated merge
-  for (lag_i in 0:5) {
-    lag_col <- paste0("ru_lag", lag_i)
-    ru_grid[, lag_year := year - lag_i]
-    ru_grid <- merge(ru_grid, ru_annual[, .(age_group, sex, year, rate)],
-                     by.x = c("age_group", "sex", "lag_year"),
-                     by.y = c("age_group", "sex", "year"),
-                     all.x = TRUE, sort = FALSE)
-    data.table::setnames(ru_grid, "rate", lag_col)
-    ru_grid[is.na(get(lag_col)), (lag_col) := 0]
-  }
-  ru_grid[, lag_year := NULL]
+  # Build lag columns via keyed lookups (avoids 6 separate merge operations)
+  data.table::setkey(ru_annual, age_group, sex, year)
   ru_lag_cols <- paste0("ru_lag", 0:5)
+  for (lag_i in 0:5) {
+    lag_col <- ru_lag_cols[lag_i + 1L]
+    ru_grid[, (lag_col) := ru_annual[.(ru_grid$age_group, ru_grid$sex,
+                                       ru_grid$year - lag_i), rate]]
+  }
+  data.table::setnafill(ru_grid, fill = 0, cols = ru_lag_cols)
 
   # ============================================================================
   # SECTION 1: Ages 16-19 (young) — fully vectorized
@@ -674,20 +719,7 @@ project_lfpr <- function(unemployment_rates,
 
   # Compute LFPR — apply per-group trend adjustments
   young_grid[, trend_increment := year - base_year]
-  if (!is.null(trend_adjustments)) {
-    for (ag_name in intersect(names(trend_adjustments), unique(young_grid$age_group))) {
-      ag_adj <- trend_adjustments[[ag_name]]
-      for (sx in c("male", "female")) {
-        sx_adj <- ag_adj[[sx]]
-        if (!is.null(sx_adj)) {
-          ta_rate <- sx_adj$rate %||% 1.0
-          ta_max <- sx_adj$max_years %||% .Machine$integer.max
-          young_grid[age_group == ag_name & sex == sx,
-                     trend_increment := pmin(trend_increment, ta_max) * ta_rate]
-        }
-      }
-    }
-  }
+  apply_trend_adjustments(young_grid, trend_adjustments)
   young_grid[, trend_val := calibrated_tr_base + trend_increment]
   young_grid[, trend_increment := NULL]
   young_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
@@ -762,17 +794,8 @@ project_lfpr <- function(unemployment_rates,
 
   # Compute per-status LFPR — apply per-group trend adjustments
   male_grid[, trend_increment := year - base_year]
-  if (!is.null(trend_adjustments)) {
-    for (ag_name in intersect(names(trend_adjustments), unique(male_grid$age_group))) {
-      male_adj <- trend_adjustments[[ag_name]]$male
-      if (!is.null(male_adj)) {
-        ta_rate <- male_adj$rate %||% 1.0
-        ta_max <- male_adj$max_years %||% .Machine$integer.max
-        male_grid[age_group == ag_name,
-                  trend_increment := pmin(trend_increment, ta_max) * ta_rate]
-      }
-    }
-  }
+  apply_trend_adjustments(male_grid, trend_adjustments,
+                          sex_col = NULL, fixed_sex = "male")
   male_grid[, trend_val := calibrated_tr_base + trend_increment]
   male_grid[, trend_increment := NULL]
   male_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
@@ -879,17 +902,8 @@ project_lfpr <- function(unemployment_rates,
 
   # Compute per-category LFPR — apply per-group trend adjustments
   fmc_grid[, trend_increment := year - base_year]
-  if (!is.null(trend_adjustments)) {
-    for (ag_name in intersect(names(trend_adjustments), unique(fmc_grid$age_group))) {
-      female_adj <- trend_adjustments[[ag_name]]$female
-      if (!is.null(female_adj)) {
-        ta_rate <- female_adj$rate %||% 1.0
-        ta_max <- female_adj$max_years %||% .Machine$integer.max
-        fmc_grid[age_group == ag_name,
-                 trend_increment := pmin(trend_increment, ta_max) * ta_rate]
-      }
-    }
-  }
+  apply_trend_adjustments(fmc_grid, trend_adjustments,
+                          sex_col = NULL, fixed_sex = "female")
   fmc_grid[, trend_val := calibrated_tr_base + trend_increment]
   fmc_grid[, trend_increment := NULL]
   fmc_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +

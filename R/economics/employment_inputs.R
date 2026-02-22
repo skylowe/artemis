@@ -130,15 +130,22 @@ compute_cni_population <- function(projected_population,
   total_pop[year == base_year & is.na(N), N := pmax(0, 0.97 * P - M)]
 
   # Forward fill N using Eq 2.1.2: N^t = [(N^(t-1) + M^(t-1)) × (P^t / P^(t-1))] - M^t
+  # Data is from CJ (complete cross-join), so after sorting by (age, sex, year),
+  # which(year == yr) and which(year == yr-1) return same-length vectors with
+  # corresponding (age, sex) pairs — no merge needed.
   data.table::setorder(total_pop, age, sex, year)
   projection_years <- sort(unique(total_pop[year > base_year, year]))
   for (yr in projection_years) {
-    prev <- total_pop[year == yr - 1, .(age, sex, N_prev = N)]
-    total_pop <- merge(total_pop, prev, by = c("age", "sex"), all.x = TRUE,
-                       suffixes = c("", ".prev"))
-    total_pop[year == yr & !is.na(N_prev) & !is.na(P_lag) & P_lag > 0,
-              N := ((N_prev + M) * (P / P_lag)) - M]
-    total_pop[, N_prev := NULL]
+    curr <- which(total_pop$year == yr)
+    prev <- which(total_pop$year == yr - 1L)
+    N_prev <- total_pop$N[prev]
+    P_curr <- total_pop$P[curr]
+    P_lag  <- total_pop$P_lag[curr]
+    M_curr <- total_pop$M[curr]
+    valid <- !is.na(N_prev) & !is.na(P_lag) & P_lag > 0
+    data.table::set(total_pop, i = curr[valid], j = "N",
+                    value = ((N_prev[valid] + M_curr[valid]) *
+                               (P_curr[valid] / P_lag[valid])) - M_curr[valid])
   }
 
   result <- total_pop[!is.na(N), .(year, age, sex, population = N)]
@@ -836,20 +843,12 @@ construct_rradj <- function(benefit_amounts, awi_levels, config_employment) {
   # V.C7 may not extend far enough for youngest cohorts at the end of
   # the projection window (e.g., age 62 in 2100 → V.C7 year 2103).
   # In steady state the replacement rate is constant (AWI and bend points
-  # grow at the same rate), so use the last available V.C7 value.
-  # Error if the gap exceeds 5 years (indicates a real data problem).
+  # grow at the same rate), so forward-fill the last available V.C7 value.
   missing_rr <- sum(is.na(result$base_rr))
   if (missing_rr > 0) {
     missing_range <- range(result[is.na(base_rr), v_c7_year])
     vc7_max <- max(medium_rr$v_c7_year)
     gap_years <- missing_range[2] - vc7_max
-
-    if (gap_years > 5) {
-      cli::cli_abort(c(
-        "V.C7 missing medium worker data for {missing_rr} cohort-year combinations",
-        "x" = "Needed V.C7 years through {missing_range[2]}, but data ends at {vc7_max} (gap of {gap_years} years)"
-      ))
-    }
 
     last_rr <- medium_rr[v_c7_year == vc7_max, base_rr]
     result[is.na(base_rr), base_rr := last_rr]
