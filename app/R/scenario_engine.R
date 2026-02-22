@@ -70,6 +70,8 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     "config_population_status",
     "config_metadata",
     "config_data_sources",
+    "config_economics",
+    "config_runtime",
 
     # Fertility chain (pure computation — no file I/O)
     "fertility_ultimate_years",
@@ -129,7 +131,17 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     "projected_net_immigration",
     "projected_marital_population",
     "projected_cni_population",
-    "population_projection_summary"
+    "population_projection_summary",
+
+    # Economics chain (Eqs 2.1.1-2.1.19)
+    "employment_inputs",
+    "unemployment_projection",
+    "lfpr_projection",
+    "labor_force_employment",
+    "employed_op_projection",
+    "eo_earnings_recording",
+    "teo_projection",
+    "employment_validation"
   )
 
   # Targets to load results from after tar_make
@@ -148,7 +160,10 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     "marriage_projection",
     "divorce_projection",
     "net_lpr_immigration",
-    "population_projection_summary"
+    "population_projection_summary",
+    "unemployment_projection",
+    "lfpr_projection",
+    "labor_force_employment"
   )
 
   # Run pipeline with progress updates — separate tar_make from data reading

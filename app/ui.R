@@ -195,6 +195,19 @@ ui <- page_navbar(
   ),
 
   # =============================================================================
+  # US Employment Tab
+  # =============================================================================
+  nav_panel(
+    title = "US Employment",
+    icon = icon("briefcase"),
+    tags$div(
+      class = "alert alert-warning text-center fw-bold mb-3",
+      "Under Development"
+    ),
+    mod_employment_viz_ui("employment_viz")
+  ),
+
+  # =============================================================================
   # Scenarios Tab
   # =============================================================================
   nav_panel(

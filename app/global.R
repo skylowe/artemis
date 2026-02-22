@@ -128,7 +128,10 @@ load_baseline_data <- function() {
     "mortality_qx_projected",
     "marriage_amr_projected",
     "divorce_adr_projected",
-    "population_projection_summary"
+    "population_projection_summary",
+    "unemployment_projection",
+    "lfpr_projection",
+    "labor_force_employment"
   )
 
   for (target in target_names) {

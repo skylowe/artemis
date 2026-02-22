@@ -323,6 +323,9 @@ server <- function(input, output, session) {
   # Marriage/Divorce visualization
   mod_marriage_divorce_viz_server("marriage_viz", rv)
 
+  # US Employment visualization
+  mod_employment_viz_server("employment_viz", rv)
+
   # Comparison view
   mod_comparison_view_server("comparison", rv)
 
