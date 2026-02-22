@@ -523,14 +523,14 @@ project_lfpr <- function(unemployment_rates,
   decay_75_79 <- config_employment$lfpr_decay_75_79
   decay_80_plus <- config_employment$lfpr_decay_80_plus
 
+  # Trend freeze: after this many years, trend stops accumulating
+  trend_freeze_years <- config_employment$lfpr_trend_freeze_years
+
   # MSSHARE cap: maximum deviation from base-year values
   msshare_max_dev <- config_employment$msshare_max_deviation
 
   # Addfactors (default to empty)
   addfactors <- config_employment$addfactors
-
-  # Young-age trend addfactors (level + annual correction)
-  young_trend_addfactors <- config_employment$young_trend_addfactors
 
   cli::cli_alert_info("Projecting LFPR for {n_proj_years} years")
 
@@ -673,28 +673,22 @@ project_lfpr <- function(unemployment_rates,
   young_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
 
   # Compute LFPR
-  young_grid[, trend_val := calibrated_tr_base + (year - base_year)]
+  trend_increment <- young_grid$year - base_year
+  if (!is.null(trend_freeze_years)) trend_increment <- pmin(trend_increment, trend_freeze_years)
+  young_grid[, trend_val := calibrated_tr_base + trend_increment]
   young_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                             rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   young_grid[, trend_effect := trend_coeff * trend_val + trend_offset]
   young_grid[, c6u_effect := fifelse(has_c6u, c6u_coeff * proportion + c6u_offset, 0)]
   young_grid[, lfpr := (ru_effect + trend_effect + c6u_effect + intercept) / (1 + rd)]
 
-  # Apply young-age trend addfactors (level + annual × years_from_start)
-  # Corrects excess trend decline to match BLS 10-year projections.
-  # After cap_years, correction holds constant.
-  first_proj_year <- min(projection_years)
-  af_cap <- if (!is.null(young_trend_addfactors)) young_trend_addfactors$cap_years %||% Inf else Inf
-  if (!is.null(young_trend_addfactors)) {
-    for (ag_name in names(young_trend_addfactors)) {
-      if (ag_name == "cap_years") next
+  # Apply addfactors to young ages
+  if (!is.null(addfactors)) {
+    for (ag_name in names(addfactors)) {
       for (sx in c("male", "female")) {
-        af <- young_trend_addfactors[[ag_name]][[sx]]
-        if (!is.null(af)) {
-          af_level <- af$level %||% 0
-          af_annual <- af$annual %||% 0
-          young_grid[age_group == ag_name & sex == sx,
-                     lfpr := lfpr + af_level + af_annual * pmin(year - first_proj_year, af_cap)]
+        af_val <- addfactors[[ag_name]][[sx]]
+        if (!is.null(af_val)) {
+          young_grid[age_group == ag_name & sex == sx, lfpr := lfpr + af_val]
         }
       }
     }
@@ -753,7 +747,9 @@ project_lfpr <- function(unemployment_rates,
   male_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
 
   # Compute per-status LFPR
-  male_grid[, trend_val := calibrated_tr_base + (year - base_year)]
+  trend_increment <- male_grid$year - base_year
+  if (!is.null(trend_freeze_years)) trend_increment <- pmin(trend_increment, trend_freeze_years)
+  male_grid[, trend_val := calibrated_tr_base + trend_increment]
   male_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                            rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   male_grid[, lfpr_raw := (ru_effect + trend_coeff * trend_val + intercept) / (1 + rd)]
@@ -787,20 +783,6 @@ project_lfpr <- function(unemployment_rates,
       af_male <- addfactors[[ag_name]]$male
       if (!is.null(af_male)) {
         male_grid[age_group == ag_name, lfpr_agg := lfpr_agg + af_male]
-      }
-    }
-  }
-
-  # Apply trend addfactors (level + annual correction) for ages 20-29
-  if (!is.null(young_trend_addfactors)) {
-    for (ag_name in names(young_trend_addfactors)) {
-      if (ag_name == "cap_years") next
-      af_male <- young_trend_addfactors[[ag_name]]$male
-      if (!is.null(af_male)) {
-        af_level <- af_male$level %||% 0
-        af_annual <- af_male$annual %||% 0
-        male_grid[age_group == ag_name,
-                   lfpr_agg := lfpr_agg + af_level + af_annual * pmin(year - first_proj_year, af_cap)]
       }
     }
   }
@@ -871,7 +853,9 @@ project_lfpr <- function(unemployment_rates,
   fmc_grid[is.na(calibrated_tr_base), calibrated_tr_base := 0]
 
   # Compute per-category LFPR
-  fmc_grid[, trend_val := calibrated_tr_base + (year - base_year)]
+  trend_increment <- fmc_grid$year - base_year
+  if (!is.null(trend_freeze_years)) trend_increment <- pmin(trend_increment, trend_freeze_years)
+  fmc_grid[, trend_val := calibrated_tr_base + trend_increment]
   fmc_grid[, ru_effect := rl0 * ru_lag0 + rl1 * ru_lag1 + rl2 * ru_lag2 +
                           rl3 * ru_lag3 + rl4 * ru_lag4 + rl5 * ru_lag5]
   fmc_grid[, lfpr_raw := (ru_effect + trend_coeff * trend_val + intercept) / (1 + rd)]
@@ -922,20 +906,6 @@ project_lfpr <- function(unemployment_rates,
       af_female <- addfactors[[ag_name]]$female
       if (!is.null(af_female)) {
         fmc_grid[age_group == ag_name, lfpr_agg := lfpr_agg + af_female]
-      }
-    }
-  }
-
-  # Apply trend addfactors (level + annual correction) for ages 20-29
-  if (!is.null(young_trend_addfactors)) {
-    for (ag_name in names(young_trend_addfactors)) {
-      if (ag_name == "cap_years") next
-      af_female <- young_trend_addfactors[[ag_name]]$female
-      if (!is.null(af_female)) {
-        af_level <- af_female$level %||% 0
-        af_annual <- af_female$annual %||% 0
-        fmc_grid[age_group == ag_name,
-                  lfpr_agg := lfpr_agg + af_level + af_annual * pmin(year - first_proj_year, af_cap)]
       }
     }
   }

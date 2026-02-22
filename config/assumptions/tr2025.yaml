@@ -1095,30 +1095,12 @@ economics:
     # Ages 80+: multiply by this factor per year of age
     lfpr_decay_80_plus: 0.965
 
-    # Young-age trend addfactors: correct excessive trend decline for ages 16-29.
-    # SSA trend coefficients produce slopes steeper than BLS 10-year projections
-    # (4-9x for ages 16-19, ~50x for female 20-24).
-    # Each entry has:
-    #   level:  constant LFPR offset (corrects base-year level vs BLS)
-    #   annual: per-year LFPR correction (offsets excess trend decline vs BLS slope)
-    # Applied as: correction = level + annual * min(years_elapsed, cap_years)
-    # After cap_years, the correction holds constant (no further accumulation).
-    # Calibrated to match BLS 2024-2034 LFPR projections by age-sex group.
-    # Set to null to disable young-age trend corrections.
-    young_trend_addfactors:
-      cap_years: 10
-      "16-17":
-        male:   { level: -0.009, annual: 0.01372 }
-        female: { level:  0.004, annual: 0.01343 }
-      "18-19":
-        male:   { level: -0.035, annual: 0.00916 }
-        female: { level: -0.005, annual: 0.00864 }
-      "20-24":
-        male:   { level: -0.012, annual: 0.00045 }
-        female: { level: -0.037, annual: 0.00479 }
-      "25-29":
-        male:   { level: -0.014, annual: -0.00039 }
-        female: { level: -0.017, annual: 0.00486 }
+    # Number of years after base_year to freeze LFPR time trends.
+    # After this many years, the trend term stops accumulating and holds constant.
+    # Set to null to never freeze (trend accumulates forever — not recommended).
+    # TR2025 documentation states ultimate values are reached "during the last
+    # half of the short range (first 10 years)."
+    lfpr_trend_freeze_years: null
 
     # Maximum allowed deviation of MSSHARE from base-year values for LFPR equations.
     # Prevents extrapolation outside the coefficient estimation range.
