@@ -164,7 +164,8 @@ run_scenario_projection <- function(config, artemis_root, progress_callback = NU
     "unemployment_projection",
     "lfpr_projection",
     "labor_force_employment",
-    "cps_labor_force"
+    "cps_labor_force",
+    "tr_economic_assumptions"
   )
 
   # Run pipeline with progress updates — separate tar_make from data reading

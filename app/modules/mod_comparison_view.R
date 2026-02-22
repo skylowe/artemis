@@ -291,15 +291,11 @@ mod_comparison_view_server <- function(id, rv) {
             }
           },
           "unemployment_rate" = {
-            ur <- data$unemployment_projection$actual
-            lf <- data$labor_force_employment$labor_force
-            if (!is.null(ur) && !is.null(lf)) {
-              # Labor-force-weighted aggregate UR
-              merged <- merge(ur, lf, by = c("year", "quarter", "age_group", "sex"))
-              merged[year %in% years,
-                .(value = sum(labor_force * rate, na.rm = TRUE) /
-                          sum(labor_force, na.rm = TRUE)),
-                by = year]
+            tr_ea <- data$tr_economic_assumptions
+            if (!is.null(tr_ea)) {
+              # Use V.B2 target path directly (matches TR2025 tables)
+              tr_ea[variable == "unemployment_rate" & year %in% years,
+                .(value = value[1]), by = year]
             }
           },
           "lfpr" = {
