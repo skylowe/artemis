@@ -1080,7 +1080,7 @@ economics:
 
     # Ultimate unemployment rate (from Trustees intermediate assumptions)
     # Ref: Table V.B2 in SingleYearTRTables_TR2025.xlsx
-    ultimate_unemployment_rate: 5.5
+    ultimate_unemployment_rate: 4.5
     ultimate_unemployment_year: 2034
 
     # Okun's Law coefficient for RTP construction

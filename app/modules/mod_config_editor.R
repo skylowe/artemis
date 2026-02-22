@@ -486,12 +486,12 @@ mod_config_editor_ui <- function(id) {
           ns("ultimate_unemployment_rate"),
           "Ultimate Unemployment Rate",
           min = 2.0, max = 12.0,
-          value = 5.5,
+          value = 4.5,
           step = 0.1,
           post = "%"
         ),
-        helpText("Long-run equilibrium unemployment rate. TR2025: 4.5% (low),
-                 5.5% (intermediate), 6.5% (high)."),
+        helpText("Long-run equilibrium unemployment rate. TR2025: 3.5% (low),
+                 4.5% (intermediate), 5.5% (high)."),
 
         sliderInput(
           ns("okun_coefficient"),
@@ -734,7 +734,7 @@ mod_config_editor_server <- function(id, rv) {
       updateSelectInput(session, "economic_alternative",
         selected = config$economics$employment$economic_alternative %||% "intermediate")
       updateSliderInput(session, "ultimate_unemployment_rate",
-        value = config$economics$employment$ultimate_unemployment_rate %||% 5.5)
+        value = config$economics$employment$ultimate_unemployment_rate %||% 4.5)
       updateSliderInput(session, "okun_coefficient",
         value = config$economics$employment$okun_coefficient %||% 2.0)
     }
@@ -757,10 +757,10 @@ mod_config_editor_server <- function(id, rv) {
     # Auto-sync ultimate unemployment rate to match economic scenario
     observeEvent(input$economic_alternative, {
       canonical_ur <- switch(input$economic_alternative,
-        low = 4.5,
-        intermediate = 5.5,
-        high = 6.5,
-        5.5
+        low = 3.5,
+        intermediate = 4.5,
+        high = 5.5,
+        4.5
       )
       updateSliderInput(session, "ultimate_unemployment_rate", value = canonical_ur)
     }, ignoreInit = TRUE)
