@@ -91,12 +91,12 @@ mod_employment_viz_ui <- function(id) {
 
       hr(),
 
-      h6("Compare Scenarios"),
+      h6("Scenarios"),
       checkboxGroupInput(
         ns("compare_scenarios"),
         NULL,
-        choices = c("Baseline" = "baseline"),
-        selected = character(0)
+        choices = c("Active" = "active"),
+        selected = "active"
       )
     ),
 
@@ -196,21 +196,26 @@ mod_employment_viz_server <- function(id, rv) {
 
     # Populate scenario selector from rv$scenarios
     observe({
-      choices <- c("Baseline" = "baseline")
+      choices <- c("Active" = "active", "Baseline" = "baseline")
       if (length(rv$scenarios) > 0) {
         scenario_choices <- setNames(names(rv$scenarios), names(rv$scenarios))
         choices <- c(choices, scenario_choices)
       }
+      selected <- isolate(input$compare_scenarios)
+      # Keep "active" selected if user hasn't touched it yet
+      if (is.null(selected)) selected <- "active"
       updateCheckboxGroupInput(
         session, "compare_scenarios",
         choices = choices,
-        selected = isolate(input$compare_scenarios)
+        selected = selected
       )
     })
 
     # Helper: get employment data for a given scenario ID
     get_scenario_data <- function(scenario_id) {
-      if (scenario_id == "baseline") {
+      if (scenario_id == "active") {
+        rv$active_data
+      } else if (scenario_id == "baseline") {
         rv$baseline
       } else if (scenario_id %in% names(rv$scenarios)) {
         rv$scenarios[[scenario_id]]$results
@@ -273,9 +278,9 @@ mod_employment_viz_server <- function(id, rv) {
     }
 
     render_ur_chart <- function() {
-      ur_data <- rv$active_data$unemployment_projection
-      if (is.null(ur_data) || is.null(ur_data$actual)) {
-        return(plotly_empty_message("Unemployment projection data not available"))
+      selected <- input$compare_scenarios
+      if (length(selected) == 0) {
+        return(plotly_empty_message("Select at least one scenario"))
       }
 
       years <- seq(input$year_range[1], input$year_range[2])
@@ -286,42 +291,41 @@ mod_employment_viz_server <- function(id, rv) {
         return(plotly_empty_message("Select at least one age group"))
       }
 
-      # Active scenario: projected + historical splice
-      proj <- copy(ur_data$actual)
-      proj <- proj[age_group %in% selected_groups,
-                   .(rate = mean(rate, na.rm = TRUE)),
-                   by = .(year, age_group, sex)]
-
-      hist_ur <- get_historical_ur()
-      if (!is.null(hist_ur)) {
-        hist_ur <- hist_ur[age_group %in% selected_groups]
-        if (max(hist_ur$rate, na.rm = TRUE) <= 1) hist_ur[, rate := rate * 100]
-        dt <- rbindlist(list(hist_ur, proj), use.names = TRUE, fill = TRUE)
-      } else {
-        dt <- proj
-      }
-
-      dt <- dt[year %in% years]
-      if (sex_filter == "both") {
-        dt <- dt[, .(rate = mean(rate, na.rm = TRUE)), by = .(year, age_group)]
-      } else {
-        dt <- dt[sex == sex_filter]
-      }
-      dt[, age_group := factor(age_group, levels = USEMP_CHART_UR_GROUPS)]
-
-      p <- ggplot(dt, aes(x = year, y = rate, color = age_group)) +
-        geom_line(linewidth = 0.8) +
-        scale_color_manual(values = ur_age_colors, name = "Age Group") +
-        labs(x = NULL, y = "Unemployment Rate (%)") +
-        theme_artemis()
-
-      # Overlay comparison scenarios as dashed lines
-      compare <- input$compare_scenarios
-      for (sid in compare) {
+      # Build data from all checked scenarios
+      scenario_dts <- list()
+      for (sid in selected) {
         sdata <- get_scenario_data(sid)
         if (!is.null(sdata$unemployment_projection$actual)) {
           s_dt <- prepare_ur_data(sdata$unemployment_projection$actual,
                                   years, selected_groups, sex_filter)
+          s_dt[, scenario := sid]
+          scenario_dts <- c(scenario_dts, list(s_dt))
+        }
+      }
+
+      if (length(scenario_dts) == 0) {
+        return(plotly_empty_message("No unemployment data in selected scenarios"))
+      }
+
+      # Single scenario: color by age group (no scenario legend)
+      if (length(scenario_dts) == 1) {
+        dt <- scenario_dts[[1]]
+        p <- ggplot(dt, aes(x = year, y = rate, color = age_group)) +
+          geom_line(linewidth = 0.8) +
+          scale_color_manual(values = ur_age_colors, name = "Age Group") +
+          labs(x = NULL, y = "Unemployment Rate (%)") +
+          theme_artemis()
+      } else {
+        # Multi-scenario: first scenario solid, rest dashed
+        first_sid <- selected[1]
+        dt_first <- scenario_dts[[1]]
+        p <- ggplot(dt_first, aes(x = year, y = rate, color = age_group)) +
+          geom_line(linewidth = 0.8) +
+          scale_color_manual(values = ur_age_colors, name = "Age Group") +
+          labs(x = NULL, y = "Unemployment Rate (%)",
+               caption = paste("Dashed:", paste(selected[-1], collapse = ", "))) +
+          theme_artemis()
+        for (s_dt in scenario_dts[-1]) {
           p <- p + geom_line(data = s_dt, aes(x = year, y = rate, color = age_group),
                              linetype = "dashed", linewidth = 0.6, show.legend = FALSE)
         }
@@ -329,9 +333,6 @@ mod_employment_viz_server <- function(id, rv) {
 
       if (sex_filter != "both") {
         p <- p + labs(subtitle = paste0(tools::toTitleCase(sex_filter), "s"))
-      }
-      if (length(compare) > 0) {
-        p <- p + labs(caption = paste("Dashed:", paste(compare, collapse = ", ")))
       }
 
       ggplotly(p) |> layout_artemis(y_title = "Unemployment Rate (%)")
@@ -359,9 +360,9 @@ mod_employment_viz_server <- function(id, rv) {
     }
 
     render_lfpr_chart <- function() {
-      lfpr_data <- rv$active_data$lfpr_projection
-      if (is.null(lfpr_data) || is.null(lfpr_data$aggregate)) {
-        return(plotly_empty_message("LFPR projection data not available"))
+      selected <- input$compare_scenarios
+      if (length(selected) == 0) {
+        return(plotly_empty_message("Select at least one scenario"))
       }
 
       years <- seq(input$year_range[1], input$year_range[2])
@@ -372,47 +373,40 @@ mod_employment_viz_server <- function(id, rv) {
         return(plotly_empty_message("Select at least one age group"))
       }
 
-      # Active scenario: projected + historical splice
-      proj <- copy(lfpr_data$aggregate)
-      proj[, display_group := map_to_5yr_group(age_group)]
-      proj <- proj[!is.na(display_group)]
-      proj <- proj[, .(lfpr = mean(lfpr, na.rm = TRUE)),
-                   by = .(year, display_group, sex)]
-
-      hist_lfpr <- get_historical_lfpr()
-      if (!is.null(hist_lfpr)) {
-        hist_agg <- hist_lfpr[marital_status == "all" & child_status == "all"]
-        hist_agg[, display_group := map_to_5yr_group(age_group)]
-        hist_agg <- hist_agg[!is.na(display_group)]
-        hist_agg <- hist_agg[, .(lfpr = mean(lfpr, na.rm = TRUE)),
-                             by = .(year, display_group, sex)]
-        dt <- rbindlist(list(hist_agg, proj), use.names = TRUE, fill = TRUE)
-      } else {
-        dt <- proj
-      }
-
-      dt <- dt[year %in% years & display_group %in% selected_groups]
-      if (sex_filter == "both") {
-        dt <- dt[, .(lfpr = mean(lfpr, na.rm = TRUE)), by = .(year, display_group)]
-      } else {
-        dt <- dt[sex == sex_filter]
-      }
-      dt[, display_group := factor(display_group, levels = USEMP_CHART_LFPR_GROUPS)]
-
-      p <- ggplot(dt, aes(x = year, y = lfpr, color = display_group)) +
-        geom_line(linewidth = 0.8) +
-        scale_color_manual(values = lfpr_age_colors, name = "Age Group") +
-        scale_y_continuous(labels = scales::percent) +
-        labs(x = NULL, y = "LFPR") +
-        theme_artemis()
-
-      # Overlay comparison scenarios as dashed lines
-      compare <- input$compare_scenarios
-      for (sid in compare) {
+      # Build data from all checked scenarios
+      scenario_dts <- list()
+      for (sid in selected) {
         sdata <- get_scenario_data(sid)
         if (!is.null(sdata$lfpr_projection$aggregate)) {
           s_dt <- prepare_lfpr_data(sdata$lfpr_projection$aggregate,
                                     years, selected_groups, sex_filter)
+          s_dt[, scenario := sid]
+          scenario_dts <- c(scenario_dts, list(s_dt))
+        }
+      }
+
+      if (length(scenario_dts) == 0) {
+        return(plotly_empty_message("No LFPR data in selected scenarios"))
+      }
+
+      if (length(scenario_dts) == 1) {
+        dt <- scenario_dts[[1]]
+        p <- ggplot(dt, aes(x = year, y = lfpr, color = display_group)) +
+          geom_line(linewidth = 0.8) +
+          scale_color_manual(values = lfpr_age_colors, name = "Age Group") +
+          scale_y_continuous(labels = scales::percent) +
+          labs(x = NULL, y = "LFPR") +
+          theme_artemis()
+      } else {
+        dt_first <- scenario_dts[[1]]
+        p <- ggplot(dt_first, aes(x = year, y = lfpr, color = display_group)) +
+          geom_line(linewidth = 0.8) +
+          scale_color_manual(values = lfpr_age_colors, name = "Age Group") +
+          scale_y_continuous(labels = scales::percent) +
+          labs(x = NULL, y = "LFPR",
+               caption = paste("Dashed:", paste(selected[-1], collapse = ", "))) +
+          theme_artemis()
+        for (s_dt in scenario_dts[-1]) {
           p <- p + geom_line(data = s_dt, aes(x = year, y = lfpr, color = display_group),
                              linetype = "dashed", linewidth = 0.6, show.legend = FALSE)
         }
@@ -420,9 +414,6 @@ mod_employment_viz_server <- function(id, rv) {
 
       if (sex_filter != "both") {
         p <- p + labs(subtitle = paste0(tools::toTitleCase(sex_filter), "s"))
-      }
-      if (length(compare) > 0) {
-        p <- p + labs(caption = paste("Dashed:", paste(compare, collapse = ", ")))
       }
 
       ggplotly(p) |> layout_artemis(y_title = "LFPR")
@@ -478,19 +469,14 @@ mod_employment_viz_server <- function(id, rv) {
     }
 
     render_lf_growth_chart <- function() {
-      lf_data <- rv$active_data$labor_force_employment
-      if (is.null(lf_data) || is.null(lf_data$labor_force)) {
-        return(plotly_empty_message("Labor force data not available"))
+      selected <- input$compare_scenarios
+      if (length(selected) == 0) {
+        return(plotly_empty_message("Select at least one scenario"))
       }
 
       years <- seq(input$year_range[1], input$year_range[2])
-      agg <- get_lf_series(copy(lf_data$labor_force), years)
-      growth_dt <- agg[!is.na(growth_rate)]
-
-      # Overlay selected scenarios
-      compare <- input$compare_scenarios
       scenario_dts <- list()
-      for (sid in compare) {
+      for (sid in selected) {
         sdata <- get_scenario_data(sid)
         if (!is.null(sdata$labor_force_employment$labor_force)) {
           s_agg <- get_lf_series(copy(sdata$labor_force_employment$labor_force), years)
@@ -500,9 +486,13 @@ mod_employment_viz_server <- function(id, rv) {
         }
       }
 
-      if (length(scenario_dts) > 0) {
-        growth_dt[, scenario := "Active"]
-        growth_dt <- rbindlist(c(list(growth_dt), scenario_dts), use.names = TRUE, fill = TRUE)
+      if (length(scenario_dts) == 0) {
+        return(plotly_empty_message("No labor force data in selected scenarios"))
+      }
+
+      growth_dt <- rbindlist(scenario_dts, use.names = TRUE, fill = TRUE)
+
+      if (length(unique(growth_dt$scenario)) > 1) {
         p <- ggplot(growth_dt, aes(x = year, y = growth_rate, color = scenario)) +
           geom_line(linewidth = 0.8) +
           geom_hline(yintercept = 0, linetype = "dashed", color = "#BDC3C7") +
@@ -526,17 +516,14 @@ mod_employment_viz_server <- function(id, rv) {
     # =========================================================================
 
     render_lf_level_chart <- function() {
-      lf_data <- rv$active_data$labor_force_employment
-      if (is.null(lf_data) || is.null(lf_data$labor_force)) {
-        return(plotly_empty_message("Labor force data not available"))
+      selected <- input$compare_scenarios
+      if (length(selected) == 0) {
+        return(plotly_empty_message("Select at least one scenario"))
       }
 
       years <- seq(input$year_range[1], input$year_range[2])
-      agg <- get_lf_series(copy(lf_data$labor_force), years)
-
-      compare <- input$compare_scenarios
       scenario_dts <- list()
-      for (sid in compare) {
+      for (sid in selected) {
         sdata <- get_scenario_data(sid)
         if (!is.null(sdata$labor_force_employment$labor_force)) {
           s_agg <- get_lf_series(copy(sdata$labor_force_employment$labor_force), years)
@@ -545,9 +532,13 @@ mod_employment_viz_server <- function(id, rv) {
         }
       }
 
-      if (length(scenario_dts) > 0) {
-        agg[, scenario := "Active"]
-        agg <- rbindlist(c(list(agg), scenario_dts), use.names = TRUE, fill = TRUE)
+      if (length(scenario_dts) == 0) {
+        return(plotly_empty_message("No labor force data in selected scenarios"))
+      }
+
+      agg <- rbindlist(scenario_dts, use.names = TRUE, fill = TRUE)
+
+      if (length(unique(agg$scenario)) > 1) {
         p <- ggplot(agg, aes(x = year, y = labor_force / 1e6, color = scenario)) +
           geom_line(linewidth = 0.8) +
           scale_color_manual(values = artemis_colors$scenarios[
@@ -588,9 +579,9 @@ mod_employment_viz_server <- function(id, rv) {
     }
 
     render_emp_chart <- function() {
-      emp_data <- rv$active_data$labor_force_employment
-      if (is.null(emp_data) || is.null(emp_data$employment)) {
-        return(plotly_empty_message("Employment data not available"))
+      selected <- input$compare_scenarios
+      if (length(selected) == 0) {
+        return(plotly_empty_message("Select at least one scenario"))
       }
 
       years <- seq(input$year_range[1], input$year_range[2])
@@ -601,47 +592,40 @@ mod_employment_viz_server <- function(id, rv) {
         return(plotly_empty_message("Select at least one age group"))
       }
 
-      # Active scenario: projected + historical splice
-      proj <- copy(emp_data$employment)
-      proj[, display_group := map_to_5yr_group(age_group)]
-      proj <- proj[!is.na(display_group)]
-      proj <- proj[, .(employment = sum(employment, na.rm = TRUE) / 4),
-                   by = .(year, display_group, sex)]
-
-      hist_emp <- get_historical_emp()
-      if (!is.null(hist_emp)) {
-        hist_emp[, display_group := map_to_5yr_group(age_group)]
-        hist_emp <- hist_emp[!is.na(display_group)]
-        hist_emp <- hist_emp[, .(employment = sum(employment, na.rm = TRUE)),
-                             by = .(year, display_group, sex)]
-        hist_emp <- hist_emp[!year %in% proj$year]
-        dt <- rbindlist(list(hist_emp, proj), use.names = TRUE, fill = TRUE)
-      } else {
-        dt <- proj
-      }
-
-      dt <- dt[year %in% years & display_group %in% selected_groups]
-      if (sex_filter == "both") {
-        dt <- dt[, .(employment = sum(employment, na.rm = TRUE)), by = .(year, display_group)]
-      } else {
-        dt <- dt[sex == sex_filter]
-      }
-      dt[, display_group := factor(display_group, levels = USEMP_CHART_UR_GROUPS)]
-
-      p <- ggplot(dt, aes(x = year, y = employment / 1e3, color = display_group)) +
-        geom_line(linewidth = 0.8) +
-        scale_color_manual(values = ur_age_colors, name = "Age Group") +
-        scale_y_continuous(labels = scales::comma) +
-        labs(x = NULL, y = "Employment (thousands)") +
-        theme_artemis()
-
-      # Overlay comparison scenarios as dashed lines
-      compare <- input$compare_scenarios
-      for (sid in compare) {
+      # Build data from all checked scenarios
+      scenario_dts <- list()
+      for (sid in selected) {
         sdata <- get_scenario_data(sid)
         if (!is.null(sdata$labor_force_employment$employment)) {
           s_dt <- prepare_emp_data(sdata$labor_force_employment$employment,
                                    years, selected_groups, sex_filter)
+          s_dt[, scenario := sid]
+          scenario_dts <- c(scenario_dts, list(s_dt))
+        }
+      }
+
+      if (length(scenario_dts) == 0) {
+        return(plotly_empty_message("No employment data in selected scenarios"))
+      }
+
+      if (length(scenario_dts) == 1) {
+        dt <- scenario_dts[[1]]
+        p <- ggplot(dt, aes(x = year, y = employment / 1e3, color = display_group)) +
+          geom_line(linewidth = 0.8) +
+          scale_color_manual(values = ur_age_colors, name = "Age Group") +
+          scale_y_continuous(labels = scales::comma) +
+          labs(x = NULL, y = "Employment (thousands)") +
+          theme_artemis()
+      } else {
+        dt_first <- scenario_dts[[1]]
+        p <- ggplot(dt_first, aes(x = year, y = employment / 1e3, color = display_group)) +
+          geom_line(linewidth = 0.8) +
+          scale_color_manual(values = ur_age_colors, name = "Age Group") +
+          scale_y_continuous(labels = scales::comma) +
+          labs(x = NULL, y = "Employment (thousands)",
+               caption = paste("Dashed:", paste(selected[-1], collapse = ", "))) +
+          theme_artemis()
+        for (s_dt in scenario_dts[-1]) {
           p <- p + geom_line(data = s_dt, aes(x = year, y = employment / 1e3,
                                                color = display_group),
                              linetype = "dashed", linewidth = 0.6, show.legend = FALSE)
@@ -650,9 +634,6 @@ mod_employment_viz_server <- function(id, rv) {
 
       if (sex_filter != "both") {
         p <- p + labs(subtitle = paste0(tools::toTitleCase(sex_filter), "s"))
-      }
-      if (length(compare) > 0) {
-        p <- p + labs(caption = paste("Dashed:", paste(compare, collapse = ", ")))
       }
 
       ggplotly(p) |> layout_artemis(y_title = "Employment (thousands)")
@@ -663,7 +644,14 @@ mod_employment_viz_server <- function(id, rv) {
     # =========================================================================
 
     render_lfpr_detail_chart <- function() {
-      lfpr_data <- rv$active_data$lfpr_projection
+      selected <- input$compare_scenarios
+      if (length(selected) == 0) {
+        return(plotly_empty_message("Select at least one scenario"))
+      }
+
+      # Use first selected scenario for detailed view
+      sdata <- get_scenario_data(selected[1])
+      lfpr_data <- sdata$lfpr_projection
       if (is.null(lfpr_data) || is.null(lfpr_data$detailed)) {
         return(plotly_empty_message("Detailed LFPR data not available"))
       }
