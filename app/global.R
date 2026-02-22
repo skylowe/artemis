@@ -131,7 +131,8 @@ load_baseline_data <- function() {
     "population_projection_summary",
     "unemployment_projection",
     "lfpr_projection",
-    "labor_force_employment"
+    "labor_force_employment",
+    "cps_labor_force"
   )
 
   for (target in target_names) {
