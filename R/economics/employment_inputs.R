@@ -1043,6 +1043,48 @@ build_employment_inputs <- function(projected_population,
                                      config_employment) {
   cli::cli_h1("Building Employment Input Variables")
 
+  # Extend TR economic assumptions past their data endpoint (2100 for TR2025).
+
+  # V.B1/V.B2 only contain data through the standard 75-year projection window.
+  # When end_year > max(data year), forward-fill each variable's last value
+  # (ultimate steady-state assumption) to cover the extended projection period.
+  end_year <- config_employment$end_year
+  max_tr_year <- max(tr_economic_assumptions$year)
+  if (!is.null(end_year) && end_year > max_tr_year) {
+    gap_years <- (max_tr_year + 1L):end_year
+    cli::cli_alert_warning(
+      "TR economic assumptions end at {max_tr_year}; extending {length(gap_years)} years to {end_year} via steady-state forward-fill"
+    )
+    # For each variable, replicate its last-year value
+    last_vals <- tr_economic_assumptions[year == max_tr_year]
+    extension <- data.table::rbindlist(lapply(gap_years, function(yr) {
+      row <- data.table::copy(last_vals)
+      row[, year := yr]
+      row
+    }))
+    tr_economic_assumptions <- data.table::rbindlist(
+      list(tr_economic_assumptions, extension), use.names = TRUE
+    )
+  }
+
+  # Extend V.C5 disability prevalence similarly
+  max_vc5_year <- max(tr_di_prevalence$year)
+  if (!is.null(end_year) && end_year > max_vc5_year) {
+    gap_years_vc5 <- (max_vc5_year + 1L):end_year
+    cli::cli_alert_warning(
+      "V.C5 disability prevalence ends at {max_vc5_year}; extending {length(gap_years_vc5)} years to {end_year}"
+    )
+    last_vc5 <- tr_di_prevalence[year == max_vc5_year]
+    vc5_extension <- data.table::rbindlist(lapply(gap_years_vc5, function(yr) {
+      row <- data.table::copy(last_vc5)
+      row[, year := yr]
+      row
+    }))
+    tr_di_prevalence <- data.table::rbindlist(
+      list(tr_di_prevalence, vc5_extension), use.names = TRUE
+    )
+  }
+
   # 1. Quarterly CNI population
   cli::cli_h2("Quarterly Population Interpolation")
   quarterly_cni_pop <- compute_cni_population(

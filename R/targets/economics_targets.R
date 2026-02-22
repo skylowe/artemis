@@ -148,6 +148,16 @@ create_economics_targets <- function() {
         target_ru = {
           ru_annual <- unique(tr_economic_assumptions[
             variable == "unemployment_rate", .(year, rate = value)])
+          # Extend past TR data endpoint if projection end year exceeds it
+          proj_end <- config_economics$employment$end_year
+          max_ru_year <- max(ru_annual$year)
+          if (!is.null(proj_end) && proj_end > max_ru_year) {
+            last_rate <- ru_annual[year == max_ru_year, rate]
+            extension <- data.table::data.table(
+              year = (max_ru_year + 1L):proj_end, rate = last_rate
+            )
+            ru_annual <- data.table::rbindlist(list(ru_annual, extension))
+          }
           data.table::rbindlist(lapply(1:4, function(q) {
             data.table::copy(ru_annual)[, quarter := q]
           }))

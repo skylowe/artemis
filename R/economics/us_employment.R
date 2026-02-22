@@ -1106,13 +1106,20 @@ project_lfpr <- function(unemployment_rates,
   }
 
   # Merge MSSHARE (uses integer age)
-  if (!is.null(msshare)) {
-    older_grid <- merge(older_grid,
-                         msshare[, .(age, sex, year, msshare_val = msshare)],
-                         by = c("age", "sex", "year"), all.x = TRUE, sort = FALSE)
-    older_grid[is.na(msshare_val), msshare_val := 0.5]
-  } else {
-    older_grid[, msshare_val := 0.5]
+  if (is.null(msshare)) {
+    cli::cli_abort("Required input 'msshare' is NULL — ensure build_employment_inputs() provides it.")
+  }
+  older_grid <- merge(older_grid,
+                       msshare[, .(age, sex, year, msshare_val = msshare)],
+                       by = c("age", "sex", "year"), all.x = TRUE, sort = FALSE)
+  n_missing_ms <- sum(is.na(older_grid$msshare_val))
+  if (n_missing_ms > 0) {
+    missing_years <- sort(unique(older_grid[is.na(msshare_val), year]))
+    cli::cli_abort(c(
+      "MSSHARE has {n_missing_ms} missing cells after merge",
+      "x" = "Missing years: {paste(range(missing_years), collapse = '-')}",
+      "i" = "Marital projections must cover the full economics projection period"
+    ))
   }
 
   # Cap MSSHARE deviation from base year to prevent coefficient extrapolation
