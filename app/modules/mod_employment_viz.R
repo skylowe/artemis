@@ -95,8 +95,8 @@ mod_employment_viz_ui <- function(id) {
       checkboxGroupInput(
         ns("compare_scenarios"),
         NULL,
-        choices = c("Active" = "active"),
-        selected = "active"
+        choices = c("Baseline" = "baseline"),
+        selected = "baseline"
       )
     ),
 
@@ -178,7 +178,7 @@ mod_employment_viz_server <- function(id, rv) {
 
       # Check all selected scenarios for max projection year
       selected <- input$compare_scenarios
-      if (is.null(selected)) selected <- "active"
+      if (is.null(selected)) selected <- "baseline"
 
       for (sid in selected) {
         sdata <- get_scenario_data(sid)
@@ -213,8 +213,7 @@ mod_employment_viz_server <- function(id, rv) {
         choices <- c(choices, scenario_choices)
       }
       selected <- isolate(input$compare_scenarios)
-      # Keep "active" selected if user hasn't touched it yet
-      if (is.null(selected)) selected <- "active"
+      if (is.null(selected)) selected <- "baseline"
       updateCheckboxGroupInput(
         session, "compare_scenarios",
         choices = choices,
