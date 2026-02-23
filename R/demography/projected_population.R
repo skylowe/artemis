@@ -3930,6 +3930,9 @@ aggregate_children_to_output <- function(children_array,
   n_parent_ages <- dim(children_array)[2]
   n_age_groups <- length(parent_age_groups)
   n_fates <- 4
+  grp_names <- names(parent_age_groups)
+  child_ages <- 0:max_child_age
+  n_child_ages <- length(child_ages)
 
   # Pre-compute valid indices for each age group
   age_group_indices <- lapply(parent_age_groups, function(ages) {
@@ -3937,22 +3940,17 @@ aggregate_children_to_output <- function(children_array,
     idx[idx >= 1 & idx <= n_parent_ages]
   })
 
-  # Pre-allocate result data.table
-  n_rows <- (max_child_age + 1) * 2 * n_age_groups * n_fates
-  result <- data.table::data.table(
-    year = rep(year, n_rows),
-    child_age = integer(n_rows),
-    parent_sex = character(n_rows),
-    parent_age_group = character(n_rows),
-    fate = character(n_rows),
-    count = numeric(n_rows)
-  )
+  # Pre-allocate result vectors
+  n_rows <- n_child_ages * 2 * n_age_groups * n_fates
+  v_child_age <- integer(n_rows)
+  v_parent_sex <- character(n_rows)
+  v_parent_age_group <- character(n_rows)
+  v_fate <- character(n_rows)
+  v_count <- numeric(n_rows)
 
-  row_idx <- 1
-  grp_names <- names(parent_age_groups)
+  row_idx <- 1L
 
-  for (c_age in 0:max_child_age) {
-    # Extract slice for this child age
+  for (c_age in child_ages) {
     child_slice <- children_array[c_age + 1, , , , drop = FALSE]
     dim(child_slice) <- dim(children_array)[2:4]
 
@@ -3960,42 +3958,42 @@ aggregate_children_to_output <- function(children_array,
       parent_sex <- c("father", "mother")[s_idx]
 
       for (g_idx in seq_along(grp_names)) {
-        grp_name <- grp_names[g_idx]
         p_indices <- age_group_indices[[g_idx]]
 
+        # Compute counts for all 4 fates at once
         if (length(p_indices) == 0) {
-          # No valid indices - store zeros
-          for (f_idx in 1:n_fates) {
-            data.table::set(result, row_idx, "child_age", c_age)
-            data.table::set(result, row_idx, "parent_sex", parent_sex)
-            data.table::set(result, row_idx, "parent_age_group", grp_name)
-            data.table::set(result, row_idx, "fate", fate_names[f_idx])
-            data.table::set(result, row_idx, "count", 0)
-            row_idx <- row_idx + 1
-          }
+          counts <- rep(0, n_fates)
+        } else if (parent_sex == "father") {
+          counts <- colSums(
+            matrix(child_slice[p_indices, , ], ncol = n_fates),
+            na.rm = TRUE
+          )
         } else {
-          for (f_idx in 1:n_fates) {
-            if (parent_sex == "father") {
-              # Sum across mother ages for these father ages
-              count <- sum(child_slice[p_indices, , f_idx], na.rm = TRUE)
-            } else {
-              # Sum across father ages for these mother ages
-              count <- sum(child_slice[, p_indices, f_idx], na.rm = TRUE)
-            }
-
-            data.table::set(result, row_idx, "child_age", c_age)
-            data.table::set(result, row_idx, "parent_sex", parent_sex)
-            data.table::set(result, row_idx, "parent_age_group", grp_name)
-            data.table::set(result, row_idx, "fate", fate_names[f_idx])
-            data.table::set(result, row_idx, "count", count)
-            row_idx <- row_idx + 1
-          }
+          counts <- colSums(
+            matrix(child_slice[, p_indices, ], ncol = n_fates),
+            na.rm = TRUE
+          )
         }
+
+        idx_range <- row_idx:(row_idx + n_fates - 1L)
+        v_child_age[idx_range] <- c_age
+        v_parent_sex[idx_range] <- parent_sex
+        v_parent_age_group[idx_range] <- grp_names[g_idx]
+        v_fate[idx_range] <- fate_names
+        v_count[idx_range] <- counts
+        row_idx <- row_idx + n_fates
       }
     }
   }
 
-  result
+  data.table::data.table(
+    year = rep(year, n_rows),
+    child_age = v_child_age,
+    parent_sex = v_parent_sex,
+    parent_age_group = v_parent_age_group,
+    fate = v_fate,
+    count = v_count
+  )
 }
 
 #' Project children by parent fate (Phase 8D.6 - Main Function)
@@ -4023,7 +4021,7 @@ aggregate_children_to_output <- function(children_array,
 #'
 #' @return list with:
 #'   - children_fate: data.table C^z_{x,s,g,f} by year
-#'   - children_arrays: list of detailed arrays by year (optional)
+#'   - mothers_under6_by_mother_age: list of 87-element vectors by year (children under 6 by mother age)
 #'   - summary: Summary statistics by year
 #'
 #' @export
@@ -4125,15 +4123,23 @@ project_children_fate <- function(phase8b_result,
 
   # Storage for results
   all_children_fate <- list()
-  all_arrays <- list()
+  mothers_data <- list()  # Compact: 87-element vector per year (children-under-6 by mother age)
   summary_list <- list()
+
+  # Fates where mother is alive: both_alive (1) and only_mother_alive (3)
+  mother_alive_fates <- c(1, 3)
 
   # Store starting year
   start_fate <- aggregate_children_to_output(
     current_array, parent_age_groups, start_year, min_parent_age, max_child_age
   )
   all_children_fate[[as.character(start_year)]] <- start_fate
-  all_arrays[[as.character(start_year)]] <- current_array
+  # Compact mothers-under-6 vector: sum children ages 0-5 with mother alive, by mother age
+  max_child_idx_start <- min(6L, dim(current_array)[1])
+  mothers_data[[as.character(start_year)]] <- apply(
+    current_array[1:max_child_idx_start, , , mother_alive_fates, drop = FALSE],
+    3, sum, na.rm = TRUE
+  )
 
   # Calculate starting year summary
   fate_totals_start <- apply(current_array, 4, sum, na.rm = TRUE)
@@ -4233,7 +4239,12 @@ project_children_fate <- function(phase8b_result,
 
     # Store results
     all_children_fate[[as.character(yr)]] <- yr_fate
-    all_arrays[[as.character(yr)]] <- current_array
+    # Compact mothers-under-6 vector for this year
+    max_child_idx <- min(6L, dim(current_array)[1])
+    mothers_data[[as.character(yr)]] <- apply(
+      current_array[1:max_child_idx, , , mother_alive_fates, drop = FALSE],
+      3, sum, na.rm = TRUE
+    )
 
     # Calculate summary
     fate_totals <- apply(current_array, 4, sum, na.rm = TRUE)
@@ -4277,7 +4288,7 @@ project_children_fate <- function(phase8b_result,
 
   list(
     children_fate = children_fate,
-    children_arrays = all_arrays,
+    mothers_under6_by_mother_age = mothers_data,
     summary = summary_stats,
     metadata = list(
       start_year = start_year,
@@ -4298,10 +4309,10 @@ project_children_fate <- function(phase8b_result,
 #' Compute proportion of women with at least one child under 6
 #'
 #' @description
-#' Converts Phase 8D children-by-parent-fate arrays into the proportion of
-#' women with at least one own child under 6, by 5-year age group. This is
-#' Input #3 from Demography to Economics per TR documentation ("Number of
-#' children by age of child and age of mother").
+#' Uses pre-computed children-under-6-by-mother-age vectors from Phase 8D
+#' to compute the proportion of women with at least one own child under 6,
+#' by 5-year age group. This is Input #3 from Demography to Economics per
+#' TR documentation ("Number of children by age of child and age of mother").
 #'
 #' Uses Poisson approximation to convert children counts to mothers counts:
 #'   P(at least 1 child) = 1 - exp(-lambda)
@@ -4313,7 +4324,7 @@ project_children_fate <- function(phase8b_result,
 #' where lambda is typically 0.1-0.7.
 #'
 #' @param children_fate_result Full output from project_children_fate()
-#'   (list with children_arrays, metadata)
+#'   (list with mothers_under6_by_mother_age, metadata)
 #' @param projected_population SS area population from Phase 8B
 #'   (data.table with year, age, sex, population)
 #' @param min_parent_age Integer minimum parent age (default: 14, from metadata)
@@ -4327,17 +4338,17 @@ compute_mothers_with_young_children <- function(children_fate_result,
                                                  min_parent_age = 14) {
   checkmate::assert_list(children_fate_result, names = "named")
   checkmate::assert_names(names(children_fate_result),
-                          must.include = c("children_arrays", "metadata"))
+                          must.include = c("mothers_under6_by_mother_age", "metadata"))
   checkmate::assert_data_table(projected_population)
 
-  arrays <- children_fate_result$children_arrays
+  mothers_data <- children_fate_result$mothers_under6_by_mother_age
   meta <- children_fate_result$metadata
 
-  if (length(arrays) == 0) {
-    cli::cli_abort("children_fate_result$children_arrays is empty — cannot compute mothers proportions")
+  if (length(mothers_data) == 0) {
+    cli::cli_abort("children_fate_result$mothers_under6_by_mother_age is empty — cannot compute mothers proportions")
   }
 
-  cli::cli_alert_info("Computing mothers-with-child-under-6 proportions from Phase 8D arrays")
+  cli::cli_alert_info("Computing mothers-with-child-under-6 proportions from Phase 8D pre-computed vectors")
 
   # LFPR age groups for female children-under-6 equations (Eqs 7.1-7.2)
   lfpr_age_groups <- list(
@@ -4350,38 +4361,25 @@ compute_mothers_with_young_children <- function(children_fate_result,
     "40-44" = 40:44
   )
 
-  # Fates where mother is alive: both_alive (1) and only_mother_alive (3)
-  mother_alive_fates <- c(1, 3)
-
   min_pa <- meta$min_parent_age %||% min_parent_age
+  n_mother_ages <- length(mothers_data[[1]])
 
   # Pre-compute female population lookup by year and single-year age
   fem_pop <- projected_population[sex == "female" & age >= 16 & age <= 44]
   fem_pop_lookup <- fem_pop[, .(population = sum(population)), by = .(year, age)]
   data.table::setkey(fem_pop_lookup, year, age)
 
-  results <- vector("list", length(arrays) * length(lfpr_age_groups))
+  results <- vector("list", length(mothers_data) * length(lfpr_age_groups))
   result_idx <- 0L
 
-  for (yr_str in names(arrays)) {
-    arr <- arrays[[yr_str]]
+  for (yr_str in names(mothers_data)) {
+    children_by_mother_age <- mothers_data[[yr_str]]
     yr <- as.integer(yr_str)
-
-    # arr dimensions: [child_age, father_age, mother_age, fate]
-    # child_age indices 1-6 correspond to ages 0-5
-    max_child_idx <- min(6L, dim(arr)[1])
-
-    # Sum children under 6 with mother alive, by mother's single-year age
-    # apply over dim 3 (mother_age) sums across child_ages, father_ages, and selected fates
-    children_by_mother_age <- apply(
-      arr[1:max_child_idx, , , mother_alive_fates, drop = FALSE],
-      3, sum, na.rm = TRUE
-    )
 
     for (grp_name in names(lfpr_age_groups)) {
       grp_ages <- lfpr_age_groups[[grp_name]]
       grp_indices <- grp_ages - min_pa + 1L
-      grp_indices <- grp_indices[grp_indices >= 1L & grp_indices <= dim(arr)[3]]
+      grp_indices <- grp_indices[grp_indices >= 1L & grp_indices <= n_mother_ages]
 
       if (length(grp_indices) == 0) next
 
