@@ -169,8 +169,8 @@ calculate_annual_reduction_rates <- function(mx,
                                               end_year = 2019,
                                               by_cause = TRUE) {
   checkmate::assert_data_table(mx)
-  checkmate::assert_int(start_year, lower = 1900, upper = 2100)
-  checkmate::assert_int(end_year, lower = start_year, upper = 2100)
+  checkmate::assert_int(start_year, lower = 1900, upper = 2200)
+  checkmate::assert_int(end_year, lower = start_year, upper = 2200)
 
   # Filter to regression period
   dt <- mx[year >= start_year & year <= end_year]
@@ -432,7 +432,23 @@ load_tr_qx_all_years <- function(
   tr <- data.table::rbindlist(list(tr_m_long, tr_f_long))
 
   # Filter to requested years and ages
-  tr <- tr[year >= start_year & year <= end_year & age %in% ages]
+  tr <- tr[year >= start_year & age %in% ages]
+
+  # Extend past max data year if end_year exceeds it (rates are at ultimate by 2100)
+  max_data_year <- max(tr$year)
+  if (end_year > max_data_year) {
+    last_year_data <- tr[year == max_data_year]
+    extension <- data.table::rbindlist(lapply(
+      (max_data_year + 1L):end_year,
+      function(yr) data.table::copy(last_year_data)[, year := yr]
+    ))
+    tr <- data.table::rbindlist(list(tr, extension))
+    cli::cli_alert_info(
+      "Extended TR qx from {max_data_year} to {end_year} (last-year values held constant)"
+    )
+  }
+
+  tr <- tr[year <= end_year]
   data.table::setorder(tr, year, sex, age)
 
   cli::cli_alert_success(
@@ -500,9 +516,24 @@ load_tr_period_life_tables <- function(
 
   # Combine and select relevant columns
   lt <- data.table::rbindlist(list(lt_m, lt_f), use.names = TRUE)
-  lt <- lt[Year >= start_year & Year <= end_year,
+  lt <- lt[Year >= start_year,
            .(year = Year, age = x, sex, qx_exact = qx, lx, Lx, Tx, ex)]
 
+  # Extend past max data year if end_year exceeds it (rates are at ultimate by 2100)
+  max_data_year <- max(lt$year)
+  if (end_year > max_data_year) {
+    last_year_data <- lt[year == max_data_year]
+    extension <- data.table::rbindlist(lapply(
+      (max_data_year + 1L):end_year,
+      function(yr) data.table::copy(last_year_data)[, year := yr]
+    ))
+    lt <- data.table::rbindlist(list(lt, extension))
+    cli::cli_alert_info(
+      "Extended TR period life tables from {max_data_year} to {end_year} (last-year values held constant)"
+    )
+  }
+
+  lt <- lt[year <= end_year]
   data.table::setorder(lt, year, sex, age)
 
   cli::cli_alert_success(
@@ -1884,7 +1915,7 @@ run_mortality_projection <- function(deaths,
 calculate_starting_mx <- function(aax_results, base_year = 2019) {
   checkmate::assert_data_table(aax_results)
   checkmate::assert_names(names(aax_results), must.include = c("age", "sex", "aax", "intercept"))
-  checkmate::assert_int(base_year, lower = 1900, upper = 2100)
+  checkmate::assert_int(base_year, lower = 1900, upper = 2200)
 
   dt <- data.table::copy(aax_results)
 
@@ -3176,7 +3207,7 @@ calculate_infant_mortality <- function(infant_deaths, monthly_births, year,
 
   checkmate::assert_data_table(infant_deaths)
   checkmate::assert_data_table(monthly_births)
-  checkmate::assert_int(year, lower = 1900, upper = 2100)
+  checkmate::assert_int(year, lower = 1900, upper = 2200)
   checkmate::assert_names(names(infant_deaths),
     must.include = c("year", "sex", "age_unit", "age_value", "deaths"))
   checkmate::assert_names(names(monthly_births),
