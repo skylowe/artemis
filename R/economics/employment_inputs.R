@@ -626,22 +626,18 @@ override_unemployment_path <- function(ru_annual, config_employment) {
 #' @references Economics overview documentation, Section 2.1.c
 #' @export
 compute_rtp <- function(unemployment_path, config_employment,
-                        historical_rtp = NULL) {
+                        historical_rtp = NULL, natural_rate = NULL) {
   checkmate::assert_data_table(unemployment_path)
   checkmate::assert_list(config_employment)
 
   beta <- config_employment$okun_coefficient
   if (is.null(beta)) cli::cli_abort("okun_coefficient not set in config")
 
-  # Use the V.B2 terminal rate as u_star (natural rate) for RTP, NOT the
-
-  # user's ultimate_unemployment_rate override. The override only changes
-  # the constraint target (target_ru). RTP must use V.B2's own natural rate
-  # so that the historical→projected RTP splice is smooth (~1.0 on both
-  # sides). Using the user's override (e.g., 10%) would create a +0.09 RTP
-  # jump at the splice that produces huge D(RTP) swings, blowing up young
-  # age groups via their large regression coefficients.
-  u_star <- unemployment_path[year == max(year), rate]
+  # u_star = natural rate of unemployment. When natural_rate is provided
+  # (V.B2 terminal), use it so the historical→projected RTP splice stays
+  # smooth while the Okun coefficient still modulates the steady-state gap
+  # between natural and actual unemployment.
+  u_star <- if (!is.null(natural_rate)) natural_rate else unemployment_path[year == max(year), rate]
 
   # --- Projected RTP from Okun's Law ---
   dt <- data.table::copy(unemployment_path)
@@ -1219,19 +1215,20 @@ build_employment_inputs <- function(projected_population,
 
   # 8. RTP
   cli::cli_h2("RTP (Real/Potential GDP Ratio)")
-  # Extract unemployment rate path from TR assumptions (deduplicate).
-  # Use the ORIGINAL V.B2 path (not the overridden target) so that D(RTP)
-  # reflects actual economic conditions. The UR override only changes the
-  # constraint target (target_ru), not the RTP input — otherwise the
-  # RTP transition creates large D(RTP) swings that produce spurious
-  # preliminary rate spikes in young age groups (16-17, 18-19) via their
-  # large regression coefficients.
+  # Extract V.B2 unemployment path and apply user's override.
+  # u_star (natural rate) stays at V.B2's terminal rate so that:
+  #   (a) the historical→projected RTP splice is smooth (~1.0 on both sides)
+  #   (b) D(RTP) changes gradually via override_unemployment_path's linear phase-in
+  # The Okun coefficient then modulates the steady-state RTP gap.
   unemployment_path <- unique(tr_economic_assumptions[
     variable == "unemployment_rate",
     .(year, rate = value)
   ])
+  vb2_natural_rate <- unemployment_path[year == max(year), rate]
+  unemployment_path <- override_unemployment_path(unemployment_path, config_employment)
   rtp_quarterly <- compute_rtp(unemployment_path, config_employment,
-                               historical_rtp = historical_rtp)
+                               historical_rtp = historical_rtp,
+                               natural_rate = vb2_natural_rate)
 
   cli::cli_alert_success("All employment inputs constructed")
 
