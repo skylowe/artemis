@@ -291,11 +291,10 @@ mod_comparison_view_server <- function(id, rv) {
             }
           },
           "unemployment_rate" = {
-            tr_ea <- data$tr_economic_assumptions
-            if (!is.null(tr_ea)) {
-              # Use V.B2 target path directly (matches TR2025 tables)
-              tr_ea[variable == "unemployment_rate" & year %in% years,
-                .(value = value[1]), by = year]
+            # Use the constraint target path (reflects user's ultimate UR override)
+            tp <- data$unemployment_projection$target_path
+            if (!is.null(tp)) {
+              tp[year %in% years, .(value = rate), by = year]
             }
           },
           "lfpr" = {

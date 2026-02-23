@@ -545,6 +545,71 @@ construct_children_proportions <- function(cps_labor_data,
 }
 
 # =============================================================================
+# Unemployment Path Override
+# =============================================================================
+
+#' Override V.B2 unemployment path with user's ultimate rate
+#'
+#' @description
+#' When the user's `ultimate_unemployment_rate` differs from V.B2's terminal
+#' rate, smoothly transitions the V.B2 path to converge to the user's target.
+#' V.B2's near-term dynamics (cyclical adjustments) are preserved; only the
+#' long-run convergence target is modified.
+#'
+#' The transition uses a linear phase-in: at the base year, the path equals
+#' V.B2 exactly; by the year V.B2 first reaches its own terminal rate, the
+#' path reaches the user's ultimate rate and stays there.
+#'
+#' @param ru_annual data.table with `year` and `rate` columns (V.B2 annual path)
+#' @param config_employment Employment config section (needs `base_year` and
+#'   `ultimate_unemployment_rate`)
+#'
+#' @return data.table with `year` and `rate` columns (modified path, or
+#'   unmodified if no override is needed)
+#'
+#' @export
+override_unemployment_path <- function(ru_annual, config_employment) {
+  user_ultimate <- config_employment$ultimate_unemployment_rate
+  if (is.null(user_ultimate)) return(ru_annual)
+
+  base_year <- config_employment$base_year
+  vb2_terminal <- ru_annual[year == max(year), rate]
+
+  # No override needed if user's ultimate matches V.B2 terminal
+  if (abs(user_ultimate - vb2_terminal) < 0.01) return(ru_annual)
+
+  dt <- data.table::copy(ru_annual)
+  offset <- user_ultimate - vb2_terminal
+
+  # Find convergence year: first year where V.B2 reaches its terminal value
+  # and stays there for all subsequent years
+  data.table::setorder(dt, year)
+  at_terminal <- abs(dt$rate - vb2_terminal) < 0.01
+  n <- nrow(dt)
+  convergence_idx <- n
+  for (i in seq_len(n)) {
+    if (all(at_terminal[i:n])) {
+      convergence_idx <- i
+      break
+    }
+  }
+  convergence_year <- max(dt$year[convergence_idx], base_year + 10L)
+
+  # Phase in offset: 0 at base_year, 1 at convergence_year (min 10 years)
+  span <- convergence_year - base_year
+  if (span <= 0) span <- 1L
+  dt[, weight := pmin(1, pmax(0, (year - base_year) / span))]
+  dt[, rate := rate + offset * weight]
+  dt[, weight := NULL]
+
+  cli::cli_alert_info(
+    "Overriding UR path: V.B2 terminal {vb2_terminal}% \u2192 user ultimate {user_ultimate}% (converges by {convergence_year})"
+  )
+
+  dt
+}
+
+# =============================================================================
 # RTP (Ratio of Real to Potential GDP)
 # =============================================================================
 
@@ -1163,6 +1228,9 @@ build_employment_inputs <- function(projected_population,
     variable == "unemployment_rate",
     .(year, rate = value)
   ])
+  # Apply user's ultimate UR override so RTP converges to 1.0 at the user's
+  # natural rate, not V.B2's terminal rate
+  unemployment_path <- override_unemployment_path(unemployment_path, config_employment)
   rtp_quarterly <- compute_rtp(unemployment_path, config_employment,
                                historical_rtp = historical_rtp)
 

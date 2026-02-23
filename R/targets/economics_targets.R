@@ -152,6 +152,8 @@ create_economics_targets <- function() {
         target_ru = {
           ru_annual <- unique(tr_economic_assumptions[
             variable == "unemployment_rate", .(year, rate = value)])
+          # Apply user's ultimate UR override (if different from V.B2 terminal)
+          ru_annual <- override_unemployment_path(ru_annual, config_economics$employment)
           # Extend past TR data endpoint if projection end year exceeds it
           proj_end <- config_economics$employment$end_year
           max_ru_year <- max(ru_annual$year)

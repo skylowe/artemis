@@ -278,10 +278,15 @@ project_unemployment_rates <- function(rtp_quarterly,
 
   cli::cli_alert_success("Projected unemployment rates: {nrow(actual)} rows, {length(unique(actual$year))} years")
 
+  # Extract annual target path for dashboard display
+  target_annual <- target_ru[quarter == 1, .(year, rate)]
+  data.table::setorder(target_annual, year)
+
   list(
     actual = actual,
     full_employment = fe_rates_dt,
-    differentials = differentials
+    differentials = differentials,
+    target_path = target_annual
   )
 }
 
