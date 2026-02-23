@@ -630,11 +630,18 @@ compute_rtp <- function(unemployment_path, config_employment,
   checkmate::assert_data_table(unemployment_path)
   checkmate::assert_list(config_employment)
 
-  u_star <- config_employment$ultimate_unemployment_rate
   beta <- config_employment$okun_coefficient
-
-  if (is.null(u_star)) cli::cli_abort("ultimate_unemployment_rate not set in config")
   if (is.null(beta)) cli::cli_abort("okun_coefficient not set in config")
+
+  # Use the V.B2 terminal rate as u_star (natural rate) for RTP, NOT the
+
+  # user's ultimate_unemployment_rate override. The override only changes
+  # the constraint target (target_ru). RTP must use V.B2's own natural rate
+  # so that the historical→projected RTP splice is smooth (~1.0 on both
+  # sides). Using the user's override (e.g., 10%) would create a +0.09 RTP
+  # jump at the splice that produces huge D(RTP) swings, blowing up young
+  # age groups via their large regression coefficients.
+  u_star <- unemployment_path[year == max(year), rate]
 
   # --- Projected RTP from Okun's Law ---
   dt <- data.table::copy(unemployment_path)
