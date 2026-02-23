@@ -572,7 +572,7 @@ override_unemployment_path <- function(ru_annual, config_employment) {
   user_ultimate <- config_employment$ultimate_unemployment_rate
   if (is.null(user_ultimate)) return(ru_annual)
 
-  base_year <- config_employment$base_year
+  base_year <- config_employment$base_year %||% (min(ru_annual$year) - 1L)
   vb2_terminal <- ru_annual[year == max(year), rate]
 
   # No override needed if user's ultimate matches V.B2 terminal
@@ -1212,14 +1212,17 @@ build_employment_inputs <- function(projected_population,
 
   # 8. RTP
   cli::cli_h2("RTP (Real/Potential GDP Ratio)")
-  # Extract unemployment rate path from TR assumptions (deduplicate)
+  # Extract unemployment rate path from TR assumptions (deduplicate).
+  # Use the ORIGINAL V.B2 path (not the overridden target) so that D(RTP)
+  # reflects actual economic conditions. The UR override only changes the
+  # constraint target (target_ru), not the RTP input — otherwise the
+  # RTP transition creates large D(RTP) swings that produce spurious
+  # preliminary rate spikes in young age groups (16-17, 18-19) via their
+  # large regression coefficients.
   unemployment_path <- unique(tr_economic_assumptions[
     variable == "unemployment_rate",
     .(year, rate = value)
   ])
-  # Apply user's ultimate UR override so RTP converges to 1.0 at the user's
-  # natural rate, not V.B2's terminal rate
-  unemployment_path <- override_unemployment_path(unemployment_path, config_employment)
   rtp_quarterly <- compute_rtp(unemployment_path, config_employment,
                                historical_rtp = historical_rtp)
 
