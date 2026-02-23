@@ -493,6 +493,20 @@ mod_config_editor_ui <- function(id) {
         helpText("Long-run equilibrium unemployment rate. TR2025: 3.5% (low),
                  4.5% (intermediate), 5.5% (high)."),
 
+        shinyjs::hidden(
+          div(
+            id = ns("ultimate_year_container"),
+            numericInput(
+              ns("ultimate_unemployment_year"),
+              "Converge to Ultimate by Year",
+              value = 2034,
+              min = 2026, max = 2060,
+              step = 1
+            ),
+            helpText("Year by which UR converges to the custom ultimate rate.")
+          )
+        ),
+
         sliderInput(
           ns("okun_coefficient"),
           "Okun's Law Coefficient",
@@ -501,18 +515,7 @@ mod_config_editor_ui <- function(id) {
           step = 0.1
         ),
         helpText("RTP-to-unemployment elasticity. Higher = more cyclical sensitivity
-                 in age-group unemployment rates."),
-
-        sliderInput(
-          ns("ultimate_unemployment_year"),
-          "Ultimate Unemployment Year",
-          min = 2030, max = 2060,
-          value = 2034,
-          step = 1,
-          sep = ""
-        ),
-        helpText("Year by which the unemployment rate converges to the ultimate rate.
-                 Earlier = faster transition from current conditions.")
+                 in age-group unemployment rates.")
       )
     ),
 
@@ -748,7 +751,7 @@ mod_config_editor_server <- function(id, rv) {
         value = config$economics$employment$ultimate_unemployment_rate %||% 4.5)
       updateSliderInput(session, "okun_coefficient",
         value = config$economics$employment$okun_coefficient %||% 2.0)
-      updateSliderInput(session, "ultimate_unemployment_year",
+      updateNumericInput(session, "ultimate_unemployment_year",
         value = config$economics$employment$ultimate_unemployment_year %||% 2034)
     }
 
@@ -767,7 +770,11 @@ mod_config_editor_server <- function(id, rv) {
       }
     }, ignoreInit = TRUE)
 
+    # Flag to suppress the UR observer when auto-sync is updating the slider
+    ur_auto_sync <- reactiveVal(FALSE)
+
     # Auto-sync ultimate unemployment rate to match economic scenario
+    # and hide the convergence year (user is using a standard V.B2 path)
     observeEvent(input$economic_alternative, {
       canonical_ur <- switch(input$economic_alternative,
         low = 3.5,
@@ -775,7 +782,18 @@ mod_config_editor_server <- function(id, rv) {
         high = 5.5,
         4.5
       )
+      ur_auto_sync(TRUE)
       updateSliderInput(session, "ultimate_unemployment_rate", value = canonical_ur)
+      shinyjs::hide("ultimate_year_container")
+    }, ignoreInit = TRUE)
+
+    # Show convergence year when user manually changes the ultimate UR
+    observeEvent(input$ultimate_unemployment_rate, {
+      if (ur_auto_sync()) {
+        ur_auto_sync(FALSE)
+      } else {
+        shinyjs::show("ultimate_year_container")
+      }
     }, ignoreInit = TRUE)
 
     # Helper: update a nested config value only if it actually changed.
