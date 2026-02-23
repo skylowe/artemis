@@ -3035,9 +3035,7 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
   elapsed <- round(difftime(Sys.time(), start_time, units = "mins"), 1)
 
   result <- list(
-    # Rate outputs
-    historical_rates = historical_result$rates,
-    projected_rates = projected_result$rates,
+    # Rate outputs (historical_rates/projected_rates removed — subsets of all_rates)
     all_rates = all_rates,
 
     # AMR outputs
@@ -3047,8 +3045,7 @@ run_marriage_projection <- function(nchs_marriages_1978_1988,
     ultimate_amr = ultimate_amr,
     ultimate_year = ultimate_year,
 
-    # Prior status outputs
-    rates_by_status = rates_by_status,
+    # Prior status outputs (rates_by_status removed — never consumed downstream)
     status_differentials = status_differentials,
 
     # Same-sex outputs

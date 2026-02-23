@@ -575,41 +575,25 @@ calculate_age_last_birthday_qx <- function(
   checkmate::assert_int(max_age, lower = min_age, upper = 99)
 
   lt <- data.table::copy(period_life_table)
+  data.table::setorder(lt, year, sex, age)
 
-  # Calculate qx = 1 - L_{x+1}/L_x for ages min_age to max_age
-  results <- list()
+  # Vectorized: shift Lx to get L_{x+1} within each year-sex group
+  lt[, Lx_next := data.table::shift(Lx, n = 1L, type = "lead"), by = .(year, sex)]
 
-  for (yr in unique(lt$year)) {
-    for (sx in c("male", "female")) {
-      lt_sub <- lt[year == yr & sex == sx][order(age)]
+  # Ages min_age to max_age: qx_alb = 1 - L_{x+1}/L_x
+  ages_result <- lt[age >= min_age & age <= max_age & Lx > 0 & !is.na(Lx_next),
+                    .(year, age, sex, qx_alb = 1 - Lx_next / Lx)]
 
-      # For ages min_age to max_age: qx = 1 - L_{x+1}/L_x
-      for (a in min_age:max_age) {
-        Lx <- lt_sub[age == a, Lx]
-        Lx_next <- lt_sub[age == a + 1, Lx]
+  # Age 100: qx_alb = 1 - T_{101}/T_{100}
+  t100 <- lt[age == 100 & Tx > 0, .(year, sex, T100 = Tx)]
+  t101 <- lt[age == 101, .(year, sex, T101 = Tx)]
+  q100 <- merge(t100, t101, by = c("year", "sex"))
+  q100[, `:=`(age = 100L, qx_alb = 1 - T101 / T100)]
 
-        if (length(Lx) > 0 && length(Lx_next) > 0 && Lx > 0) {
-          qx_alb <- 1 - Lx_next / Lx
-          results[[length(results) + 1]] <- data.table::data.table(
-            year = yr, age = a, sex = sx, qx_alb = qx_alb
-          )
-        }
-      }
-
-      # For age 100+: q100 = 1 - T_{101}/T_{100}
-      T100 <- lt_sub[age == 100, Tx]
-      T101 <- lt_sub[age == 101, Tx]
-
-      if (length(T100) > 0 && length(T101) > 0 && T100 > 0) {
-        q100_alb <- 1 - T101 / T100
-        results[[length(results) + 1]] <- data.table::data.table(
-          year = yr, age = 100L, sex = sx, qx_alb = q100_alb
-        )
-      }
-    }
-  }
-
-  result <- data.table::rbindlist(results)
+  result <- data.table::rbindlist(list(
+    ages_result[, .(year, age, sex, qx_alb)],
+    q100[, .(year, age, sex, qx_alb)]
+  ))
   data.table::setorder(result, year, sex, age)
 
   # Report the difference from exact-age qx
@@ -1405,33 +1389,19 @@ project_death_rates <- function(starting_mx, aax_trajectory, actual_mx = NULL) {
     data.table::setnames(current_mx, mx_col, "mx")
   }
 
-  # Project year by year
-  result_list <- list()
+  # Single merge: starting_mx × all years of aax_trajectory
+  result <- merge(
+    current_mx[, c(group_cols, "mx"), with = FALSE],
+    aax_trajectory[, c("year", group_cols, "aax_projected"), with = FALSE],
+    by = group_cols, allow.cartesian = TRUE
+  )
+  result[is.na(aax_projected), aax_projected := 0]
 
-  for (proj_year in projection_years) {
-    # Get AAx for this year
-    aax_year <- aax_trajectory[year == proj_year]
-
-    # Merge current mx with AAx
-    proj_dt <- merge(current_mx[, c(group_cols, "mx"), with = FALSE],
-                     aax_year[, c(group_cols, "aax_projected"), with = FALSE],
-                     by = group_cols, all.x = TRUE)
-
-    # Handle missing AAx (use 0 = no change)
-    proj_dt[is.na(aax_projected), aax_projected := 0]
-
-    # Apply reduction: mx^z = mx^{z-1} * (1 - AAx^z)
-    proj_dt[, mx := mx * (1 - aax_projected)]
-    proj_dt[, year := proj_year]
-
-    # Store result
-    result_list[[as.character(proj_year)]] <- proj_dt[, c("year", group_cols, "mx"), with = FALSE]
-
-    # Update current_mx for next iteration
-    current_mx <- proj_dt[, c(group_cols, "mx"), with = FALSE]
-  }
-
-  result <- data.table::rbindlist(result_list)
+  # Cumulative product within each group, ordered by year
+  # mx^z = mx^0 * prod_{t=1..z}(1 - AAx^t)
+  data.table::setorderv(result, c(group_cols, "year"))
+  result[, mx := mx * cumprod(1 - aax_projected), by = group_cols]
+  result[, aax_projected := NULL]
 
   # Overwrite with actual data if provided
   if (!is.null(actual_mx)) {

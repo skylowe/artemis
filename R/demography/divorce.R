@@ -2802,7 +2802,8 @@ validate_adr_projection <- function(adr_projection,
 #'
 #' @export
 get_projected_adr <- function(cache_dir = here::here("data/cache"),
-                              config = NULL) {
+                              config = NULL,
+                              starting_adr = NULL) {
   # Derive parameters from config — config is required
   if (!is.null(config)) {
     years <- get_projection_years(config, "divorce")
@@ -2816,9 +2817,11 @@ get_projected_adr <- function(cache_dir = here::here("data/cache"),
 
   cli::cli_h1("Phase 7F: ADR Projection ({start_year}-{end_year})")
 
-  # Get historical data to calculate starting ADR
-  historical_data <- get_historical_divorce_data(cache_dir, config = config)
-  starting_adr <- historical_data$starting_adr
+  # Use provided starting_adr or compute from historical data
+  if (is.null(starting_adr)) {
+    historical_data <- get_historical_divorce_data(cache_dir, config = config)
+    starting_adr <- historical_data$starting_adr
+  }
 
   cli::cli_alert_info("Starting ADR (from historical): {round(starting_adr, 1)}")
 
@@ -3153,7 +3156,8 @@ run_divorce_projection <- function(cache_dir = here::here("data/cache"),
 
   projected_adr <- get_projected_adr(
     cache_dir = cache_dir,
-    config = config
+    config = config,
+    starting_adr = starting_adr
   )
 
   # =========================================================================
