@@ -581,21 +581,10 @@ override_unemployment_path <- function(ru_annual, config_employment) {
   dt <- data.table::copy(ru_annual)
   offset <- user_ultimate - vb2_terminal
 
-  # Find convergence year: first year where V.B2 reaches its terminal value
-  # and stays there for all subsequent years
-  data.table::setorder(dt, year)
-  at_terminal <- abs(dt$rate - vb2_terminal) < 0.01
-  n <- nrow(dt)
-  convergence_idx <- n
-  for (i in seq_len(n)) {
-    if (all(at_terminal[i:n])) {
-      convergence_idx <- i
-      break
-    }
-  }
-  convergence_year <- max(dt$year[convergence_idx], base_year + 10L)
+  # Convergence year: use ultimate_unemployment_year from config
+  convergence_year <- config_employment$ultimate_unemployment_year %||% (base_year + 10L)
 
-  # Phase in offset: 0 at base_year, 1 at convergence_year (min 10 years)
+  # Phase in offset: 0 at base_year, 1 at convergence_year
   span <- convergence_year - base_year
   if (span <= 0) span <- 1L
   dt[, weight := pmin(1, pmax(0, (year - base_year) / span))]

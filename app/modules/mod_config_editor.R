@@ -501,7 +501,18 @@ mod_config_editor_ui <- function(id) {
           step = 0.1
         ),
         helpText("RTP-to-unemployment elasticity. Higher = more cyclical sensitivity
-                 in age-group unemployment rates.")
+                 in age-group unemployment rates."),
+
+        sliderInput(
+          ns("ultimate_unemployment_year"),
+          "Ultimate Unemployment Year",
+          min = 2030, max = 2060,
+          value = 2034,
+          step = 1,
+          sep = ""
+        ),
+        helpText("Year by which the unemployment rate converges to the ultimate rate.
+                 Earlier = faster transition from current conditions.")
       )
     ),
 
@@ -737,6 +748,8 @@ mod_config_editor_server <- function(id, rv) {
         value = config$economics$employment$ultimate_unemployment_rate %||% 4.5)
       updateSliderInput(session, "okun_coefficient",
         value = config$economics$employment$okun_coefficient %||% 2.0)
+      updateSliderInput(session, "ultimate_unemployment_year",
+        value = config$economics$employment$ultimate_unemployment_year %||% 2034)
     }
 
     # Initialize from baseline config
@@ -927,6 +940,8 @@ mod_config_editor_server <- function(id, rv) {
                            input$ultimate_unemployment_rate)
       config <- set_config(config, c("economics", "employment", "okun_coefficient"),
                            input$okun_coefficient)
+      config <- set_config(config, c("economics", "employment", "ultimate_unemployment_year"),
+                           input$ultimate_unemployment_year)
 
       # Store modified config
       modified_config(config)
