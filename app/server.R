@@ -18,8 +18,14 @@ server <- function(input, output, session) {
     # Saved scenarios
     scenarios = list(),
 
-    # Active scenario data
+    # Active scenario data (currently displayed)
     active_data = NULL,
+
+    # Last unsaved scenario run results
+    active_scenario_data = NULL,
+
+    # Whether an unsaved scenario run exists
+    has_active_scenario = FALSE,
 
     # Loading state
     loading = FALSE
@@ -337,6 +343,9 @@ server <- function(input, output, session) {
 
   observe({
     scenario_choices <- c("ARTEMIS 2025 Baseline" = "baseline")
+    if (isTRUE(rv$has_active_scenario)) {
+      scenario_choices <- c(scenario_choices, c("Active Scenario" = "active"))
+    }
     if (length(rv$scenarios) > 0) {
       scenario_choices <- c(
         scenario_choices,
@@ -351,6 +360,8 @@ server <- function(input, output, session) {
   observeEvent(input$active_scenario, {
     if (input$active_scenario == "baseline") {
       rv$active_data <- rv$baseline
+    } else if (input$active_scenario == "active") {
+      rv$active_data <- rv$active_scenario_data
     } else if (input$active_scenario %in% names(rv$scenarios)) {
       rv$active_data <- rv$scenarios[[input$active_scenario]]$results
     }

@@ -240,7 +240,12 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
       projection_state$running <- FALSE
 
       if (!is.null(result) && result$success) {
+        rv$active_scenario_data <- result$data
         rv$active_data <- result$data
+        rv$has_active_scenario <- TRUE
+        if (!is.null(parent_session)) {
+          updateSelectInput(parent_session, "active_scenario", selected = "active")
+        }
         showNotification("Projection complete", type = "message")
       } else {
         showNotification(
@@ -347,6 +352,9 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
 
       if (!is.null(scenario$results)) {
         rv$active_data <- scenario$results
+        if (!is.null(parent_session)) {
+          updateSelectInput(parent_session, "active_scenario", selected = name)
+        }
         showNotification(paste("Loaded scenario:", name), type = "message")
       }
     })
