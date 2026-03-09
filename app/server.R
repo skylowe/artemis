@@ -27,6 +27,9 @@ server <- function(input, output, session) {
     # Whether an unsaved scenario run exists
     has_active_scenario = FALSE,
 
+    # Flag to trigger dropdown selection after choices update
+    select_active_scenario = FALSE,
+
     # Loading state
     loading = FALSE
   )
@@ -352,9 +355,12 @@ server <- function(input, output, session) {
         setNames(names(rv$scenarios), names(rv$scenarios))
       )
     }
+    # When a new scenario run just completed, select it; otherwise preserve current
+    selected <- if (isTRUE(rv$select_active_scenario)) "active" else input$active_scenario
     updateSelectInput(session, "active_scenario",
                       choices = scenario_choices,
-                      selected = input$active_scenario)
+                      selected = selected)
+    rv$select_active_scenario <- FALSE
   })
 
   observeEvent(input$active_scenario, {

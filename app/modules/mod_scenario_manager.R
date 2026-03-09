@@ -243,9 +243,7 @@ mod_scenario_manager_server <- function(id, rv, config_result, parent_session = 
         rv$active_scenario_data <- result$data
         rv$active_data <- result$data
         rv$has_active_scenario <- TRUE
-        if (!is.null(parent_session)) {
-          updateSelectInput(parent_session, "active_scenario", selected = "active")
-        }
+        rv$select_active_scenario <- TRUE
         showNotification("Projection complete", type = "message")
       } else {
         showNotification(
