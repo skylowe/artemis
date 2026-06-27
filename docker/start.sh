@@ -81,27 +81,23 @@ if [ ! -d "${PROJECT_DIR}/data/raw" ] || [ -z "$(ls -A ${PROJECT_DIR}/data/raw 2
 fi
 
 # ============================================================================
-# 3. Start Shiny app in background (so it's ready before proxy connects)
+# 3. Launch the Shiny app as the ONLY served surface via jhsingle-native-proxy
+#
+# This REPLACES jupyterhub-singleuser. jhsingle-native-proxy acts as the
+# JupyterHub single-user server (does the Hub OAuth handshake and reports
+# activity for the idle-culler) but serves only the proxied Shiny app.
+# There is no JupyterLab, classic notebook, terminal, or file browser -
+# those routes do not exist. It launches the Shiny process itself on
+# --destport and waits for it to come up before accepting requests.
 # ============================================================================
 cd "${PROJECT_DIR}"
-Rscript -e "setwd('app'); source('global.R'); source('ui.R'); source('server.R'); shiny::shinyApp(ui=ui, server=server, options=list(host='127.0.0.1', port=3838, launch.browser=FALSE))" &
-SHINY_PID=$!
-echo "Started Shiny app (PID ${SHINY_PID})"
+echo "Launching ARTEMIS dashboard via jhsingle-native-proxy (kiosk mode)..."
 
-# Wait for Shiny to be ready (up to 60 seconds)
-for i in $(seq 1 60); do
-    if curl -s -o /dev/null http://127.0.0.1:3838/ 2>/dev/null; then
-        echo "Shiny app is ready"
-        break
-    fi
-    sleep 1
-done
-
-# ============================================================================
-# 4. Launch jupyterhub-singleuser
-# ============================================================================
-exec jupyterhub-singleuser \
+exec jhsingle-native-proxy \
     --ip=0.0.0.0 \
     --port=8888 \
-    --ServerApp.root_dir="${PROJECT_DIR}" \
-    "$@"
+    --destport=3838 \
+    --ready-timeout=120 \
+    --logs \
+    -- \
+    R -e "setwd('/home/artemis/project/app'); source('global.R'); source('ui.R'); source('server.R'); shiny::shinyApp(ui=ui, server=server, options=list(host='127.0.0.1', port=3838, launch.browser=FALSE))"

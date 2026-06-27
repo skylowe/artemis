@@ -74,6 +74,15 @@ RUN R_PROFILE_USER=/tmp/.Rprofile.build Rscript -e " \
 "
 
 # ============================================================================
+# 4b. Install jhsingle-native-proxy (kiosk single-user server)
+#     Serves ONLY the Shiny app under JupyterHub - no Lab, notebook,
+#     terminal, or file browser. Placed after renv so the heavy R layer
+#     stays cached.
+# ============================================================================
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
+    jhsingle-native-proxy
+
+# ============================================================================
 # 5. Copy ARTEMIS source code
 # ============================================================================
 COPY --chown=artemis:artemis R/ R/
