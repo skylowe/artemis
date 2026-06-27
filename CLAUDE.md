@@ -112,12 +112,25 @@ Baseline files are saved to `data/baseline/tr2025/` (gitignored, ~90MB of .rds f
 ## Docker / JupyterHub Deployment
 
 ### Architecture
+- **Cloudflare Tunnel + Access** front the public hostname. The `cloudflared` systemd
+  service (`/etc/cloudflared/config.yml`) tunnels `skyfilabs.net/artemis*` → `localhost:8000`
+  (no inbound ports on the home IP). A Cloudflare **Access** policy enforces identity
+  (One-Time PIN to an allowlisted email) at the edge *before* any traffic reaches JupyterHub.
+  Access is configured in the Cloudflare Zero Trust dashboard, not in `config.yml`.
 - **JupyterHub** runs as a systemd service (`/etc/systemd/system/jupyterhub.service`)
 - **Config:** `/etc/jupyterhub/jupyterhub_config.py`
 - **DockerSpawner** launches per-user containers from the `artemis:latest` image
-- Each container runs Shiny on port 3838 (proxied via jupyter-server-proxy) and JupyterLab on 8888
-- Users land on the Shiny dashboard by default (`/proxy/3838/`)
+- **Kiosk single-user server:** each container runs `jhsingle-native-proxy` (NOT
+  `jupyterhub-singleuser`) on port 8888. It does the Hub OAuth handshake + idle-culler
+  activity reporting, but serves **only** the Shiny app (launched on `--destport 3838`).
+  There is no JupyterLab, classic notebook, terminal, or file browser — those routes do
+  not exist. Launch command lives in `docker/start.sh`; the app command must follow a `--`
+  separator (jhsingle-native-proxy otherwise parses `R -e` as its own option).
+- Users land directly on the Shiny dashboard (`c.Spawner.default_url = '/'`)
 - Idle containers are culled after 1 hour
+
+> **Note:** `docker/jupyter_shiny_proxy.py` and the `jupyter-server-proxy` entry-point in
+> the Dockerfile are now unused (superseded by `jhsingle-native-proxy`) but left in place.
 
 ### Volume Mounts (configured in jupyterhub_config.py)
 | Host Path | Container Path | Mode |
